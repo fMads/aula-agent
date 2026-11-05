@@ -72,3 +72,17 @@ hent dem først med ToolSearch (`select:mcp__t3-code__t3_thread_update,mcp__t3-c
    - Aula- eller Google-login er udløbet (exit-kode 3 eller 4),
    - en kommando fejlede på anden måde, eller `fetch` gav advarsler,
    - du var i tvivl om et arrangement (dato, barn, om det skulle med) og har skrevet det i opsummeringen.
+
+## Agent skills
+
+### Issue tracker
+
+Issues ligger i GitHub Issues (`fMads/aula-agent`, via `gh`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+De fem standard-labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` i repo-roden (oprettes først når der er brug for dem). See `docs/agents/domain.md`.
