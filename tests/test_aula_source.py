@@ -647,7 +647,7 @@ def write_rescue(folder, posts, threads, messages, files):
     for name, content in files.items():
         (folder / "files" / name).parent.mkdir(parents=True, exist_ok=True)
         (folder / "files" / name).write_bytes(content)
-    (folder / "files" / "photos_1").mkdir()
+    (folder / "files" / "photos_1").mkdir(parents=True)
     (folder / "files" / "photos_1" / "900-billede.jpeg").write_bytes(b"tagged photo")  # not until tagged photos are built
     return folder
 
@@ -752,3 +752,31 @@ def test_a_file_missing_from_the_rescue_copy_is_downloaded_from_aula_later(aula,
     run_backfill()
     assert client.downloads == ["https://files/x"]
     assert archived("post:10").files[0].path == "attachments/post_10/5-program.pdf"
+
+
+def test_an_older_rescue_copy_after_fetch_neither_replaces_the_latest_version_nor_the_thread(aula, data_dir):
+    thread = {"id": 40, "subject": "Juleklip", "lastMessageDate": iso(1)}
+    old_thread = {**thread, "lastMessageDate": iso(3)}
+    rescued_posts = [post(10, "Skolefest", 20, html="<p>Fredag kl. 17</p>")]
+    rescued_messages = {"40": [message("a", 3, text={"html": "<p>Husk saks</p>"})]}
+    rescue = write_rescue(data_dir / f"rescue-{RESCUE_DATE}", rescued_posts, [old_thread], rescued_messages, {})
+    store.save_config({"children": {"1": {"name": "Emma", "institution": "Skolen"}}})
+    newer_messages = {"40": [message("a", 3, text={"html": "<p>Husk saks og lim</p>"}), message("b")]}
+    client = FakeAula([child(1, "Emma")], [post(10, "Skolefest", 20, html="<p>Rettet: torsdag kl. 17</p>")],
+                      [thread], newer_messages)
+    aula["client"] = client
+    run_fetch()
+
+    asyncio.run(aula_source.backfill(rescue))  # taken before what fetch already saved
+    run_fetch()
+    run_backfill()
+
+    assert [v.body for v in archived("post:10").versions] == ["Fredag kl. 17", "Rettet: torsdag kl. 17"]
+    assert [v.body for v in archived("message:40:a").versions] == ["Husk saks", "Husk saks og lim"]
+    assert len(archived("message:40:b").versions) == 1
+    with archive.open() as a:
+        stored = a.thread("40")
+    assert [m["id"] for m in stored.messages] == ["a", "b"] and stored.raw["lastMessageDate"] == thread["lastMessageDate"]
+
+    asyncio.run(aula_source.backfill(rescue))  # again: the older versions are already there
+    assert [len(archived(k).versions) for k in ("post:10", "message:40:a")] == [2, 2]

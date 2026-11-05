@@ -12,6 +12,12 @@ Version rule: an item gets a new item version only when its title, its text or
 the set of its attachment ids changes. Signed URLs, comment counts, bookmarks
 and the like do not count, and while there is no new version the stored raw
 JSON stays as it was.
+
+What is saved is saved as of a time (now, or when a rescue copy was taken), and
+the latest version is the one with the newest time. Something older than what
+the archive has (a rescue copy read after ``fetch``) adds a version only when
+its content is not among the item's versions already, and never replaces the
+stored raw thread.
 """
 
 from __future__ import annotations
@@ -93,8 +99,12 @@ CREATE TABLE backups (
 """
 
 
-def _now() -> str:
-    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
+def _stamp(at: dt.datetime) -> str:
+    return at.astimezone().isoformat(timespec="seconds") if at.tzinfo is None else at.isoformat(timespec="seconds")
+
+
+def _when(stamp: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(stamp)
 
 
 def _safe(name: str) -> str:
@@ -166,12 +176,15 @@ class Status:
 
 
 class Archive:
-    def __init__(self, db: sqlite3.Connection, at: str | None = None):
+    def __init__(self, db: sqlite3.Connection, at: dt.datetime | None = None):
         self._db = db
         self._at = at
 
+    def _now(self) -> dt.datetime:
+        return self._at or dt.datetime.now().astimezone()
+
     def _saved_at(self) -> str:
-        return self._at or _now()
+        return _stamp(self._now())
 
     # -- write side (from fetching)
 
@@ -208,14 +221,17 @@ class Archive:
         Messages of :data:`MESSAGE_ITEM_TYPES` become items marked with the
         thread's sensitivity. Returns, per item key, whether it gave a new item version.
         """
-        stored = self._db.execute("SELECT raw, messages FROM threads WHERE id = ?", (thread_id,)).fetchone()
-        raw_thread = thread if thread is not None else (json.loads(stored[0]) if stored else {})
-        raw_messages = messages if complete or not stored else json.loads(stored[1])
-        self._db.execute(
-            "INSERT INTO threads (id, saved_at, raw, messages) VALUES (?, ?, ?, ?)"
-            " ON CONFLICT (id) DO UPDATE SET saved_at = excluded.saved_at, raw = excluded.raw, messages = excluded.messages",
-            (thread_id, self._saved_at(), _json(raw_thread), _json(raw_messages)),
-        )
+        stored = self._db.execute("SELECT raw, messages, saved_at FROM threads WHERE id = ?", (thread_id,)).fetchone()
+        if stored and _when(stored[2]) > self._now():  # older than what is saved: keep that
+            raw_thread = json.loads(stored[0])
+        else:
+            raw_thread = thread if thread is not None else (json.loads(stored[0]) if stored else {})
+            raw_messages = messages if complete or not stored else json.loads(stored[1])
+            self._db.execute(
+                "INSERT INTO threads (id, saved_at, raw, messages) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (id) DO UPDATE SET saved_at = excluded.saved_at, raw = excluded.raw, messages = excluded.messages",
+                (thread_id, self._saved_at(), _json(raw_thread), _json(raw_messages)),
+            )
         sensitive = bool(raw_thread.get("sensitive"))
         new: dict[str, bool] = {}
         for raw in messages:
@@ -248,10 +264,12 @@ class Archive:
             " ON CONFLICT (key) DO UPDATE SET thread_id = excluded.thread_id, sensitive = excluded.sensitive",
             (key, kind, thread_id, int(sensitive)),
         )
-        latest = self._db.execute(
-            "SELECT hash FROM versions WHERE item_key = ? ORDER BY id DESC LIMIT 1", (key,)
-        ).fetchone()
-        if latest and latest[0] == version:
+        saved = self._db.execute("SELECT hash, saved_at, id FROM versions WHERE item_key = ?", (key,)).fetchall()
+        latest = max(saved, key=lambda row: (_when(row[1]), row[2]), default=None)  # of equal times, the last saved
+        if latest and _when(latest[1]) > self._now():  # older than the latest version: only if it is not there yet
+            if any(row[0] == version for row in saved):
+                return False
+        elif latest and latest[0] == version:
             return False
         self._db.execute(
             "INSERT INTO versions (item_key, hash, saved_at, title, author, date, groups, child_ids, body, raw)"
@@ -353,6 +371,7 @@ class Archive:
             item.versions.append(
                 Version(saved_at, title, author, date, json.loads(groups), json.loads(child_ids), body, json.loads(raw))
             )
+        item.versions.sort(key=lambda v: _when(v.saved_at))  # stable: equal times keep the order they were saved in
         item.files = [
             File(*row)
             for row in self._db.execute(
@@ -428,7 +447,7 @@ def open(*, at: dt.datetime | None = None) -> Iterator[Archive]:  # noqa: A001 -
         with db:
             _migrate(db)
         with db:
-            yield Archive(db, at.isoformat(timespec="seconds") if at else None)
+            yield Archive(db, at)
     finally:
         db.close()
 
