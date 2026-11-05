@@ -109,7 +109,8 @@ def test_inbox_groups_existing_events_and_lists_removed_multi_day_events():
         ledger.record(SyncedEntry("k1", cid, cal, f"e{cid}", "Juleklip", "2099-12-04", "2099-12-04", "post:1"))
     ledger.record(SyncedEntry("old", 1, "c1", "e0", "Gammel", "2001-01-01", "2001-01-01"))
     yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
-    ledger.mark_removed("trip", title="Lejrskole", start=yesterday, end="2099-01-01")  # started, not over
+    ledger.mark_removed("trip", 2, title="Lejrskole", start=yesterday, end="2099-01-01")  # started, not over
+    ledger._st["ignored"]["legacy"] = {"title": "Gammel fjernet", "start": "2099-02-01"}  # before removal was per child
     ledger.add_pending({"key": "post:9", "type": "post", "child_ids": [1], "published": "2026-01-01"})
 
     contract.write_inbox(ledger, cfg, [{"title": "Motionsdag"}], ["advarsel"])
@@ -118,7 +119,10 @@ def test_inbox_groups_existing_events_and_lists_removed_multi_day_events():
     assert inbox["existing_events"] == [
         {"key": "k1", "child_ids": [1, 2], "title": "Juleklip", "start": "2099-12-04", "end": "2099-12-04", "source": "post:1"}
     ]
-    assert inbox["removed_by_user"] == [{"key": "trip", "title": "Lejrskole", "start": yesterday, "end": "2099-01-01"}]
+    assert inbox["removed_by_user"] == [
+        {"key": "trip", "child_ids": [2], "title": "Lejrskole", "start": yesterday, "end": "2099-01-01"},
+        {"key": "legacy", "child_ids": [1, 2], "title": "Gammel fjernet", "start": "2099-02-01", "end": "2099-02-01"},
+    ]
     assert [i["key"] for i in inbox["items"]] == ["post:9"]
     assert inbox["children"] == [{"id": 1, "name": "Emma", "institution": "Skolen"}, {"id": 2, "name": "Oscar", "institution": "Skolen"}]
     assert inbox["aula_calendar"] == [{"title": "Motionsdag"}] and inbox["warnings"] == ["advarsel"]

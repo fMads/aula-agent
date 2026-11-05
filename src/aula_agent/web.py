@@ -249,6 +249,7 @@ input[type=text]{font:inherit;padding:.35rem .5rem;border:1px solid var(--line);
 .otp{font-size:2rem;letter-spacing:.2em;font-weight:600}
 .flash{padding:.6rem .8rem;border-radius:8px;border:1px solid var(--line);margin-bottom:1rem}
 form.inline{display:inline;margin:0}
+.acts{display:flex;flex-direction:column;gap:.3rem;align-items:flex-end}
 """
 
 
@@ -324,12 +325,20 @@ async def home(request: Request) -> Response:
             src_txt = ev.source_item.get("title") or ev.source_item.get("subject") or ""
             link = f' <a href="{e(ev.link)}" target="_blank" rel="noopener">åbn</a>' if ev.link else ""
             names = ", ".join(first_name(c) for c in ev.child_ids)
+            several = len(ev.child_ids) > 1
+            buttons = "".join(
+                f'<form class="inline" method="post" action="/events/remove" '
+                f'data-title="{e(ev.title)}" data-who="{e(first_name(c))}" '
+                f'onsubmit="return confirm(\'Fjern »\'+this.dataset.title+\'« fra kalenderen for \'+this.dataset.who+\'? '
+                f'Den bliver ikke oprettet igen.\')">'
+                f'<input type="hidden" name="key" value="{e(ev.key)}"><input type="hidden" name="child_id" value="{c}">'
+                f'<button class="small">{"Fjern for " + e(first_name(c)) if several else "Fjern"}</button></form>'
+                for c in ev.child_ids
+            )
             items.append(
                 f'<li><span class="date">{e(fmt_date(ev.start))}</span><span class="grow">{e(ev.title)}{link}'
                 f'<br><span class="mut">{e(names)}{" · fra " + e(src_txt) if src_txt else ""}</span></span>'
-                f'<form class="inline" method="post" action="/events/remove" data-title="{e(ev.title)}" '
-                f'onsubmit="return confirm(\'Fjern »\'+this.dataset.title+\'« fra kalenderen? Den bliver ikke oprettet igen.\')">'
-                f'<input type="hidden" name="key" value="{e(ev.key)}"><button class="small">Fjern</button></form></li>'
+                f'<span class="acts">{buttons}</span></li>'
             )
         events_html = f'<ul class="list">{"".join(items)}</ul>'
     else:
@@ -359,15 +368,18 @@ async def remove_event(request: Request) -> Response:
     from .credentials import GoogleLoginRequired
     from .gcal import remove_event as do_remove
 
-    key = str((await request.form()).get("key") or "")
+    form = await request.form()
+    key = str(form.get("key") or "")
+    raw_child = str(form.get("child_id") or "")
+    child_id = int(raw_child) if raw_child.isdigit() else None  # a page from before removal was per child
 
     def work() -> int:
         with store.lock(wait=False):
-            return do_remove(key, google=request.app.state.google)
+            return do_remove(key, child_id, google=request.app.state.google)
 
     try:
         n = await asyncio.to_thread(work)
-        msg = "Begivenheden er fjernet og bliver ikke oprettet igen." if n else "Intet at fjerne."
+        msg = "Begivenheden er fjernet og bliver ikke lagt i kalenderen igen." if n else "Intet at fjerne."
     except store.Busy as exc:
         msg = f"{exc} Prøv igen om lidt."
     except KeyError:

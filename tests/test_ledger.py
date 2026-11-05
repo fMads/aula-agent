@@ -30,7 +30,8 @@ def test_reads_state_written_by_older_versions(data_dir):
     )
     ledger = Ledger.load()
     assert ledger.synced("k", "c").title == "T"
-    assert ledger.removed_upcoming() == [{"key": "r", "title": "R", "start": "2099-01-01", "end": "2099-01-01"}]
+    assert ledger.removed_upcoming() == [{"key": "r", "child_ids": None, "title": "R", "start": "2099-01-01", "end": "2099-01-01"}]
+    assert ledger.is_removed("r", 1) and ledger.is_removed("r", 2)  # removed before removal was per child: everyone
     assert ledger.last_run("fetch")["outcome"] == "error"
 
 
@@ -56,10 +57,19 @@ def test_upcoming_groups_children_and_keeps_events_until_their_last_day():
 
 def test_removed_upcoming_uses_the_last_day():
     ledger = Ledger()
-    ledger.mark_removed("camp", title="Lejrskole", start="2026-11-03", end="2026-11-07")
-    ledger.mark_removed("past", title="Fortid", start="2026-11-01", end="2026-11-02")
+    ledger.mark_removed("camp", 1, title="Lejrskole", start="2026-11-03", end="2026-11-07")
+    ledger.mark_removed("past", 1, title="Fortid", start="2026-11-01", end="2026-11-02")
     assert [r["key"] for r in ledger.removed_upcoming(TODAY)] == ["camp"]
-    assert ledger.is_removed("past")
+    assert ledger.is_removed("past", 1)
+
+
+def test_removal_is_per_child():
+    ledger = Ledger()
+    ledger.mark_removed("cup", 2, title="Stævne", start="2099-01-01", end="2099-01-01")
+    assert ledger.is_removed("cup", 2) and ledger.is_removed("cup", "2")
+    assert not ledger.is_removed("cup", 1)
+    ledger.mark_removed("cup", 1, title="Stævne", start="2099-01-01", end="2099-01-01")
+    assert ledger.removed_upcoming()[0]["child_ids"] == [1, 2]
 
 
 def test_pending_merges_children_and_processing_reports_what_waited():

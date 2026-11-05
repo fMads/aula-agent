@@ -119,22 +119,45 @@ def test_home_shows_status_events_and_escapes_html(monkeypatch, tmp_path):
 
 
 def synced_on_two_calendars(google):
+    cfg = store.load_config()
+    cfg["children"].update({"1": {"name": "Emma Hansen"}, "2": {"name": "Oscar Hansen"}})
+    store.save_config(cfg)
     ledger = Ledger()
-    for cal in ("c1", "c2"):
+    for cid, cal in ((1, "c1"), (2, "c2")):
         google.events[(cal, f"e-{cal}")] = {"extendedProperties": {"private": {"aulaAgentKey": "k1"}}}
-        ledger.record(SyncedEntry("k1", 1, cal, f"e-{cal}", "Skovtur", "2099-01-01", "2099-01-01"))
+        ledger.record(SyncedEntry("k1", cid, cal, f"e-{cal}", "Skovtur", "2099-01-01", "2099-01-01"))
     ledger.save()
 
 
-def test_remove_event_deletes_everywhere_and_is_remembered(google):
+def test_home_has_a_remove_button_per_child(google):
     configure()
     synced_on_two_calendars(google)
     with make_client(google=lambda: google) as c:
-        r = c.post("/events/remove", data={"key": "k1"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
+        html = c.get("/", headers=auth()).text
+    assert "Fjern for Emma" in html and "Fjern for Oscar" in html
+    assert 'name="child_id" value="1"' in html and 'name="child_id" value="2"' in html
+
+
+def test_remove_event_for_one_child_is_remembered(google):
+    configure()
+    synced_on_two_calendars(google)
+    with make_client(google=lambda: google) as c:
+        r = c.post("/events/remove", data={"key": "k1", "child_id": "2"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
     assert r.status_code == 303 and "fjernet" in r.headers["location"].replace("%20", " ")
-    assert google.events == {}
+    assert list(google.events) == [("c1", "e-c1")]
     ledger = Ledger.load()
-    assert ledger.upcoming() == [] and ledger.is_removed("k1")
+    assert [u.child_ids for u in ledger.upcoming()] == [[1]]
+    assert ledger.is_removed("k1", 2) and not ledger.is_removed("k1", 1)
+
+
+def test_remove_from_an_old_page_without_child_removes_everywhere(google):
+    configure()
+    synced_on_two_calendars(google)
+    with make_client(google=lambda: google) as c:
+        c.post("/events/remove", data={"key": "k1"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
+    ledger = Ledger.load()
+    assert google.events == {} and ledger.upcoming() == []
+    assert ledger.is_removed("k1", 1) and ledger.is_removed("k1", 2)
 
 
 def test_remove_while_sync_running_says_busy(google):

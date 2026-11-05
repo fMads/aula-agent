@@ -105,6 +105,33 @@ def test_cancelled_deletes(google):
     assert Ledger.load().upcoming() == []
 
 
+def test_cancellation_needs_only_the_key_and_removes_it_for_every_child(google):
+    setup_children((1, "Emma"), (2, "Oscar"))
+    gcal.sync({"events": [ev(child_ids=[1, 2])]}, google=google)
+    result = gcal.sync({"events": [{"key": "k1", "cancelled": True}]}, google=google)
+    assert google.events == {} and len(result["deleted"]) == 2
+    assert Ledger.load().upcoming() == []
+
+
+def test_cancelling_unknown_event_without_children_is_skipped(google):
+    setup_children((1, "Emma"))
+    result = gcal.sync({"events": [{"key": "k1", "cancelled": True}]}, google=google)
+    assert google.calls == [] and result["skipped"] == ["aflyst k1 (ikke i kalenderen)"]
+
+
+def test_correction_without_a_child_removes_it_from_that_childs_calendar(google):
+    setup_children((1, "Emma"), (2, "Oscar"))
+    gcal.sync({"events": [ev(child_ids=[1, 2], title="Juleklip")]}, google=google)
+    emma_cal = store.load_config()["children"]["1"]["calendar_id"]
+    lines = []
+    gcal.sync({"events": [ev(child_ids=[2], title="Juleklip")]}, dry_run=True, echo=lines.append)
+    assert "[prøvekørsel] Slet: 2099-11-12 Juleklip → Emma (ikke længere med)" in lines
+    result = gcal.sync({"events": [ev(child_ids=[2], title="Juleklip")]}, google=google)
+    assert len(result["updated"]) == 1 and len(result["deleted"]) == 1
+    assert len(google.events) == 1 and all(cal != emma_cal for cal, _ in google.events)
+    assert [u.child_ids for u in Ledger.load().upcoming()] == [[2]]
+
+
 def test_cancelling_for_child_without_calendar_creates_no_calendar(google):
     setup_children((1, "Emma"))
     result = gcal.sync({"events": [{"key": "k1", "child_ids": [1], "cancelled": True}]}, google=google)
@@ -151,26 +178,50 @@ def test_calendar_name_falls_back_to_child_id(google):
 def test_removed_by_user_is_never_recreated(google):
     setup_children((1, "Emma"))
     gcal.sync({"events": [ev()]}, google=google)
-    assert gcal.remove_event("k1", google=google) == 1
+    assert gcal.remove_event("k1", 1, google=google) == 1
     assert google.events == {}
 
     result = gcal.sync({"events": [ev(title="Skovtur (rettet)")]}, google=google)
     assert google.events == {} and not result["created"]
-    assert result["skipped"] == ["2099-11-12 Skovtur (rettet) (fjernet af dig)"]
-    assert Ledger.load().removed_upcoming() == [{"key": "k1", "title": "Skovtur", "start": "2099-11-12", "end": "2099-11-12"}]
+    assert result["skipped"] == ["2099-11-12 Skovtur (rettet) → Emma (fjernet af dig)"]
+    assert Ledger.load().removed_upcoming() == [
+        {"key": "k1", "child_ids": [1], "title": "Skovtur", "start": "2099-11-12", "end": "2099-11-12"}
+    ]
+
+
+def test_removing_for_one_child_keeps_it_for_the_other(google):
+    setup_children((1, "Emma"), (2, "Oscar"))
+    gcal.sync({"events": [ev(child_ids=[1, 2])]}, google=google)
+    assert gcal.remove_event("k1", 2, google=google) == 1
+    assert [u.child_ids for u in Ledger.load().upcoming()] == [[1]] and len(google.events) == 1
+
+    result = gcal.sync({"events": [ev(child_ids=[1, 2], title="Skovtur (rettet)")]}, google=google)
+    assert len(result["updated"]) == 1 and not result["created"] and not result["deleted"]
+    assert result["skipped"] == ["2099-11-12 Skovtur (rettet) → Oscar (fjernet af dig)"]
+    assert len(google.events) == 1 and Ledger.load().is_removed("k1", 2)
+
+
+def test_removing_without_a_child_removes_it_for_everyone(google):
+    setup_children((1, "Emma"), (2, "Oscar"))
+    gcal.sync({"events": [ev(child_ids=[1, 2])]}, google=google)
+    assert gcal.remove_event("k1", google=google) == 2
+    ledger = Ledger.load()
+    assert google.events == {} and ledger.is_removed("k1", 1) and ledger.is_removed("k1", 2)
 
 
 def test_remove_tolerates_event_already_gone_in_google(google):
     setup_children((1, "Emma"))
     gcal.sync({"events": [ev()]}, google=google)
     google.events.clear()  # deleted by hand in Google Calendar
-    assert gcal.remove_event("k1", google=google) == 1
-    assert Ledger.load().is_removed("k1")
+    assert gcal.remove_event("k1", 1, google=google) == 1
+    assert Ledger.load().is_removed("k1", 1)
 
 
 def test_remove_unknown_key():
     with pytest.raises(KeyError):
         gcal.remove_event("nope", google=object())
+    with pytest.raises(KeyError):
+        gcal.remove_event("k1", 99, google=object())
 
 
 def test_switching_between_all_day_and_timed_replaces_the_event(google):

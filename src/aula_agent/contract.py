@@ -34,8 +34,11 @@ class Event:
 
     All-day events have ``date`` start/end with ``end`` the last day (inclusive).
     Timed events have naive ``datetime`` start/end in Danish time, ``end``
-    exclusive (default one hour after start). Cancellations only carry
-    ``key`` and ``child_ids``.
+    exclusive (default one hour after start).
+
+    ``child_ids`` are all the children the event is for: a child that is left
+    out of a correction loses it. A cancellation only needs ``key`` and removes
+    the event for every child (``child_ids`` there is an optional hint).
     """
 
     key: str
@@ -131,7 +134,9 @@ def _event(raw: Any, children: set[str], problems: list[str], where: str) -> Eve
         problems.append(f"{where}: key mangler")
     child_ids: list[int] = []
     raw_children = raw.get("child_ids")
-    if not raw_children or not isinstance(raw_children, list):
+    if raw.get("cancelled") and raw_children in (None, []):
+        pass  # a cancellation is for every child that has the event
+    elif not raw_children or not isinstance(raw_children, list):
         problems.append(f"{where}: child_ids mangler")
     else:
         for cid in raw_children:
@@ -237,6 +242,7 @@ def write_inbox(ledger: Ledger, cfg: dict[str, Any], aula_calendar: list[dict[st
     from zoneinfo import ZoneInfo
 
     today = dt.date.today().isoformat()
+    all_ids = [int(cid) for cid in cfg["children"]]
     store.write_json(
         store.path("INBOX_FILE"),
         {
@@ -250,7 +256,10 @@ def write_inbox(ledger: Ledger, cfg: dict[str, Any], aula_calendar: list[dict[st
                 {"key": u.key, "child_ids": u.child_ids, "title": u.title, "start": u.start, "end": u.end, "source": u.source}
                 for u in ledger.upcoming(today)
             ],
-            "removed_by_user": ledger.removed_upcoming(today),
+            "removed_by_user": [
+                {**r, "child_ids": all_ids if r["child_ids"] is None else r["child_ids"]}
+                for r in ledger.removed_upcoming(today)
+            ],
             "aula_calendar": aula_calendar,
             "warnings": warnings,
         },

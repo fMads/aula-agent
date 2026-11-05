@@ -158,7 +158,7 @@ Den kører `deploy/nightly.sh` hver aften kl. 21:00, og loggen ligger i `data/lo
 Web-siden viser:
 - om Aula- og Google-login virker
 - de seneste kørsler
-- de kommende begivenheder med en knap til at fjerne forkerte (de bliver så ikke oprettet igen)
+- de kommende begivenheder med en knap til at fjerne forkerte (de bliver så ikke oprettet igen). Gælder en begivenhed flere børn, er der en knap pr. barn
 
 Fra web-siden kan du også logge ind i Aula med MitID (QR-koden vises i browseren) og forbinde Google.
 

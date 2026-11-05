@@ -144,28 +144,43 @@ class Action:
         what = "aflyst" if self.event.cancelled else self.event.start_text
         text = f"{what} {self.event.title or self.event.key}"
         if self.child_id:
-            text += f" → {cfg['children'][self.child_id].get('name')}"
+            text += f" → {(cfg['children'].get(self.child_id) or {}).get('name') or self.child_id}"
         return f"{text} ({self.reason})" if self.reason else text
 
 
 def plan(doc: EventsDoc, ledger: Ledger, cfg: dict[str, Any]) -> list[Action]:
-    """What ``sync`` would do, decided from local knowledge only (no Google calls)."""
+    """What ``sync`` would do, decided from local knowledge only (no Google calls).
+
+    An event lists every child it is for, so a child whose calendar has it but
+    who is no longer listed loses it. A cancellation removes it for everyone.
+    """
     actions: list[Action] = []
     for ev in doc.events:
-        if ledger.is_removed(ev.key):
-            actions.append(Action("skip", ev, reason="fjernet af dig"))
+        synced = {str(e.child_id): e for e in ledger.entries(ev.key)}
+        if ev.cancelled:
+            targets = list(dict.fromkeys([*synced, *map(str, ev.child_ids)]))
+            if not targets:
+                actions.append(Action("skip", ev, reason="ikke i kalenderen"))
+            for cid in targets:
+                known = synced.get(cid)
+                calendar_id = known.calendar_id if known else cfg["children"][cid].get("calendar_id")
+                if not calendar_id or (not known and ledger.is_removed(ev.key, cid)):
+                    actions.append(Action("skip", ev, cid, reason="ikke i kalenderen"))
+                else:
+                    actions.append(Action("delete", ev, cid, calendar_id, known.event_id if known else None))
             continue
-        for cid in map(str, ev.child_ids):
+        listed = list(dict.fromkeys(map(str, ev.child_ids)))
+        for cid in listed:
+            if ledger.is_removed(ev.key, cid):
+                actions.append(Action("skip", ev, cid, reason="fjernet af dig"))
+                continue
             calendar_id = cfg["children"][cid].get("calendar_id")
             known = ledger.synced(ev.key, calendar_id) if calendar_id else None
             event_id = known.event_id if known else None
-            if ev.cancelled:
-                if calendar_id:
-                    actions.append(Action("delete", ev, cid, calendar_id, event_id))
-                else:
-                    actions.append(Action("skip", ev, cid, reason="ikke i kalenderen"))
-            else:
-                actions.append(Action("update" if known else "create", ev, cid, calendar_id, event_id))
+            actions.append(Action("update" if known else "create", ev, cid, calendar_id, event_id))
+        for cid, known in synced.items():
+            if cid not in listed:
+                actions.append(Action("delete", ev, cid, known.calendar_id, known.event_id, reason="ikke længere med"))
     return actions
 
 
@@ -275,22 +290,23 @@ def sync(
     return execute(actions, doc, google, ledger, cfg)
 
 
-def remove_event(key: str, *, google: Google | Callable[[], Google] | None = None) -> int:
-    """Delete an event from every child's calendar and never recreate this key.
+def remove_event(key: str, child_id: int | None = None, *, google: Google | Callable[[], Google] | None = None) -> int:
+    """Delete an event from one child's calendar (``None``: every child's) and
+    never put it back there.
 
-    Returns how many calendar entries there were. Raises KeyError for unknown keys.
+    Returns how many calendar entries were removed. Raises KeyError when there
+    is no such entry.
     """
     ledger = Ledger.load()
-    entries = ledger.entries(key)
+    entries = [e for e in ledger.entries(key) if child_id is None or e.child_id == int(child_id)]
     if not entries:
         raise KeyError(key)
     google = _resolve(google)
     for e in entries:
         google.delete_event(e.calendar_id, e.event_id)
         ledger.forget(e.key, e.calendar_id)
-    first = entries[0]
-    ledger.mark_removed(key, title=first.title, start=first.start, end=first.end)
-    ledger.save()
+        ledger.mark_removed(key, e.child_id, title=e.title, start=e.start, end=e.end)
+        ledger.save()
     return len(entries)
 
 

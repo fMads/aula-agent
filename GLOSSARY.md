@@ -4,13 +4,25 @@ Finder arrangementer og frister i forældrenes Aula og lægger dem i en Google-k
 
 ## Fra Aula
 
+**Child**:
+Et af forælderens børn i Aula. Hvert event gælder et eller flere børn, og hvert barn har sin egen kalender.
+_Avoid_: Elev, profil
+
 **Item**:
-Et Aula-opslag eller en Aula-besked, som agenten skal læse, med tekst og vedhæftede filer. Har en item-key som `post:123` eller `message:<tråd>:<id>`.
-_Avoid_: Post (betyder kun opslag), besked (betyder kun besked)
+Et Aula-opslag eller én Aula-besked, som agenten skal læse, med tekst og vedhæftede filer. Har en item-key som `post:123` eller `message:<tråd>:<id>`. Et svar i samme tråd er et nyt item.
+_Avoid_: Post (betyder kun opslag), besked (betyder kun besked), tråd
 
 **Intake**:
-Reglerne for, hvilke items agenten får: nye eller ændrede siden sidst og ikke ældre end skæringsdatoen.
+Reglerne for, hvilke items agenten får: nye eller ændrede siden sidst og ikke ældre end cutoff.
 _Avoid_: Import, sync
+
+**Cutoff**:
+Den dato, items skal være nyere end for overhovedet at nå agenten. Ældre items bliver aldrig udleveret, heller ikke senere.
+_Avoid_: Skæringsdato (kun i brugertekst)
+
+**Aula calendar**:
+Aulas egen kalender for børnene. Står et arrangement allerede dér, laver agenten ikke et event for det.
+_Avoid_: Kalender (uden præcisering)
 
 **Inbox**:
 Det, agenten får udleveret ved hver kørsel: ventende items, børnene, eksisterende og fjernede events og Aulas egen kalender.
@@ -22,12 +34,20 @@ Et item, der ligger i inbox, men som agenten endnu ikke har markeret som behandl
 ## Fra agenten
 
 **Events document**:
-Agentens svar på en inbox: de behandlede item-keys plus de events, der skal i kalenderen.
+Agentens svar på en inbox: de behandlede item-keys plus de events og cancellations, kalenderne skal opdateres med.
 _Avoid_: Events-fil (kun når selve filen menes), output
 
 **Event**:
-Et arrangement eller en frist for et eller flere børn, med titel, tid og evt. vedhæftninger. Kan også være en aflysning.
+Et arrangement eller en frist med titel, tid og evt. vedhæftninger. Et event nævner altid alle de børn, det gælder; et barn, der ikke er nævnt, har det ikke.
 _Avoid_: Begivenhed (i kode), appointment
+
+**Cancellation**:
+Besked i et events document om, at et eksisterende event er aflyst for alle dets børn. Den består kun af eventets key.
+_Avoid_: Aflyst event, sletning
+
+**Deadline**:
+Et event for en frist (tilmelding, aflevering), lagt som heldag på fristens dato med titlen `Frist: …`.
+_Avoid_: Deadline-påmindelse, reminder
 
 **Event key**:
 Den stabile identitet for et event på tværs af kørsler (`<item-key>#<n>`). Samme key betyder rettelse, ikke et nyt event.
@@ -45,11 +65,11 @@ Den Google-kalender, aula-agent opretter til ét barn ("Skole – <fornavn>").
 _Avoid_: Kalenderpost (kun i brugertekst)
 
 **Removed by user**:
-Et event, som en forælder har fjernet på web-siden. Det må aldrig oprettes igen, heller ikke under en ny key.
+En synced entry, som en forælder har fjernet på web-siden. Eventet må aldrig komme i det barns kalender igen, heller ikke under en ny key; eventets andre børn beholder det.
 _Avoid_: Ignored, deleted
 
 **Ledger**:
-Alt det, aula-agent husker mellem kørsler: sete items, pending items, synced entries, events fjernet af brugeren og run-loggen.
+Alt det, aula-agent husker mellem kørsler: sete items, pending items, synced entries, hvad brugeren har fjernet, og run-loggen.
 _Avoid_: State, database
 
 **Plan**:

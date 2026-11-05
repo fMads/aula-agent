@@ -8,7 +8,8 @@ calendar, the user removed an event); the on-disk shape stays in here:
 - ``thread_retries``: Aula thread id -> thread to read again next run, and how often it was tried
 - ``pending``: item key -> inbox item the agent has not processed yet
 - ``events``: ``"<event key>|<calendar id>"`` -> one synced calendar entry
-- ``ignored``: event key -> event the user removed (never recreate it)
+- ``ignored``: event key -> event the user removed from some children's calendars
+  (``child_ids``; missing = every child, as before removal was per child)
 - ``uploads`` / ``drive_folder_id``: attachments already in Drive
 - ``runs``: the last 50 command runs, newest last
 - ``last_fetch``: when Aula was last read
@@ -213,17 +214,29 @@ class Ledger:
 
     # ------------------------------------------------------------------ removed by the user
 
-    def is_removed(self, key: str) -> bool:
-        return key in self._st["ignored"]
+    def is_removed(self, key: str, child_id: int | str) -> bool:
+        """Whether the user removed this event from this child's calendar."""
+        removed = self._st["ignored"].get(key)
+        if removed is None:
+            return False
+        child_ids = removed.get("child_ids")
+        return child_ids is None or int(child_id) in child_ids
 
-    def mark_removed(self, key: str, *, title: str, start: str, end: str) -> None:
-        self._st["ignored"][key] = {"title": title, "start": start, "end": end, "removed_at": _now()}
+    def mark_removed(self, key: str, child_id: int | str, *, title: str, start: str, end: str) -> None:
+        removed = self._st["ignored"].setdefault(key, {"child_ids": []})
+        if removed.get("child_ids") is not None and int(child_id) not in removed["child_ids"]:
+            removed["child_ids"] = sorted([*removed["child_ids"], int(child_id)])
+        removed.update(title=title, start=start, end=end, removed_at=_now())
 
     def removed_upcoming(self, today: str | None = None) -> list[dict[str, Any]]:
-        """Removed events that would still be in the future (the agent must not recreate them)."""
+        """Removed events that would still be in the future (the agent must not put
+        them back in these children's calendars). ``child_ids`` None means every child."""
         today = today or _today()
         return [
-            {"key": k, "title": v.get("title"), "start": v.get("start"), "end": v.get("end") or v.get("start")}
+            {
+                "key": k, "child_ids": v.get("child_ids"),
+                "title": v.get("title"), "start": v.get("start"), "end": v.get("end") or v.get("start"),
+            }
             for k, v in self._st["ignored"].items()
             if _not_over(v.get("start"), v.get("end"), today)
         ]
