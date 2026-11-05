@@ -25,7 +25,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import credentials, runs, store
+from . import archive, credentials, runs, store
 from .ledger import Ledger
 from .runs import Outcome
 
@@ -289,6 +289,12 @@ def fmt_when(value: str | None) -> str:
         return value
 
 
+def archive_text(status: archive.Status) -> str:
+    if not status.last_saved:
+        return "intet gemt endnu"
+    return f"{status.posts} opslag · sidst gemt {fmt_when(status.last_saved)}"
+
+
 # ----------------------------------------------------------------------------- routes
 
 
@@ -312,6 +318,7 @@ async def home(request: Request) -> Response:
                 fmt_when(last_run["at"]) if last_run else "aldrig",
             ),
             card("Venter", None, f"{len(ledger.pending_keys())} beskeder/opslag"),
+            card("Arkiv", None, archive_text(archive.status())),
         ]
     )
 

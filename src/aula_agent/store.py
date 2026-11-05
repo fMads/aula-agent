@@ -64,6 +64,7 @@ _FILES = {
     "STATE_FILE": "state.json",
     "INBOX_FILE": "inbox.json",
     "ATTACHMENTS_DIR": "attachments",
+    "ARCHIVE_FILE": "archive.sqlite",
     "GOOGLE_CLIENT_SECRET": "google_client_secret.json",
     "GOOGLE_TOKEN": "google_token.json",
 }
