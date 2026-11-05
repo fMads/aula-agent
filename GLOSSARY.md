@@ -49,6 +49,10 @@ _Avoid_: Galleri, medie, billede (uden præcisering)
 En hentning af alt, hvad Aula stadig har, direkte til arkivet. Den kan køres igen uden at give dubletter og giver aldrig items til agenten.
 _Avoid_: Import, første kørsel
 
+**Rescue copy**:
+En mappe med Aulas rå data (opslag, tråde, filer), taget før Aula slettede noget, med datoen i navnet (`rescue-2026-11-05`). Backfill kan læse den i stedet for Aula; versionerne får kopiens dato.
+_Avoid_: Backup (det er arkivets kopi i Drive), eksport
+
 ## Fra agenten
 
 **Events document**:

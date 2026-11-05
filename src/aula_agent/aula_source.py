@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -47,6 +50,10 @@ DOWNLOAD_FAILED = "Download fejlede"
 class LoginRequired(Problem):
     outcome = Outcome.AULA_LOGIN
     label = "Aula-login mangler"
+
+
+class BadRescueCopy(Problem):
+    label = "Redningskopien kan ikke læses"
 
 
 async def open_client() -> AulaApiClient:
@@ -428,6 +435,45 @@ class _AulaBackfill:
             yield thread, await self._client.get_all_messages_for_thread_result(str(thread.get("id")))
 
 
+class _RescueBackfill:
+    """A rescue copy: what Aula sent, saved in a folder as ``posts.json`` (raw posts),
+    ``threads.json`` (``{thread, messages}``, raw) and ``files/<item folder>/<attachment id>-<name>``.
+
+    ``child_albums.json`` (tagged photos) is not read yet. The children are the ones
+    in the config, and the copy was taken on the date in the folder's name.
+    """
+
+    def __init__(self, folder: Path):
+        date = re.search(r"\d{4}-\d{2}-\d{2}", folder.name)
+        if date is None:
+            raise BadRescueCopy(f"Mappens navn skal have datoen, kopien blev taget, fx rescue-2026-11-05 (ikke {folder.name!r}).")
+        self.taken = dt.datetime.combine(dt.date.fromisoformat(date.group()), dt.time(), TZ)
+        try:
+            self._posts = json.loads((folder / "posts.json").read_text(encoding="utf-8"))
+            self._threads = json.loads((folder / "threads.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise BadRescueCopy(f"{folder}: {exc}") from exc
+        self._files = {p.name: p for p in (folder / "files").glob("*/*") if p.is_file()}
+        self.children = [
+            {"id": int(cid), "name": c.get("name"), "institution": c.get("institution")}
+            for cid, c in store.load_config()["children"].items()
+        ]
+
+    async def posts(self) -> AsyncIterator[dict[str, Any]]:
+        for raw in self._posts:
+            yield raw
+
+    async def threads(self) -> AsyncIterator[tuple[dict[str, Any], PaginationResult[dict]]]:
+        for entry in self._threads:
+            yield entry["thread"], PaginationResult(items=entry["messages"], complete=True, termination_reason="exhausted")
+
+    async def download(self, att: Attachment) -> bytes:
+        file = self._files.get(archive.stored_name(att))
+        if file is None:
+            raise FileNotFoundError("ikke i redningskopien")
+        return file.read_bytes()
+
+
 @dataclass
 class Backfilled:
     posts: int = 0
@@ -437,10 +483,10 @@ class Backfilled:
     warnings: list[str] = field(default_factory=list)
 
 
-async def _backfill_from(source: BackfillSource, warnings: list[str]) -> Backfilled:
+async def _backfill_from(source: BackfillSource, warnings: list[str], *, at: dt.datetime | None = None) -> Backfilled:
     result = Backfilled(warnings=warnings)
     only_child = _only_child(source.children)
-    with archive.open() as arch:
+    with archive.open(at=at) as arch:
         async for raw in source.posts():
             post = Post.from_dict(raw)
             result.posts += 1
@@ -464,16 +510,24 @@ async def _backfill_from(source: BackfillSource, warnings: list[str]) -> Backfil
     return result
 
 
-async def backfill() -> Backfilled:
+async def backfill(rescue: Path | None = None) -> Backfilled:
     """Read everything Aula still has into the archive: all posts and all threads.
+
+    With ``rescue``, a rescue copy is read instead of Aula (nothing is fetched
+    from Aula): its files are copied into the archive, and its item versions are
+    saved as of the date the copy was taken.
 
     Touches neither the inbox nor intake (``seen``, ``pending``, ``last_fetch``),
     and can be run again: what is already archived is skipped. Ends with a
     backup, like ``fetch``; a failed backup is a warning.
     """
     warnings: list[str] = []
-    async with await open_client() as client:
-        profile = await client.get_profile()
-        result = await _backfill_from(_AulaBackfill(client, profile, warnings), warnings)
+    if rescue is not None:
+        copy = _RescueBackfill(rescue)
+        result = await _backfill_from(copy, warnings, at=copy.taken)
+    else:
+        async with await open_client() as client:
+            profile = await client.get_profile()
+            result = await _backfill_from(_AulaBackfill(client, profile, warnings), warnings)
     _back_up(warnings)
     return result

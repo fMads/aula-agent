@@ -630,3 +630,125 @@ def test_a_failed_backup_is_a_warning_after_backfill(aula):
     [warning] = result.warnings
     assert "Backup" in warning and "Google-adgang" in warning
     assert archived("post:10") is not None
+
+
+# ------------------------------------------------------------------ backfill from a rescue copy
+
+RESCUE_DATE = "2024-11-05"  # not today, so "saved as of the copy" shows
+
+
+def write_rescue(folder, posts, threads, messages, files):
+    """A rescue copy in the format of the one taken 5/11 2026: Aula's raw JSON, and the files
+    under ``files/<item folder>/<attachment id>-<name>``."""
+    folder.mkdir(parents=True)
+    (folder / "posts.json").write_text(json.dumps([p._raw for p in posts]))
+    (folder / "threads.json").write_text(json.dumps([{"thread": t, "messages": messages[str(t["id"])]} for t in threads]))
+    (folder / "child_albums.json").write_text(json.dumps({"1": [{"id": 900, "mediaType": "image", "tags": []}]}))
+    for name, content in files.items():
+        (folder / "files" / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / "files" / name).write_bytes(content)
+    (folder / "files" / "photos_1").mkdir()
+    (folder / "files" / "photos_1" / "900-billede.jpeg").write_bytes(b"tagged photo")  # not until tagged photos are built
+    return folder
+
+
+def rescue_data():
+    posts = [
+        post(10, "Skolefest", 20, attachments=[file_att(5, "program.pdf"), image(7)]),
+        post(11, "Samtykke", 200, attachments=[
+            {"id": 90, "document": {"id": 9, "title": "Samtykke", "documentType": "Generic"}},
+            {"id": 91, "link": {"service": "OneDrive", "name": "Mappe", "url": "https://onedrive/x"}},
+        ]),
+    ]
+    threads = [
+        {"id": 40, "subject": "Juleklip", "lastMessageDate": iso(3)},
+        {"id": 41, "subject": "Fortroligt", "lastMessageDate": iso(100), "sensitive": True},
+    ]
+    messages = {
+        "40": [
+            message("m1.1", 3, sender={"fullName": "Lærer Hansen"}, attachments=[file_att(6, "seddel.docx")]),
+            {"id": "s1", "messageType": "RecipientsRemoved", "sendDateTime": iso(2)},
+            message("f1", 2, messageType="Forward", attachments=None),
+        ],
+        "41": [message("a", 100)],
+    }
+    files = {
+        "post_10/5-program.pdf": b"%PDF-1.4",
+        "post_10/7-7.jpg": b"%PDF-1.4",
+        "message_40_m1.1/6-seddel.docx": b"%PDF-1.4",
+    }
+    return posts, threads, messages, files
+
+
+def archive_contents():
+    """Everything a reader of the archive sees, except when it was saved."""
+    with archive.open() as a:
+        items = a.items()
+        threads = {i.thread_id: a.thread(i.thread_id) for i in items if i.thread_id}
+    return (
+        [
+            (i.key, i.kind, i.thread_id, i.sensitive,
+             [(v.title, v.author, v.date, v.groups, v.child_ids, v.body, v.raw) for v in i.versions],
+             [(f.attachment_id, f.kind, f.name, f.detail, f.path, f.path and (store.DATA_DIR / f.path).read_bytes())
+              for f in i.files])
+            for i in items
+        ],
+        {tid: (t.raw, t.messages) for tid, t in threads.items()},
+    )
+
+
+def test_backfill_from_a_rescue_copy_archives_the_same_as_from_aula(aula, data_dir, monkeypatch):
+    posts, threads, messages, files = rescue_data()
+    rescue = write_rescue(data_dir / f"rescue-{RESCUE_DATE}", posts, threads, messages, files)
+    store.save_config({"children": {"1": {"name": "Emma", "institution": "Skolen"}}})
+    client = FakeAula([child(1, "Emma")], posts, threads, messages)
+    aula["client"] = client
+
+    from_rescue = asyncio.run(aula_source.backfill(rescue))
+
+    assert (client.post_requests, client.thread_cutoffs, client.downloads) == ([], [], [])  # nothing from Aula
+    assert (from_rescue.posts, from_rescue.threads, from_rescue.messages) == (2, 2, 3)
+    rescued = archive_contents()
+
+    monkeypatch.setattr(store, "DATA_DIR", data_dir / "from-aula")
+    run_backfill()
+    assert len(client.downloads) == 3
+    assert archive_contents() == rescued
+    assert len(rescued[0]) == 5 and not (data_dir / "attachments" / "photos_1").exists()
+
+
+def test_a_rescue_copy_is_saved_as_of_its_date_and_aula_later_adds_no_duplicates(aula, data_dir):
+    posts, threads, messages, files = rescue_data()
+    rescue = write_rescue(data_dir / f"rescue-{RESCUE_DATE}", posts, threads, messages, files)
+    store.save_config({"children": {"1": {"name": "Emma", "institution": "Skolen"}}})
+    client = FakeAula([child(1, "Emma")], posts, threads, messages)
+    aula["client"] = client
+
+    first = asyncio.run(aula_source.backfill(rescue))
+    again = asyncio.run(aula_source.backfill(rescue))
+    run_backfill()  # the same items, now from Aula (new signed URLs would not matter either)
+    run_fetch()
+
+    assert (first.new_versions, again.new_versions) == (5, 0)
+    with archive.open() as a:
+        items = a.items()
+    assert len(items) == 5 and all(len(i.versions) == 1 for i in items)
+    assert {v.saved_at[:10] for i in items for v in i.versions} == {RESCUE_DATE}
+    assert client.downloads == []  # the files were copied in from the rescue copy
+    assert archive.status().last_saved.startswith(RESCUE_DATE)
+
+
+def test_a_file_missing_from_the_rescue_copy_is_downloaded_from_aula_later(aula, data_dir):
+    posts, threads, messages, files = rescue_data()
+    del files["post_10/5-program.pdf"]
+    rescue = write_rescue(data_dir / f"rescue-{RESCUE_DATE}", posts, threads, messages, files)
+    client = FakeAula([child(1, "Emma")], posts, threads, messages)
+    aula["client"] = client
+
+    result = asyncio.run(aula_source.backfill(rescue))
+    assert [w for w in result.warnings if "program.pdf" in w] and client.downloads == []
+    assert [f.path for f in archived("post:10").files] == [None, "attachments/post_10/7-7.jpg"]
+
+    run_backfill()
+    assert client.downloads == ["https://files/x"]
+    assert archived("post:10").files[0].path == "attachments/post_10/5-program.pdf"

@@ -107,7 +107,7 @@ def test_backfill_without_aula_login_exits_like_fetch_and_never_starts_mitid(mon
 
 
 def test_backfill_logs_what_it_archived(monkeypatch):
-    async def backfilled():
+    async def backfilled(rescue=None):
         return aula_source.Backfilled(posts=9, threads=30, messages=69, new_versions=78, warnings=["Tråd 5 blev ikke læst helt"])
 
     monkeypatch.setattr(aula_source, "backfill", backfilled)
@@ -131,3 +131,23 @@ def test_backup_takes_a_backup_now(monkeypatch, google):
     assert r.exit_code == 0, r.output
     assert google.in_folder("Aula-arkiv") == ["archive.sqlite"]
     assert Ledger.load().last_run("backup")["outcome"] == "ok"
+
+
+def test_backfill_from_a_rescue_copy_needs_no_aula_login(tmp_path):
+    rescue = tmp_path / "rescue-2024-11-05"
+    (rescue / "files").mkdir(parents=True)
+    (rescue / "posts.json").write_text(json.dumps([{"id": 10, "title": "Skolefest", "content": {"html": "<p>Fredag</p>"}, "ownerProfile": {"id": 3, "profileId": 4, "fullName": "Lærer Hansen"}}]))
+    (rescue / "threads.json").write_text("[]")
+
+    r = CliRunner().invoke(cli.main, ["backfill", str(rescue)])
+
+    assert r.exit_code == 0, r.output
+    assert Ledger.load().last_run("backfill")["summary"].startswith("1 opslag, 0 tråde med 0 beskeder, 1 nye versioner")
+
+
+def test_backfill_refuses_a_rescue_copy_without_its_date(tmp_path):
+    rescue = tmp_path / "redningskopi"
+    rescue.mkdir()
+    r = CliRunner().invoke(cli.main, ["backfill", str(rescue)])
+    assert r.exit_code == 1 and "rescue-2026-11-05" in r.output
+    assert Ledger.load().last_run("backfill")["outcome"] == "error"
