@@ -22,7 +22,7 @@ Når du bliver bedt om at køre den natlige Aula-synkronisering, så gør præci
 
 1. Kør `uv run aula-agent fetch`.
    - Exit-kode 3 (`AULA_LOGIN_REQUIRED`): stop (gå til "Afslutning af tråden"). Svar kort, at Aula-login er udløbet, og gengiv kommandoens besked om hvor/hvordan brugeren logger ind. Prøv **aldrig** selv at logge ind (MitID kan låse kontoen).
-2. Læs `data/inbox.json`. Hvis `items` er tom: svar "Intet nyt fra Aula" og gå til "Afslutning af tråden".
+2. Læs `data/inbox.json`. Hvis både `items` og `to_classify` er tomme: svar "Intet nyt fra Aula" og gå til "Afslutning af tråden". Er kun `items` tom, så spring til classification af køen (trin 4, `to_classify`).
 3. Læs hvert item: `body` og vedhæftede filer (`attachments[].path` er relativ til `data/`) – indbydelser har ofte dato og detaljer.
    - PDF'er: læs dem direkte, hvis dit værktøj kan (Claude Code: Read). Ellers: `uv run aula-agent pdf-text <attachments/...pdf>`.
    - Billeder: se dem med dit billedværktøj (Claude Code: Read, Codex: view_image), hvis du har et.
@@ -85,10 +85,15 @@ Når du bliver bedt om at køre den natlige Aula-synkronisering, så gør præci
    - `summary`: højst 120 tegn på én linje med det praktiske: hvad, hvornår, hvad skal man huske. Ikke "Kære forældre …". **Ingen** navne på andre børn eller forældre. Svar må udelade den.
    - Følsomme tråde (`"sensitive": true` på item'et): **intet** `summary`.
    - `child_ids`: kun når item'ets `child_ids` er tom, efter samme regler som for events. Har Aula sat børnene, så udelad den (Aulas vinder).
+
+   Køen (`to_classify`): items i arkivet, som aldrig er klassificeret (fra backfill, ældre end cutoff, eller en ny version af et item). Højst 100, ældste først, i samme form som `items`.
+   - Skriv kun en classification for dem – **ingen** events, og de skal ikke i `processed`. Et event med et af dem som `source` bliver afvist.
+   - Klassificér ud fra tekst, emne og filnavne. Læs kun en fil, når det er nødvendigt for at forstå item'et.
+   - Det er OK at udelade et item, fx hvis det er svært eller der er mange. Det kommer igen i køen næste nat.
 5. Kør `uv run aula-agent apply data/events-<dato>.json --dry-run`. Ved exit-kode 5 så ret filen (beskeden lister alle fejl) og prøv igen. Prøvekørslen viser for hvert event og barn, om det bliver oprettet, opdateret, slettet eller sprunget over. Står der `Slet: … (ikke længere med)`, så tjek at barnet med vilje er udeladt.
 6. Kør `uv run aula-agent apply data/events-<dato>.json`.
    - Exit-kode 4 (`GOOGLE_LOGIN_REQUIRED`): stop og bed brugeren forbinde Google igen; gengiv kommandoens besked om hvordan.
-7. Svar med en kort dansk opsummering: hvad der blev oprettet/opdateret/slettet (dato + titel + barn), og hvad du var i tvivl om.
+7. Svar med en kort dansk opsummering: hvad der blev oprettet/opdateret/slettet (dato + titel + barn), hvor mange items fra køen (`to_classify`) du klassificerede, og hvad du var i tvivl om.
 
 ### Afslutning af tråden (kun i T3 Code – altid, også når du stopper tidligt i trin 1, 2 eller 6)
 

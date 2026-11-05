@@ -25,6 +25,7 @@ from aula import FileTokenStorage
 from aula.api_client import AulaApiClient
 from aula.auth_flow import authenticate_and_create_client
 from aula.models.attachment import Attachment
+from aula.models.message import Message
 from aula.models.pagination import PaginationResult
 from aula.models.post import Post
 from aula.utils.html import html_to_markdown
@@ -43,6 +44,7 @@ MAX_POST_PAGES = 100  # a safety net; Aula only keeps posts for some months
 MAX_THREAD_ATTEMPTS = 3  # read an incomplete thread again this many nights, then give up
 CALENDAR_DAYS = 112  # how far ahead to read Aula's own calendar
 CALENDAR_CHUNK_DAYS = 28  # Aula answers 403 for ranges much longer than a month
+MAX_TO_CLASSIFY = 100  # unclassified items per night, so a big backfill does not crowd out the calendar
 DOWNLOAD_FAILED = "Download fejlede"
 
 
@@ -345,6 +347,52 @@ async def _take_messages(
             warnings.append(f"Tråd {thread_id} blev ikke læst helt ({msgs.termination_reason}); prøver igen næste gang.")
 
 
+def _queued_item(arch: archive.Archive, item: archive.Item) -> dict[str, Any]:
+    """An unclassified item for the inbox's ``to_classify``: the shape of an
+    inbox item, built from the archive's newest version of it."""
+    version = item.versions[-1]
+    common = {
+        "child_ids": version.child_ids,
+        "body": version.body[:MAX_BODY_CHARS],
+        "attachments": _inbox_attachments(item.files),
+        "archive_version": version.id,
+        "sensitive": item.sensitive,
+    }
+    if item.kind == "post":
+        post = Post.from_dict(version.raw)
+        return {
+            "key": item.key,
+            "type": "post",
+            "title": version.title,
+            "author": version.author,
+            "published": _iso(_aware(post.publish_at or post.timestamp)),
+            "edited": _iso(post.edited_at),
+            "groups": version.groups,
+            **common,
+        }
+    thread = arch.thread(item.thread_id) if item.thread_id else None
+    return {
+        "key": item.key,
+        "type": "message",
+        "thread_id": item.thread_id,
+        "child_hints": _child_hints(thread.raw) if thread else [],
+        "subject": version.title,
+        "sender": version.author,
+        "sent": _iso(Message.from_dict(version.raw).send_datetime),
+        **common,
+    }
+
+
+def _to_classify(ledger: Ledger) -> list[dict[str, Any]]:
+    """Unclassified items for the agent: newest version without classification and not
+    pending (the agent classifies those anyway), at most :data:`MAX_TO_CLASSIFY`, oldest first."""
+    with archive.open() as arch:
+        return [
+            _queued_item(arch, item)
+            for item in arch.unclassified(exclude=ledger.pending_keys(), limit=MAX_TO_CLASSIFY)
+        ]
+
+
 async def _read_aula_calendar(client, profile, now: dt.datetime, warnings: list[str]) -> list[dict[str, Any]]:
     """What Aula's own calendar already has (not lessons), so the agent can skip duplicates."""
     if not profile.children:
@@ -408,7 +456,7 @@ async def fetch(*, first_run_days: int = FIRST_RUN_DAYS) -> dict[str, Any]:
     ledger.last_fetch = now.isoformat(timespec="seconds")
     ledger.save()
     _back_up(warnings)
-    contract.write_inbox(ledger, cfg, aula_calendar, warnings)
+    contract.write_inbox(ledger, cfg, aula_calendar, warnings, to_classify=_to_classify(ledger))
     return {"new": intake.new_keys, "pending": len(ledger.pending_keys()), "warnings": warnings, "first_run": first_run}
 
 
