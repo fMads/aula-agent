@@ -53,7 +53,6 @@ class FakeAula:
         self.calendar_ranges = []
         self.incomplete_threads = set()
         self.broken_urls = set()
-        self.paged = False
 
     async def __aenter__(self):
         return self
@@ -68,9 +67,8 @@ class FakeAula:
         self.post_requests.append(list(ids))
         if GUARDIAN_PROFILE not in ids:
             return []
-        if not self.paged:
-            return self.posts
-        return self.posts[(page - 1) * limit : page * limit]
+        offset = page - 1  # the library sends page-1 as index, which Aula reads as an element offset
+        return self.posts[offset : offset + limit]
 
     async def get_all_message_threads_result(self, cutoff):
         return PaginationResult(items=self.threads, complete=True, termination_reason="cutoff")
@@ -250,22 +248,38 @@ def test_failed_download_is_retried_and_handed_over_again_once_it_works(aula, da
     assert run_fetch()["new"] == []
 
 
-def test_posts_are_read_page_by_page_until_older_than_the_cutoff(aula):
-    posts = [post(i, f"Opslag {i}", 0.1 * i) for i in range(1, 40)] + [post(99, "Gammelt", 60)] * 30
+def test_all_40_new_posts_reach_the_inbox_once(aula):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(i, f"Opslag {i}", 0.1 * i) for i in range(1, 41)], [], {})
+    summary = run_fetch()
+    inbox_keys = [i["key"] for i in json.loads(store.INBOX_FILE.read_text())["items"]]
+    assert sorted(inbox_keys) == sorted(f"post:{i}" for i in range(1, 41))
+    assert summary["warnings"] == []
+
+
+def test_posts_older_than_the_cutoff_are_read_but_not_handed_over(aula):
+    posts = [post(i, f"Nyt {i}", 0.1 * i) for i in range(1, 36)] + [post(100 + i, f"Gammelt {i}", 60 + i) for i in range(30)]
     client = FakeAula([child(1, "Emma")], posts, [], {})
-    client.paged = True
     aula["client"] = client
     summary = run_fetch()
-    assert len(summary["new"]) == 39
-    assert len(client.post_requests) == 3  # page 3 holds old posts only: stop there
+    assert sorted(summary["new"]) == sorted(f"post:{i}" for i in range(1, 36))
+    assert len(client.post_requests) == 3  # read past the old posts to the short last page
 
 
-def test_one_old_pinned_post_does_not_stop_paging(aula):
-    posts = [post(500, "Fastgjort", 200)] + [post(i, f"Opslag {i}", 0.01 * i) for i in range(1, 40)]
-    client = FakeAula([child(1, "Emma")], posts, [], {})
-    client.paged = True
+def test_paging_stops_at_an_empty_page(aula):
+    client = FakeAula([child(1, "Emma")], [post(i, f"Opslag {i}", 0.1 * i) for i in range(1, 61)], [], {})
     aula["client"] = client
-    assert len(run_fetch()["new"]) == 39
+    summary = run_fetch()
+    assert len(summary["new"]) == 60 and summary["warnings"] == []
+    assert len(client.post_requests) == 3  # two full pages, then an empty one
+
+
+def test_paging_warns_when_the_page_limit_is_reached(aula, monkeypatch):
+    monkeypatch.setattr(aula_source, "MAX_POST_PAGES", 2)
+    client = FakeAula([child(1, "Emma")], [post(i, f"Opslag {i}", 0.1 * i) for i in range(1, 91)], [], {})
+    aula["client"] = client
+    summary = run_fetch()
+    assert len(summary["new"]) == 60 and len(client.post_requests) == 2
+    assert any("flere end 60 opslag" in w for w in summary["warnings"])
 
 
 def test_failed_download_in_a_message_is_retried(aula):
