@@ -417,6 +417,24 @@ def test_a_post_gets_a_new_version_only_when_its_content_changes(aula):
     assert len(archived("post:10").versions) == 3
 
 
+def test_a_new_signed_url_in_the_text_gives_no_new_version(aula):
+    def text(sig, extra=""):
+        return (f'<p>Se <a href="https://media.aula.dk/plan.pdf?Expires=1&Signature={sig}#side2">planen</a>{extra}</p>'
+                f'<img src="https://media.aula.dk/kort.jpg?sig={sig}">')
+
+    client = FakeAula([child(1, "Emma")], [post(10, "Skolefest", 1, html=text("a"))], [], {})
+    aula["client"] = client
+    run_fetch()
+
+    client.posts = [post(10, "Skolefest", 1, html=text("b"))]
+    run_fetch()
+    assert len(archived("post:10").versions) == 1
+
+    client.posts = [post(10, "Skolefest", 1, html=text("c", " og kortet"))]
+    run_fetch()
+    assert len(archived("post:10").versions) == 2
+
+
 def test_a_file_that_failed_is_downloaded_into_the_archive_on_the_next_fetch(aula):
     old = post(20, "Gammelt opslag", 90, attachments=[file_att(7, "plan.pdf", url="https://files/broken")])
     client = FakeAula([child(1, "Emma")], [old], [], {})

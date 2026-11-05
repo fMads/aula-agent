@@ -402,9 +402,18 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+_URL_QUERY = re.compile(r"(https?://[^\s?#()<>\[\]\"']+)[?#][^\s()<>\[\]\"']*")
+
+
+def _without_signatures(text: str) -> str:
+    """The text with the query string and fragment cut off its URLs, where signatures and expiry times go."""
+    return _URL_QUERY.sub(r"\1", text)
+
+
 def _version_hash(title: str | None, body: str, attachments: list[Attachment]) -> str:
     ids = sorted(_attachment_id(a) for a in attachments)
-    return hashlib.sha256(json.dumps([title or "", body, ids], ensure_ascii=False).encode()).hexdigest()[:16]
+    content = [_without_signatures(title or ""), _without_signatures(body), ids]
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False).encode()).hexdigest()[:16]
 
 
 def stored_name(att: Attachment) -> str:
