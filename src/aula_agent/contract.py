@@ -401,19 +401,29 @@ def _span_text(c: Classification) -> str:
     return f" {c.span_start}" + (f"–{c.span_end}" if c.span_end != c.span_start else "")
 
 
+def _queued() -> dict[str, int | None]:
+    """The inbox's ``to_classify``, as item key -> the version the agent got."""
+    file = store.path("INBOX_FILE")
+    if not file.exists():
+        return {}
+    items = json.loads(file.read_text(encoding="utf-8")).get("to_classify") or []
+    return {i["key"]: i.get("archive_version") for i in items}
+
+
 def accept(raw: str | dict[str, Any], cfg: dict[str, Any], ledger: Ledger, *, dry_run: bool = False, echo=print) -> EventsDoc:
     """Validate an events document against the inbox and the archive, and save its
     classifications and new topics in the archive.
 
     This happens before anything goes to Google, so a missing Google login does
-    not lose them. A classification is saved for the item version the agent got.
+    not lose them. A classification is saved for the item version the agent got:
+    the pending item's, or the one in the inbox's ``to_classify``.
     With ``dry_run`` they are only shown. Raises :class:`EventError` (nothing saved).
     """
-    pending = ledger.pending_keys()
+    pending, queued = ledger.pending_keys(), _queued()
     with archive.open() as arch:
-        sensitive = [key for key in pending if (item := arch.item(key)) and item.sensitive]
+        sensitive = [key for key in [*pending, *queued] if (item := arch.item(key)) and item.sensitive]
         doc = parse(
-            raw, children=cfg["children"], pending_keys=pending,
+            raw, children=cfg["children"], pending_keys=pending, to_classify=queued,
             topics=[t.name for t in arch.topics()], sensitive_keys=sensitive,
         )
         if dry_run:
@@ -425,7 +435,7 @@ def accept(raw: str | dict[str, Any], cfg: dict[str, Any], ledger: Ledger, *, dr
         for name, description in doc.new_topics.items():
             arch.create_topic(name, description)
         for key, c in doc.classifications.items():
-            version = (ledger.pending_item(key) or {}).get("archive_version")
+            version = queued[key] if key in queued else (ledger.pending_item(key) or {}).get("archive_version")
             if not arch.classify(key, c, version=version):
                 echo(f"ADVARSEL: {key} findes ikke i arkivet; dens classification er ikke gemt.")
     return doc
@@ -434,8 +444,19 @@ def accept(raw: str | dict[str, Any], cfg: dict[str, Any], ledger: Ledger, *, dr
 # ----------------------------------------------------------------------------- inbox out
 
 
-def write_inbox(ledger: Ledger, cfg: dict[str, Any], aula_calendar: list[dict[str, Any]], warnings: list[str]) -> None:
-    """Write ``data/inbox.json`` for the agent (shape documented in AGENTS.md)."""
+def write_inbox(
+    ledger: Ledger,
+    cfg: dict[str, Any],
+    aula_calendar: list[dict[str, Any]],
+    warnings: list[str],
+    *,
+    to_classify: list[dict[str, Any]] = (),
+) -> None:
+    """Write ``data/inbox.json`` for the agent (shape documented in AGENTS.md).
+
+    ``to_classify`` are the unclassified items, in the shape of ``items``; ``apply``
+    reads them back from here, as the ones the agent was given.
+    """
     from zoneinfo import ZoneInfo
 
     today = dt.date.today().isoformat()
@@ -451,6 +472,7 @@ def write_inbox(ledger: Ledger, cfg: dict[str, Any], aula_calendar: list[dict[st
                 {"id": int(cid), **{k: c.get(k) for k in ("name", "institution")}} for cid, c in cfg["children"].items()
             ],
             "items": ledger.pending(),
+            "to_classify": list(to_classify),
             "topics": topics,
             "existing_events": [
                 {"key": u.key, "child_ids": u.child_ids, "title": u.title, "start": u.start, "end": u.end, "source": u.source}
