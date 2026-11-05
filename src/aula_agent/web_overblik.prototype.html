@@ -1,0 +1,298 @@
+<!doctype html>
+<!--
+  PROTOTYPE – smid væk. Ticket #2 (overblik over Aula-information).
+  Tre varianter af en overbliks-side i web.py, med opdigtede eksempeldata (ingen rigtige navne eller indhold).
+  Skift med ?variant=A|B|C, pilene i bunden eller ←/→. "I dag" er torsdag 5/11 2026 (uge 45).
+  Åbn filen direkte i en browser. Intet gemmes.
+-->
+<html lang="da"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Overblik – PROTOTYPE</title>
+<style>
+:root{--fg:#1d1d1f;--mut:#6e6e73;--line:#e5e5ea;--ok:#1a7f37;--bad:#c62828;--acc:#0b57d0;--bg:#fff;--soft:#f5f5f7}
+@media (prefers-color-scheme:dark){:root{--fg:#f2f2f7;--mut:#a1a1a6;--line:#38383a;--ok:#3fb950;--bad:#ff6b6b;--acc:#8ab4f8;--bg:#111;--soft:#1c1c1e}body{background:#111}}
+*{box-sizing:border-box}body{font:16px/1.5 system-ui,sans-serif;color:var(--fg);max-width:46rem;margin:0 auto;padding:1.25rem 1.25rem 6rem}
+body.wide{max-width:72rem}
+h1{font-size:1.4rem;margin:.2rem 0 1.2rem}h2{font-size:1.05rem;margin:2rem 0 .6rem}h3{font-size:.95rem;margin:1.2rem 0 .4rem}
+a{color:var(--acc)}.mut{color:var(--mut);font-size:.9rem}
+ul.list{list-style:none;padding:0;margin:0}ul.list li{border-top:1px solid var(--line);padding:.55rem 0;display:flex;gap:.8rem;align-items:baseline}
+ul.list li .grow{flex:1;min-width:0}.date{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--mut);min-width:6.5rem}
+button,.btn{font:inherit;border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:8px;padding:.35rem .8rem;cursor:pointer}
+input[type=search]{font:inherit;padding:.5rem .7rem;border:1px solid var(--line);border-radius:10px;background:transparent;color:var(--fg);width:100%}
+.nav{display:flex;gap:1rem;margin:-.6rem 0 1.2rem;font-size:.9rem}.nav b{border-bottom:2px solid var(--acc)}
+.chips{display:flex;flex-wrap:wrap;gap:.35rem;margin:.4rem 0}
+.chip{font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:.1rem .6rem;cursor:pointer;background:transparent;color:var(--fg)}
+.chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.tag{font-size:.72rem;border-radius:4px;padding:0 .35rem;margin-right:.3rem;white-space:nowrap;border:1px solid var(--line);color:var(--mut)}
+.art-info{background:#e8f0fe;color:#174ea6;border-color:#e8f0fe}.art-arrangement{background:#e6f4ea;color:#0d652d;border-color:#e6f4ea}
+.art-periode{background:#fef7e0;color:#8a5a00;border-color:#fef7e0}.art-frist{background:#fce8e6;color:#a50e0e;border-color:#fce8e6}
+@media (prefers-color-scheme:dark){.art-info,.art-arrangement,.art-periode,.art-frist{background:transparent}}
+.row{cursor:pointer}.row:hover .ttl{text-decoration:underline}
+.ttl{font-weight:500}.sum{color:var(--mut);font-size:.88rem;display:block}
+.over{opacity:.45}.hidden{display:none!important}
+.now{border:1px solid var(--line);border-radius:12px;padding:.6rem .9rem;background:var(--soft)}
+.now li:first-child{border-top:0}
+.week{margin-top:1.4rem}.week h3{display:flex;justify-content:space-between;border-bottom:2px solid var(--line);padding-bottom:.2rem}
+.week.cur h3{border-color:var(--acc)}
+.ev{font-size:.85rem}.ev:before{content:"📅 "}
+.board{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;align-items:start}
+.col{border:1px solid var(--line);border-radius:12px;padding:.6rem .8rem}.col h2{margin:.2rem 0 .4rem;font-size:.95rem}
+.col ul.list li{display:block}.col .date{min-width:0;font-size:.8rem}
+@media (max-width:900px){.board{grid-template-columns:1fr 1fr}}@media (max-width:560px){.board{grid-template-columns:1fr}}
+.split{display:grid;grid-template-columns:13rem 1fr;gap:1.4rem}
+@media (max-width:700px){.split{grid-template-columns:1fr}}
+.facet h3{margin:.8rem 0 .2rem;font-size:.8rem;color:var(--mut);font-weight:500;text-transform:uppercase;letter-spacing:.04em}
+mark{background:#fff3a3;color:inherit}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(34rem,100vw);background:var(--bg);border-left:1px solid var(--line);box-shadow:-8px 0 30px #0002;padding:1rem 1.25rem 6rem;overflow:auto;z-index:10}
+.drawer .x{float:right}.body{white-space:pre-wrap;border-left:3px solid var(--line);padding-left:.8rem;margin:.8rem 0}
+.lock{color:var(--bad)}
+.proto{position:fixed;left:50%;bottom:1rem;transform:translateX(-50%);background:#111;color:#fff;border-radius:999px;padding:.35rem .5rem;display:flex;gap:.5rem;align-items:center;box-shadow:0 6px 24px #0006;z-index:20;font-size:.85rem;white-space:nowrap}
+.proto button{color:#fff;border-color:#444;padding:.15rem .6rem;border-radius:999px}.proto select{font:inherit;background:#222;color:#fff;border:1px solid #444;border-radius:999px;padding:.1rem .4rem}
+.proto .lbl{min-width:10rem;text-align:center;font-weight:600}
+@media (max-width:560px){.proto{font-size:.75rem;gap:.3rem}.proto>span:first-child{display:none}.proto .lbl{min-width:0}}
+.embed body{max-width:none!important;padding:0;margin:0}
+.embed #frame{position:relative;height:1000px;overflow:hidden;border:1px solid var(--line);border-radius:12px}
+.embed #shell{height:1000px;overflow:auto;padding:1rem 1rem 5rem}
+.embed .drawer,.embed .proto{position:absolute}.embed .drawer{padding-bottom:5rem}
+</style></head><body>
+<div id="frame"><div id="shell">
+<h1><a href="#" style="color:inherit;text-decoration:none">Aula → Kalender</a></h1>
+<div class="nav"><a href="#">Status</a><b>Overblik</b></div>
+<div id="app"></div>
+</div><div id="drawer"></div>
+<div class="proto">
+  <span style="opacity:.6">PROTOTYPE</span>
+  <button id="prev">◀</button><span class="lbl" id="vlabel"></span><button id="next">▶</button>
+  <label>Overstået <select id="over"><option value="dim">dæmp</option><option value="hide">skjul</option><option value="show">vis</option></select></label>
+</div>
+</div>
+<script>
+if (window.self !== window.top || !/^(file|https?):$/.test(location.protocol)) document.documentElement.classList.add("embed");  // vist inline i T3
+// ------------------------------------------------------------------ eksempeldata (opdigtet)
+const TODAY = "2026-11-05";
+const CHILDREN = {A: "Barn A (2.B)", B: "Barn B (0.A)"};
+// art: info | arrangement | periode | frist. period: hvornår det gælder. topics: emner. summary: agentens resumé.
+const ITEMS = [
+ {key:"post:1001", kind:"post", title:"Velkommen til nyt skoleår", from:"Klasselærer 2.B", date:"2026-08-10", children:["A"], art:"info", topics:["skoleåret"],
+  summary:"Skema, idræt tirsdag og torsdag, kontakt via Aula.", body:"Kære forældre\n\nVelkommen tilbage. Vedhæftet er skemaet for 2.B. Der er idræt tirsdag og torsdag – husk skiftetøj. Skriv til mig i Aula, hvis der er noget.",
+  files:[{name:"Skema 2.B.pdf",kind:"file"}]},
+ {key:"post:1011", kind:"post", title:"Samtykke til foto og video", from:"Kontoret", date:"2026-08-20", children:["A","B"], art:"frist", period:{from:"2026-09-01",to:"2026-09-01"}, topics:["samtykke"],
+  summary:"Udfyld samtykke i Aula senest 1/9.", body:"Alle forældre bedes tage stilling til samtykkerne i Aula senest 1. september.",
+  files:[{name:"Samtykkeerklæring",kind:"secure_document"}], events:["post:1011#1"]},
+ {key:"post:1009", kind:"post", title:"Velkommen i 0.A", from:"Klasselærer 0.A", date:"2026-08-11", children:["B"], art:"info", topics:["skoleåret"],
+  summary:"Mødetid 8.00, madpakke og frugt, skiftetøj i kurven.", body:"Velkommen til jer alle. Vi mødes kl. 8.00 i klassen. Husk madpakke, frugt og skiftetøj, som kan ligge i kurven.", files:[]},
+ {key:"post:1010", kind:"post", title:"Legeaftaler og fødselsdage", from:"Kontaktforælder 0.A", date:"2026-09-05", children:["B"], art:"info", topics:["fødselsdage"],
+  summary:"Aftaler i klassen om invitationer og gaver.", body:"Vi har på forældremødet aftalt, at alle inviteres, og at gaven højst koster 50 kr.",
+  files:[{name:"Aftaler for fødselsdage.pdf",kind:"file"}]},
+ {key:"message:t1:m1", kind:"message", thread:"t1", title:"Forældremøde 2.B", from:"Klasselærer 2.B", date:"2026-09-02", children:["A"], art:"arrangement", topics:["forældremøde"],
+  summary:"Torsdag 17/9 kl. 19–21 i klassen.", body:"Der er forældremøde torsdag d. 17/9 kl. 19–21. Dagsorden følger.", files:[], events:["message:t1:m1#1"]},
+ {key:"message:t1:m2", kind:"message", thread:"t1", title:"Forældremøde 2.B", from:"Kontaktforælder 2.B", date:"2026-09-20", children:["A"], art:"info", topics:["forældremøde"],
+  summary:"Referat: lektiecafé, trivsel, juleklip.", body:"Her er referatet fra mødet. Tak for fremmødet.", files:[{name:"Referat forældremøde.pdf",kind:"file"}]},
+ {key:"post:1005", kind:"post", title:"Ny ordning for afhentning i SFO", from:"SFO", date:"2026-09-15", children:["A","B"], art:"info", important:true, topics:["SFO","afhentning"],
+  summary:"Afhentning skal registreres i Aula, ikke på tavlen.", body:"Fra 1/10 skal I registrere afhentning i Aula-appen. Tavlen ved døren tages ned.", files:[]},
+ {key:"post:1007", kind:"post", title:"Efterårsferie i SFO", from:"SFO", date:"2026-09-01", children:["A","B"], art:"periode", period:{from:"2026-10-12",to:"2026-10-16"}, topics:["ferie","SFO"],
+  summary:"Tilmelding senest 20/9. Åbent 7–16.", body:"SFO har åbent i efterårsferien kl. 7–16. Husk tilmelding senest 20/9.", files:[], events:["post:1007#1","post:1007#2"]},
+ {key:"message:t3:m1", kind:"message", thread:"t3", title:"Tur til skoven", from:"Klasselærer 2.B", date:"2026-09-22", children:["A"], art:"arrangement", topics:["tur"],
+  summary:"Tirsdag 29/9, gummistøvler og madpakke.", body:"Vi tager i skoven tirsdag. Husk gummistøvler, regntøj og madpakke.", files:[], events:["message:t3:m1#1"]},
+ {key:"message:t3:m2", kind:"message", thread:"t3", title:"Tur til skoven", from:"Klasselærer 2.B", date:"2026-09-30", children:["A"], art:"info", topics:["tur"],
+  summary:"Billeder fra turen.", body:"Tak for en dejlig dag. Her er nogle billeder.", files:[1,2,3,4,5,6].map(n=>({name:`IMG_0${n}.jpg`,kind:"image"}))},
+ {key:"message:t5:m1", kind:"message", thread:"t5", title:"Motionsdag", from:"Kontoret", date:"2026-10-05", children:["A","B"], art:"arrangement", topics:["motionsdag"],
+  summary:"Fredag 9/10, skolen slutter 12.", body:"Motionsdag fredag. Skolen slutter kl. 12, SFO åbner derefter.", files:[], events:["message:t5:m1#1"]},
+ {key:"message:t2:m1", kind:"message", thread:"t2", title:"Lus i klassen", from:"Klasselærer 2.B", date:"2026-10-06", children:["A"], art:"info", topics:["sundhed"],
+  summary:"Tjek hår og red med tættekam.", body:"Der er konstateret lus i klassen. Tjek venligst jeres barn.", files:[]},
+ {key:"post:1006", kind:"post", title:"Skolefoto", from:"Kontoret", date:"2026-10-14", children:["A","B"], art:"arrangement", topics:["skolefoto"],
+  summary:"Onsdag 18/11. Bestil billeder senest 4/12.", body:"Fotografen kommer onsdag d. 18/11. Billederne kan bestilles bagefter, senest 4/12.", files:[], events:["post:1006#1","post:1006#2"]},
+ {key:"post:1002", kind:"post", title:"Svømning i fire uger", from:"Idrætslærer", date:"2026-10-20", children:["A"], art:"periode", period:{from:"2026-11-04",to:"2026-11-25"}, topics:["svømning"],
+  summary:"Onsdage kl. 10–11.30. Badetøj og håndklæde.", body:"I de næste fire uger har 2.B svømning om onsdagen kl. 10–11.30 i stedet for idræt.", files:[], events:["post:1002#1"]},
+ {key:"message:t6:m1", kind:"message", thread:"t6", title:"Opfølgning på samtalen", from:"Klasselærer 2.B", date:"2026-10-21", children:["A"], art:"info", sensitive:true, topics:["trivsel"],
+  summary:"(følsom tråd)", body:"(Følsom tråd – teksten vises først, når du trykker.)", files:[]},
+ {key:"message:t4:m1", kind:"message", thread:"t4", title:"Biblioteksbesøg", from:"Klasselærer 2.B", date:"2026-10-26", children:["A"], art:"arrangement", topics:["bibliotek"],
+  summary:"Fredag 6/11 kl. 9.", body:"Vi besøger biblioteket fredag d. 6/11 kl. 9. Husk lånerkort.", files:[], events:["message:t4:m1#1"]},
+ {key:"post:1003", kind:"post", title:"Juleklip", from:"Klasselærer 2.B", date:"2026-10-28", children:["A"], art:"arrangement", topics:["jul"], versions:2,
+  summary:"Fredag 4/12 kl. 10–12. Tilmelding senest 20/11.", body:"Vi holder juleklip fredag d. 4/12 kl. 10–12. Forældre er velkomne. Tilmeld jer senest 20/11. Husk saks og lim.",
+  files:[{name:"Indbydelse juleklip.pdf",kind:"file"}], events:["post:1003#1","post:1003#2"]},
+ {key:"message:t7:m1", kind:"message", thread:"t7", title:"Trivselsundersøgelse", from:"Kontoret", date:"2026-10-29", children:["A"], art:"frist", period:{from:"2026-11-15",to:"2026-11-15"}, topics:["trivsel"],
+  summary:"Svar sammen med barnet senest 15/11.", body:"Den årlige trivselsundersøgelse skal besvares senest 15/11. Se vejledningen.", files:[{name:"Vejledning.pdf",kind:"file"}], events:["message:t7:m1#1"]},
+ {key:"post:1004", kind:"post", title:"Emneuge: Vikinger", from:"Klasselærer 2.B", date:"2026-10-30", children:["A"], art:"periode", important:true, period:{from:"2026-11-09",to:"2026-11-13"}, topics:["emneuge"],
+  summary:"Ingen almindelige timer. Tøj til at være ude. Fremvisning fre kl. 13.", body:"I uge 46 er der emneuge om vikinger. Der er ingen almindelige timer. Husk tøj til at være ude hele dagen. Fredag kl. 13 viser børnene, hvad de har lavet.",
+  files:[{name:"Program emneuge.pdf",kind:"file"}], events:["post:1004#1","post:1004#2"]},
+ {key:"message:t4:m2", kind:"message", thread:"t4", title:"Biblioteksbesøg", from:"Klasselærer 2.B", date:"2026-11-03", children:["A"], art:"arrangement", topics:["bibliotek"],
+  summary:"Flyttet til torsdag 12/11 kl. 9.", body:"Biblioteksbesøget er flyttet til torsdag d. 12/11 kl. 9.", files:[], events:["message:t4:m1#1"]},
+];
+const EVENTS = {
+ "post:1011#1":{title:"Frist: samtykke til foto", start:"2026-09-01", children:["A","B"]},
+ "message:t1:m1#1":{title:"Forældremøde", start:"2026-09-17T19:00", children:["A"]},
+ "post:1007#1":{title:"Frist: tilmelding SFO efterårsferie", start:"2026-09-20", children:["A","B"]},
+ "post:1007#2":{title:"SFO efterårsferie (åbent 7–16)", start:"2026-10-12", end:"2026-10-16", children:["A","B"]},
+ "message:t3:m1#1":{title:"Tur til skoven", start:"2026-09-29", children:["A"]},
+ "message:t5:m1#1":{title:"Motionsdag (slut kl. 12)", start:"2026-10-09", children:["A","B"]},
+ "post:1006#1":{title:"Skolefoto", start:"2026-11-18", children:["A","B"]},
+ "post:1006#2":{title:"Frist: bestil skolefoto", start:"2026-12-04", children:["A","B"], removed:["B"]},
+ "post:1002#1":{title:"Svømning (4 onsdage)", start:"2026-11-04", end:"2026-11-25", children:["A"]},
+ "message:t4:m1#1":{title:"Biblioteksbesøg", start:"2026-11-12T09:00", children:["A"], updated:true},
+ "post:1003#1":{title:"Juleklip", start:"2026-12-04T10:00", end:"2026-12-04T12:00", children:["A"]},
+ "post:1003#2":{title:"Frist: tilmelding juleklip", start:"2026-11-20", children:["A"]},
+ "message:t7:m1#1":{title:"Frist: trivselsundersøgelse", start:"2026-11-15", children:["A"]},
+ "post:1004#1":{title:"Emneuge: Vikinger", start:"2026-11-09", end:"2026-11-13", children:["A"]},
+ "post:1004#2":{title:"Fremvisning af emneuge", start:"2026-11-13T13:00", children:["A"]},
+};
+const ART = {info:"Generel info", arrangement:"Arrangement", periode:"Periode", frist:"Frist"};
+const KIND = {post:"Opslag", message:"Besked"};
+
+// ------------------------------------------------------------------ hjælpere
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]);
+const day = s => s.slice(0,10);
+const MONTHS = ["jan","feb","mar","apr","maj","jun","jul","aug","sep","okt","nov","dec"];
+const DAYS = ["søn","man","tir","ons","tor","fre","lør"];
+function fmt(s, withDay){ const d = new Date(day(s)+"T12:00"); const t = s.length>10 ? " "+s.slice(11,16) : "";
+  return (withDay? DAYS[d.getDay()]+" ":"") + d.getDate()+". "+MONTHS[d.getMonth()] + t; }
+function range(a,b){ return b && day(b)!==day(a) ? fmt(a,true)+" – "+fmt(b,true) : fmt(a,true); }
+function isoWeek(s){ const d=new Date(day(s)+"T12:00"); const t=new Date(d); t.setDate(d.getDate()+3-((d.getDay()+6)%7));
+  const w1=new Date(t.getFullYear(),0,4); return [t.getFullYear(), 1+Math.round(((t-w1)/864e5-3+((w1.getDay()+6)%7))/7)]; }
+function mondayOf(s){ const d=new Date(day(s)+"T12:00"); d.setDate(d.getDate()-((d.getDay()+6)%7)); return d.toISOString().slice(0,10); }
+const evs = it => (it.events||[]).map(k => ({key:k, ...EVENTS[k]}));
+// hvornår item'et gælder: periode, ellers første event, ellers hvornår det kom
+function when(it){ if (it.period) return it.period.from; const e = evs(it).map(e=>day(e.start)).sort(); return e[0] || it.date; }
+function until(it){ if (it.period) return it.period.to; const e = evs(it).map(e=>day(e.end||e.start)).sort(); return e[e.length-1] || null; }
+// overstået: periode/arrangement/frist hvis alt er forbi; generel info aldrig (undtagen vigtig-markering)
+function isOver(it){ if (it.art==="info") return false; const u = until(it); return u ? u < TODAY : false; }
+function activeNow(it){ return (it.period && it.period.from <= TODAY && TODAY <= it.period.to) ||
+  (it.important && !isOver(it) && (!it.period || it.period.to >= TODAY)); }
+function artTag(it){ return `<span class="tag art-${it.art}">${ART[it.art]}</span>`; }
+function meta(it){ return `${KIND[it.kind]} · ${esc(it.from)} · ${fmt(it.date)}${it.children.length>1?" · begge børn":""}`; }
+const STATE = {variant: new URLSearchParams(location.search).get("variant") || "A", over:"dim", child:"alle",
+  order:"gælder", q:"", arts:new Set(), topics:new Set(), kinds:new Set(), open:null};
+const forChild = it => STATE.child==="alle" || it.children.includes(STATE.child);
+function overCls(it){ if (!isOver(it)) return ""; return STATE.over==="hide" ? "hidden" : STATE.over==="dim" ? "over" : ""; }
+function childChips(){ return `<div class="chips">${["alle","A","B"].map(c=>`<button class="chip ${STATE.child===c?"on":""}" data-child="${c}">${c==="alle"?"Begge børn":CHILDREN[c]}</button>`).join("")}</div>`; }
+function row(it, extra=""){
+  const ev = evs(it).filter(e=>day(e.end||e.start)>=TODAY).map(e=>`<span class="ev">${range(e.start,e.end)} ${esc(e.title)}</span>`).join("<br>");
+  return `<li class="row ${overCls(it)}" data-key="${it.key}"><span class="grow">${artTag(it)}<span class="ttl">${it.sensitive?'<span class="lock">🔒 </span>':""}${esc(it.title)}</span>
+    ${it.files.length?` <span class="mut">📎${it.files.length}</span>`:""}<span class="sum">${esc(it.summary)}</span><span class="mut">${meta(it)}</span>${ev?"<br>"+ev:""}${extra}</span></li>`; }
+
+// ------------------------------------------------------------------ A: Tidslinje (uge for uge)
+function VariantA(){
+  const items = ITEMS.filter(forChild);
+  const now = items.filter(activeNow);
+  const key = it => STATE.order==="gælder" ? when(it) : it.date;
+  const weeks = {};
+  for (const it of items){ const m = mondayOf(key(it)); (weeks[m] ||= []).push(it); }
+  const cur = mondayOf(TODAY);
+  const future = Object.keys(weeks).filter(m=>m>=cur).sort(), past = Object.keys(weeks).filter(m=>m<cur).sort().reverse();
+  const wk = m => { const [y,w]=isoWeek(m); const end=new Date(m+"T12:00"); end.setDate(end.getDate()+6);
+    return `<section class="week ${m===cur?"cur":""}"><h3><span>Uge ${w}${m===cur?" · denne uge":""}</span><span class="mut">${fmt(m)} – ${fmt(end.toISOString().slice(0,10))}</span></h3>
+    <ul class="list">${weeks[m].sort((a,b)=>key(a)<key(b)?-1:1).map(it=>row(it)).join("")}</ul></section>`; };
+  return `${childChips()}
+  <div class="chips"><span class="mut">Placér efter:</span>
+   <button class="chip ${STATE.order==="gælder"?"on":""}" data-order="gælder">hvornår det gælder</button>
+   <button class="chip ${STATE.order==="kom"?"on":""}" data-order="kom">hvornår det kom</button></div>
+  <h2>Gælder nu</h2><div class="now"><ul class="list">${now.map(it=>row(it, it.period?`<br><span class="mut">gælder ${range(it.period.from,it.period.to)}</span>`:it.important?`<br><span class="mut">⭐ markeret vigtig i Aula</span>`:"")).join("") || '<li class="mut">Intet lige nu.</li>'}</ul></div>
+  <h2>Kommende</h2>${future.map(wk).join("") || '<p class="mut">Intet.</p>'}
+  <h2>Tidligere</h2>${past.map(wk).join("")}`;
+}
+
+// ------------------------------------------------------------------ B: Tavle efter art
+function VariantB(){
+  const items = ITEMS.filter(forChild);
+  // "Kommer": events, ikke items – kalenderen set fra Aula-siden
+  const upcoming = Object.entries(EVENTS).map(([k,e])=>({key:k,...e,src:ITEMS.filter(i=>(i.events||[]).includes(k)).pop()}))
+    .filter(e=>STATE.child==="alle"||e.children.includes(STATE.child)).sort((a,b)=>a.start<b.start?-1:1);
+  const evRow = e => { const over = day(e.end||e.start) < TODAY; const cls = over ? (STATE.over==="hide"?"hidden":STATE.over==="dim"?"over":"") : "";
+    return `<li class="row ${cls}" data-key="${e.src.key}"><span class="date">${range(e.start,e.end)}</span><br><span class="ttl">${esc(e.title)}</span>
+      ${e.updated?' <span class="tag">rettet</span>':""}${e.removed?` <span class="tag">fjernet for ${e.removed.map(c=>"Barn "+c).join(", ")}</span>`:""}
+      <br><span class="mut">fra ${KIND[e.src.kind].toLowerCase()}: ${esc(e.src.title)}</span></li>`; };
+  const periods = items.filter(it=>it.art==="periode" || activeNow(it)).sort((a,b)=>when(a)<when(b)?-1:1);
+  const info = items.filter(it=>it.art==="info" && !it.sensitive || it.art==="info" && it.sensitive);
+  const byTopic = {}; for (const it of info) (byTopic[it.topics[0]] ||= []).push(it);
+  const docs = items.flatMap(it=>it.files.filter(f=>f.kind!=="image").map(f=>({f,it})));
+  const images = items.flatMap(it=>it.files.filter(f=>f.kind==="image").map(f=>({f,it})));
+  const small = it => `<li class="row ${overCls(it)}" data-key="${it.key}"><span class="ttl">${it.sensitive?'🔒 ':""}${esc(it.title)}</span>${it.important?" ⭐":""}<span class="sum">${esc(it.summary)}</span>
+    <span class="mut">${it.period?range(it.period.from,it.period.to):fmt(it.date)} · ${KIND[it.kind]}</span></li>`;
+  document.body.classList.add("wide");
+  return `${childChips()}
+  <div class="board">
+   <div class="col"><h2>Gælder i perioder</h2><ul class="list">${periods.map(small).join("")}</ul></div>
+   <div class="col"><h2>Arrangementer og frister</h2><p class="mut" style="margin:0">Det, der står i kalenderen, med kilden</p><ul class="list">${upcoming.map(evRow).join("")}</ul></div>
+   <div class="col"><h2>Generel info</h2>${Object.entries(byTopic).sort().map(([t,its])=>`<h3>${esc(t)}</h3><ul class="list">${its.map(small).join("")}</ul>`).join("")}</div>
+   <div class="col"><h2>Dokumenter</h2><ul class="list">${docs.map(({f,it})=>`<li class="row" data-key="${it.key}">${f.kind==="secure_document"?"🔒":"📄"} <span class="ttl">${esc(f.name)}</span>
+      <br><span class="mut">${fmt(it.date)} · ${esc(it.title)}${f.kind==="secure_document"?" · kun i Aula":""}</span></li>`).join("")}</ul>
+      <h3>Billeder</h3><p class="mut">${images.length} billeder på ${new Set(images.map(x=>x.it.key)).size} items</p></div>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ C: Søg med filtre
+function VariantC(){
+  const q = STATE.q.trim().toLowerCase();
+  const hit = it => !q || [it.title,it.summary,it.body,it.from,...it.topics,...it.files.map(f=>f.name)].join(" ").toLowerCase().includes(q);
+  const pass = it => forChild(it) && hit(it) && (!STATE.arts.size||STATE.arts.has(it.art)) && (!STATE.topics.size||it.topics.some(t=>STATE.topics.has(t)))
+     && (!STATE.kinds.size || STATE.kinds.has(it.kind) || (STATE.kinds.has("doc") && it.files.some(f=>f.kind!=="image")));
+  const res = ITEMS.filter(pass).sort((a,b)=>a.date<b.date?1:-1);
+  const mark = s => q ? esc(s).replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"gi"), m=>`<mark>${m}</mark>`) : esc(s);
+  const count = f => ITEMS.filter(it=>forChild(it)&&hit(it)&&f(it)).length;
+  const facet = (title, set, opts) => `<div class="facet"><h3>${title}</h3><div class="chips">${opts.map(([v,label,f])=>
+     `<button class="chip ${set.has(v)?"on":""}" data-facet="${title}" data-v="${v}">${label} <span style="opacity:.6">${count(f)}</span></button>`).join("")}</div></div>`;
+  const topics = [...new Set(ITEMS.flatMap(i=>i.topics))].sort();
+  return `<input type="search" id="q" placeholder="Søg i alt fra Aula – fx svømning, lus, tilmelding …" value="${esc(STATE.q)}" autofocus>
+  <div class="split" style="margin-top:1rem"><div>
+    ${facet("Barn", new Set([STATE.child]), [["alle","Begge",()=>true],["A","Barn A",i=>i.children.includes("A")],["B","Barn B",i=>i.children.includes("B")]])}
+    ${facet("Art", STATE.arts, Object.entries(ART).map(([k,l])=>[k,l,i=>i.art===k]))}
+    ${facet("Kilde", STATE.kinds, [["post","Opslag",i=>i.kind==="post"],["message","Besked",i=>i.kind==="message"],["doc","Med dokument",i=>i.files.some(f=>f.kind!=="image")]])}
+    ${facet("Emne", STATE.topics, topics.map(t=>[t,t,i=>i.topics.includes(t)]))}
+  </div><div>
+    <p class="mut">${res.length} af ${ITEMS.length}${q?` for »${esc(STATE.q)}«`:""} · nyeste først</p>
+    <ul class="list">${res.map(it=>`<li class="row ${overCls(it)}" data-key="${it.key}"><span class="date">${fmt(it.date)}</span><span class="grow">${artTag(it)}<span class="ttl">${it.sensitive?"🔒 ":""}${mark(it.title)}</span>
+       <span class="sum">${mark(it.sensitive?it.summary:it.body.slice(0,140))}</span>
+       <span class="mut">${KIND[it.kind]} · ${esc(it.from)}${it.files.length?` · 📎 ${it.files.map(f=>mark(f.name)).join(", ")}`:""}${(it.events||[]).length?` · 📅 ${it.events.length}`:""}</span></span></li>`).join("")}</ul>
+  </div></div>`;
+}
+
+// ------------------------------------------------------------------ detalje (fælles): hele teksten, filer, events, tråd
+function Drawer(it){
+  const thread = it.thread ? ITEMS.filter(i=>i.thread===it.thread) : [];
+  const [shown, setShown] = [STATE.revealed===it.key];
+  const ev = evs(it);
+  return `<div class="drawer"><button class="x" data-close>✕</button>
+   <div class="mut">${KIND[it.kind]} · ${esc(it.from)} · ${fmt(it.date,true)} 2026</div>
+   <h2 style="margin-top:.3rem">${esc(it.title)}</h2>
+   <div>${artTag(it)}${it.topics.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}${it.important?'<span class="tag">⭐ vigtig i Aula</span>':""}
+     ${it.period?`<span class="mut"> gælder ${range(it.period.from,it.period.to)}</span>`:""}</div>
+   <p><i>${esc(it.summary)}</i> <span class="mut">– agentens resumé</span></p>
+   ${it.sensitive && !shown ? `<p class="lock">🔒 Følsom tråd. <button data-reveal="${it.key}">Vis teksten</button></p>` : `<div class="body">${esc(it.body)}</div>`}
+   ${it.versions?`<p class="mut">Rettet i Aula · ${it.versions} versioner <a href="#">se den første</a></p>`:""}
+   ${it.files.length?`<h3>Filer</h3><ul class="list">${it.files.map(f=>`<li>${f.kind==="image"?"🖼":f.kind==="secure_document"?"🔒":"📄"} <a href="#">${esc(f.name)}</a>${f.kind==="secure_document"?' <span class="mut">kan kun ses i Aula</span>':""}</li>`).join("")}</ul>`:""}
+   <h3>Blev til i kalenderen</h3>${ev.length?`<ul class="list">${ev.map(e=>`<li><span class="date">${range(e.start,e.end)}</span><span class="grow">${esc(e.title)}<br>
+     <span class="mut">${e.children.map(c=>CHILDREN[c]).join(", ")}${e.removed?` · fjernet af dig for ${e.removed.map(c=>CHILDREN[c]).join(", ")}`:""}${e.updated?" · rettet af en senere besked":""}</span></span></li>`).join("")}</ul>`:'<p class="mut">Ingen events.</p>'}
+   ${thread.length>1?`<h3>Hele tråden (${thread.length})</h3><ul class="list">${thread.map(t=>`<li class="row" data-key="${t.key}"><span class="date">${fmt(t.date)}</span><span class="grow">${t.key===it.key?"<b>":""}${esc(t.from)}: ${esc(t.summary)}${t.key===it.key?"</b>":""}</span></li>`).join("")}</ul>`:""}
+   <p class="mut" style="margin-top:1.5rem">${it.key}</p></div>`;
+}
+
+// ------------------------------------------------------------------ switcher + render
+const VARIANTS = [["A","Tidslinje",VariantA],["B","Tavle efter art",VariantB],["C","Søg med filtre",VariantC]];
+function render(){
+  document.body.classList.remove("wide");
+  const v = VARIANTS.find(x=>x[0]===STATE.variant) || VARIANTS[0];
+  $("#app").innerHTML = v[2]();
+  $("#vlabel").textContent = `${v[0]} (${v[1]})`;
+  const it = ITEMS.find(i=>i.key===STATE.open);
+  $("#drawer").innerHTML = it ? Drawer(it) : "";
+  const q = $("#q"); if (q){ q.oninput = () => { STATE.q = q.value; render(); const n=$("#q"); n.focus(); n.setSelectionRange(n.value.length,n.value.length); }; }
+}
+function go(d){ const i = VARIANTS.findIndex(x=>x[0]===STATE.variant); STATE.variant = VARIANTS[(i+d+VARIANTS.length)%VARIANTS.length][0];
+  const u = new URL(location); u.searchParams.set("variant", STATE.variant); try { history.replaceState(null,"",u); } catch {} STATE.open=null; render(); $("#shell").scrollTop=0; scrollTo(0,0); }
+$("#prev").onclick = () => go(-1); $("#next").onclick = () => go(1);
+$("#over").onchange = e => { STATE.over = e.target.value; render(); };
+document.addEventListener("keydown", e => { if (e.target.matches("input,textarea,[contenteditable]")) return;
+  if (e.key==="ArrowLeft") go(-1); if (e.key==="ArrowRight") go(1); if (e.key==="Escape"){ STATE.open=null; render(); $("#shell").scrollTop=0; scrollTo(0,0); } });
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-child],[data-order],[data-facet],[data-key],[data-close],[data-reveal]"); if (!t) return;
+  if (t.dataset.child) STATE.child = t.dataset.child;
+  else if (t.dataset.order) STATE.order = t.dataset.order;
+  else if (t.dataset.facet){ const v=t.dataset.v; const set = {Art:STATE.arts, Emne:STATE.topics, Kilde:STATE.kinds}[t.dataset.facet];
+    if (!set) STATE.child = v; else set.has(v) ? set.delete(v) : set.add(v); }
+  else if (t.dataset.close !== undefined) STATE.open = null;
+  else if (t.dataset.reveal) STATE.revealed = t.dataset.reveal;
+  else if (t.dataset.key) STATE.open = t.dataset.key;
+  render();
+});
+render();
+</script></body></html>
