@@ -226,7 +226,7 @@ Alle kommandoer køres som `uv run aula-agent …` fra projektmappen.
 |---|---|
 | 3 | Aula-login mangler |
 | 4 | Google-login mangler |
-| 5 | Ugyldig events-fil (fx ugyldig JSON, eller items fra indbakken mangler i `processed`) |
+| 5 | Ugyldig events-fil (fx ugyldig JSON, items fra indbakken mangler i `processed`, eller et item mangler sin classification) |
 
 ## Filer
 

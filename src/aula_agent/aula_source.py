@@ -181,6 +181,13 @@ def _inbox_attachments(files: list[archive.File]) -> list[dict[str, Any]]:
     return out
 
 
+def _archived(arch: archive.Archive, key: str) -> dict[str, Any]:
+    """What the archive adds to an inbox item: the version the agent gets (its
+    classification is saved for that one), and whether it is from a sensitive thread."""
+    item = arch.item(key)
+    return {"archive_version": item.versions[-1].id, "sensitive": item.sensitive}
+
+
 def _child_hints(raw: dict[str, Any]) -> list[str]:
     """Names of children a message thread says it is about, when Aula tells us."""
     names: list[str] = []
@@ -266,6 +273,7 @@ async def _take_posts(
                 "groups": archive.post_groups(post),
                 "body": post.content_markdown[:MAX_BODY_CHARS],
                 "attachments": _inbox_attachments(files),
+                **_archived(arch, key),
             }
 
         version = _version(post.edited_at, post.content_html, len(post.attachments))
@@ -314,6 +322,7 @@ async def _take_messages(
                     "sent": _iso(sent),
                     "body": html_to_markdown(msg.content_html)[:MAX_BODY_CHARS],
                     "attachments": _inbox_attachments(files),
+                    **_archived(arch, key),
                 }
 
             all_files &= await intake.offer(key, _version(msg.content_html, len(msg.attachments)), sent, build)

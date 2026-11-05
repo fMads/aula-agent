@@ -8,6 +8,10 @@ the versioning rule and where files are placed stay in here.
 The archive fills up independently of intake and cutoff, and never forgets:
 nothing is cleaned up or marked as gone from Aula.
 
+Besides what came from Aula, it keeps the agent's classification of each item
+version and the topics they use (ADR 0003). An item version keeps its
+classification; a new version has none until the agent gives it one.
+
 Version rule: an item gets a new item version only when its title, its text or
 the set of its attachment ids changes. Signed URLs, comment counts, bookmarks
 and the like do not count, and while there is no new version the stored raw
@@ -28,7 +32,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -40,8 +44,9 @@ from aula.models.post import Post
 
 from . import store
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 _BACKUPS_SINCE = 3  # the schema version that added the backup tables
+_CLASSIFICATIONS_SINCE = 4  # the schema version that added classifications and topics
 
 # Message types that are items; the rest (RecipientsAdded, SystemReply, AutoReply,
 # MessageDeleted, ...) are system messages and are only kept in the raw thread.
@@ -101,6 +106,30 @@ CREATE TABLE backups (
 """
 
 
+_SCHEMA_4 = """
+CREATE TABLE topics (
+    name         TEXT PRIMARY KEY,
+    description  TEXT NOT NULL,    -- one line on what belongs under it
+    created_at   TEXT NOT NULL
+);
+CREATE TABLE classifications (
+    version_id   INTEGER PRIMARY KEY REFERENCES versions(id),  -- one per item version
+    category     TEXT NOT NULL,    -- arrangement | frist | periode | info | orientering | svar
+    span_start   TEXT,             -- YYYY-MM-DD, both inclusive; empty when the agent gave no span
+    span_end     TEXT,
+    summary      TEXT,             -- empty for replies and sensitive threads
+    child_ids    TEXT NOT NULL,    -- JSON list: the agent's (Aula's are on the version and win)
+    saved_at     TEXT NOT NULL
+);
+CREATE TABLE classification_topics (
+    version_id   INTEGER NOT NULL REFERENCES classifications(version_id),
+    topic        TEXT NOT NULL REFERENCES topics(name),
+    position     INTEGER NOT NULL, -- the agent's order
+    PRIMARY KEY (version_id, topic)
+);
+"""
+
+
 def _stamp(at: dt.datetime) -> str:
     return at.astimezone().isoformat(timespec="seconds") if at.tzinfo is None else at.isoformat(timespec="seconds")
 
@@ -133,6 +162,8 @@ class Version:
     child_ids: list[int]
     body: str
     raw: dict[str, Any]
+    id: int | None = None  # the archive's handle on this version (an inbox item's ``archive_version``)
+    classification: Classification | None = None
 
 
 class Kind(StrEnum):
@@ -163,6 +194,40 @@ class File:
         return self.kind in (Kind.FILE, Kind.IMAGE)
 
 
+class Category(StrEnum):
+    """The most important kind of information in an item version (one per version)."""
+
+    ARRANGEMENT = "arrangement"  # an event: a day (or days) something happens
+    FRIST = "frist"  # a deadline: sign up, hand in
+    PERIODE = "periode"  # a period: theme week, swimming for four weeks
+    INFO = "info"  # standing info that holds all year: timetable, rules
+    ORIENTERING = "orientering"  # a short-lived notice: lice in the class, minutes of a meeting
+    SVAR = "svar"  # a reply without new information ("Tak", "Ok")
+
+
+@dataclass(frozen=True)
+class Classification:
+    """The agent's reading of one item version (the facts - sender, date, Aula's children - are the item's)."""
+
+    category: Category
+    span_start: dt.date | None = None  # when the item applies: one day or from-to (both inclusive)
+    span_end: dt.date | None = None
+    topics: tuple[str, ...] = ()
+    summary: str | None = None  # one line; none for replies and sensitive threads
+    child_ids: tuple[int, ...] = ()  # the agent's, for when Aula set none
+    saved_at: str | None = None  # when the archive saved it
+
+
+@dataclass(frozen=True)
+class Topic:
+    """A topic that ties items about the same thing together."""
+
+    name: str
+    description: str
+    created_at: str
+    items: int  # how many items have it in their newest classification
+
+
 @dataclass
 class Item:
     key: str
@@ -171,6 +236,17 @@ class Item:
     sensitive: bool
     versions: list[Version] = field(default_factory=list)  # oldest first
     files: list[File] = field(default_factory=list)
+
+    @property
+    def classification(self) -> Classification | None:
+        """The newest classification there is (the newest version may not have one yet)."""
+        return next((v.classification for v in reversed(self.versions) if v.classification), None)
+
+    @property
+    def child_ids(self) -> list[int]:
+        """The children the item is for: Aula's when it set them, else the agent's, else none (= every child)."""
+        aula = self.versions[-1].child_ids if self.versions else []
+        return list(aula or (self.classification.child_ids if self.classification else ()))
 
 
 @dataclass
@@ -332,6 +408,44 @@ class Archive:
             out.append(file)
         return out
 
+    # -- classification (from ``apply``)
+
+    def create_topic(self, name: str, description: str) -> bool:
+        """Add a topic; False when it exists already (its description stays)."""
+        cur = self._db.execute(
+            "INSERT INTO topics (name, description, created_at) VALUES (?, ?, ?) ON CONFLICT (name) DO NOTHING",
+            (name, description, self._saved_at()),
+        )
+        return cur.rowcount == 1
+
+    def classify(self, item_key: str, classification: Classification, *, version: int | None = None) -> bool:
+        """Save a classification for an item version: ``version`` (an inbox item's
+        ``archive_version``), or the item's newest. It replaces one the version had.
+
+        False when there is no such item or version. Its topics must exist.
+        """
+        rows = self._db.execute("SELECT id, saved_at FROM versions WHERE item_key = ?", (item_key,)).fetchall()
+        if version is None:
+            version = max(rows, key=lambda row: (_when(row[1]), row[0]), default=(None,))[0]
+        if version is None or version not in {row[0] for row in rows}:
+            return False
+        known = {name for (name,) in self._db.execute("SELECT name FROM topics")}
+        if unknown := [t for t in classification.topics if t not in known]:
+            raise ValueError(f"ukendte topics: {', '.join(unknown)}")
+        c = classification
+        self._db.execute(
+            "INSERT OR REPLACE INTO classifications"
+            " (version_id, category, span_start, span_end, summary, child_ids, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (version, str(c.category), c.span_start and c.span_start.isoformat(), c.span_end and c.span_end.isoformat(),
+             c.summary, json.dumps(list(c.child_ids)), self._saved_at()),
+        )
+        self._db.execute("DELETE FROM classification_topics WHERE version_id = ?", (version,))
+        self._db.executemany(
+            "INSERT INTO classification_topics (version_id, topic, position) VALUES (?, ?, ?)",
+            [(version, topic, i) for i, topic in enumerate(c.topics)],
+        )
+        return True
+
     # -- backup (from :mod:`aula_agent.backup`); each change is committed at once,
     # so a backup that fails half-way does not upload the same file again
 
@@ -387,13 +501,14 @@ class Archive:
         if row is None:
             return None
         item = Item(row[0], row[1], row[2], bool(row[3]))
-        for saved_at, title, author, date, groups, child_ids, body, raw in self._db.execute(
-            "SELECT saved_at, title, author, date, groups, child_ids, body, raw FROM versions"
+        for vid, saved_at, title, author, date, groups, child_ids, body, raw in self._db.execute(
+            "SELECT id, saved_at, title, author, date, groups, child_ids, body, raw FROM versions"
             " WHERE item_key = ? ORDER BY id",
             (key,),
         ):
             item.versions.append(
-                Version(saved_at, title, author, date, json.loads(groups), json.loads(child_ids), body, json.loads(raw))
+                Version(saved_at, title, author, date, json.loads(groups), json.loads(child_ids), body, json.loads(raw),
+                        vid, self._classification(vid))
             )
         item.versions.sort(key=lambda v: _when(v.saved_at))  # stable: equal times keep the order they were saved in
         item.files = [
@@ -403,6 +518,49 @@ class Archive:
             )
         ]
         return item
+
+    def _classification(self, version_id: int) -> Classification | None:
+        row = self._db.execute(
+            "SELECT category, span_start, span_end, summary, child_ids, saved_at FROM classifications WHERE version_id = ?",
+            (version_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        topics = tuple(
+            t for (t,) in self._db.execute(
+                "SELECT topic FROM classification_topics WHERE version_id = ? ORDER BY position", (version_id,)
+            )
+        )
+        day = lambda text: dt.date.fromisoformat(text) if text else None  # noqa: E731
+        return Classification(
+            Category(row[0]), day(row[1]), day(row[2]), topics, row[3], tuple(json.loads(row[4])), row[5]
+        )
+
+    def topics(self) -> list[Topic]:
+        """Every topic, by name, with how many items have it in their newest classification."""
+        counts: dict[str, int] = {}
+        for item in self.items():
+            for topic in item.classification.topics if item.classification else ():
+                counts[topic] = counts.get(topic, 0) + 1
+        return [
+            Topic(name, description, created_at, counts.get(name, 0))
+            for name, description, created_at in self._db.execute(
+                "SELECT name, description, created_at FROM topics ORDER BY name"
+            )
+        ]
+
+    def unclassified(self, *, exclude: Iterable[str] = (), limit: int | None = None) -> list[Item]:
+        """Items whose newest version has no classification, oldest first (by the newest version's date).
+
+        ``exclude``: item keys to leave out (the pending items, which the agent classifies anyway).
+        """
+        skip = set(exclude)
+        out = [
+            item for item in self.items()
+            if item.key not in skip and item.versions and item.versions[-1].classification is None
+        ]
+        out.sort(key=lambda i: (i.versions[-1].date or "", i.key))
+        return out[:limit] if limit is not None else out
 
     def thread(self, thread_id: str) -> Thread | None:
         row = self._db.execute("SELECT id, saved_at, raw, messages FROM threads WHERE id = ?", (thread_id,)).fetchone()
@@ -487,6 +645,8 @@ def _migrate(db: sqlite3.Connection) -> None:
         db.executescript(_SCHEMA_2)
     if current < _BACKUPS_SINCE:
         db.executescript(_SCHEMA_3)
+    if current < _CLASSIFICATIONS_SINCE:
+        db.executescript(_SCHEMA_4)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
