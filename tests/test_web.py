@@ -7,7 +7,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
-from aula_agent import archive, runs, store, web
+from aula_agent import archive, backup, runs, store, web
 from aula_agent.ledger import Ledger, SyncedEntry
 from aula_agent.runs import Outcome
 
@@ -289,3 +289,27 @@ def test_google_callback_rejects_unknown_state():
         r = c.get("/google/callback?state=forged&code=abc", headers=auth(), follow_redirects=False)
     assert "udl%C3%B8b" in r.headers["location"]
     assert not store.GOOGLE_TOKEN.exists()
+
+
+def archive_card(c):
+    text = c.get("/", headers=auth()).text
+    return text[text.index("<b>Arkiv</b>"):].split("</div>")[0]
+
+
+def test_archive_card_shows_the_last_backup_and_warns_when_it_is_missing_or_old(google):
+    configure()
+    with make_client() as c:
+        card = archive_card(c)
+    assert "ingen backup endnu" in card and 'class="bad"' in card
+
+    taken = dt.datetime.now() - dt.timedelta(hours=49)
+    backup.take(google, now=taken)
+    with make_client() as c:
+        card = archive_card(c)
+    assert f"backup {taken:%d.%m. kl. %H:%M}" in card and "over 2 døgn gammel" in card and 'class="bad"' in card
+
+    taken = dt.datetime.now() - dt.timedelta(hours=47)
+    backup.take(google, now=taken)
+    with make_client() as c:
+        card = archive_card(c)
+    assert f"backup {taken:%d.%m. kl. %H:%M}" in card and "over 2 døgn" not in card and 'class="bad"' not in card

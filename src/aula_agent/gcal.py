@@ -83,6 +83,13 @@ class Google:
         ).execute()
         return {"fileId": meta["id"], "fileUrl": meta["webViewLink"], "title": meta["name"], "mimeType": meta["mimeType"]}
 
+    def replace_file(self, file_id: str, path: Path) -> None:
+        """Replace the content of a file this tool uploaded earlier (name and folder stay)."""
+        from googleapiclient.http import MediaFileUpload
+
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        self._drive.files().update(fileId=file_id, media_body=MediaFileUpload(str(path), mimetype=mime), fields="id").execute()
+
 
 # ----------------------------------------------------------------------------- event body
 

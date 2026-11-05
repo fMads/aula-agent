@@ -24,6 +24,7 @@ import re
 import sqlite3
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from aula.models.attachment import Attachment
@@ -31,7 +32,7 @@ from aula.models.post import Post
 
 from . import store
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE items (
@@ -63,6 +64,17 @@ CREATE TABLE files (
     path           TEXT,           -- relative to data/; empty until downloaded, always for links and secure documents
     backed_up      INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (item_key, attachment_id)
+);
+"""
+
+_SCHEMA_2 = """
+CREATE TABLE drive (
+    name  TEXT PRIMARY KEY,        -- what aula-agent keeps in Drive for the backup: folder | archive
+    id    TEXT NOT NULL            -- its Drive file id
+);
+CREATE TABLE backups (
+    at     TEXT NOT NULL,          -- when a backup was taken
+    files  INTEGER NOT NULL        -- how many files it uploaded
 );
 """
 
@@ -122,6 +134,7 @@ class Item:
 class Status:
     posts: int = 0
     last_saved: str | None = None  # when the newest item version was saved
+    last_backup: str | None = None  # when the newest backup was taken
 
 
 # ----------------------------------------------------------------------------- the archive
@@ -203,6 +216,45 @@ class Archive:
             out.append(file)
         return out
 
+    # -- backup (from :mod:`aula_agent.backup`); each change is committed at once,
+    # so a backup that fails half-way does not upload the same file again
+
+    def drive_id(self, name: str) -> str | None:
+        """The Drive id of the backup's ``folder`` or of its copy of the ``archive``."""
+        row = self._db.execute("SELECT id FROM drive WHERE name = ?", (name,)).fetchone()
+        return row[0] if row else None
+
+    def remember_drive_id(self, name: str, drive_id: str) -> None:
+        self._db.execute("INSERT OR REPLACE INTO drive (name, id) VALUES (?, ?)", (name, drive_id))
+        self._db.commit()
+
+    def files_to_back_up(self) -> list[tuple[str, File]]:
+        """Stored files not in the backup yet, as (item key, file)."""
+        return [
+            (row[0], File(*row[1:]))
+            for row in self._db.execute(
+                "SELECT item_key, attachment_id, kind, name, detail, path FROM files"
+                " WHERE path IS NOT NULL AND NOT backed_up ORDER BY rowid"
+            )
+        ]
+
+    def mark_backed_up(self, item_key: str, attachment_id: str) -> None:
+        self._db.execute("UPDATE files SET backed_up = 1 WHERE item_key = ? AND attachment_id = ?", (item_key, attachment_id))
+        self._db.commit()
+
+    def copy_to(self, target: Path) -> None:
+        """Write a consistent copy of the archive file (SQLite's online backup)."""
+        self._db.commit()
+        copy = sqlite3.connect(target)
+        try:
+            self._db.backup(copy)
+        finally:
+            copy.close()
+
+    def record_backup(self, at: str, files: int) -> None:
+        self._db.execute("INSERT INTO backups (at, files) VALUES (?, ?)", (at, files))
+        self._db.commit()
+
     # -- read side (web, backup, tests)
 
     def item(self, key: str) -> Item | None:
@@ -232,7 +284,10 @@ class Archive:
     def status(self) -> Status:
         posts = self._db.execute("SELECT count(*) FROM items WHERE kind = 'post'").fetchone()[0]
         last = self._db.execute("SELECT max(saved_at) FROM versions").fetchone()[0]
-        return Status(posts=posts, last_saved=last)
+        last_backup = None
+        if self._db.execute("PRAGMA user_version").fetchone()[0] >= 2:  # read-only: may not be migrated yet
+            last_backup = self._db.execute("SELECT max(at) FROM backups").fetchone()[0]
+        return Status(posts=posts, last_saved=last, last_backup=last_backup)
 
 
 def _version_hash(title: str | None, body: str, attachments: list[Attachment]) -> str:
@@ -253,8 +308,10 @@ def _migrate(db: sqlite3.Connection) -> None:
         return
     if current > SCHEMA_VERSION:
         raise RuntimeError(f"Arkivet har skema {current}, men denne version af aula-agent kender kun {SCHEMA_VERSION}.")
-    if current == 0:
+    if current < 1:
         db.executescript(_SCHEMA)
+    if current < 2:
+        db.executescript(_SCHEMA_2)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 

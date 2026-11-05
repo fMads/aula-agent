@@ -83,6 +83,20 @@ def apply(events_file: Path, dry_run: bool) -> None:
     click.echo(f"Markeret som behandlet: {len(result['processed'])}")
 
 
+@main.command()
+def backup() -> None:
+    """Kopiér arkivet og dets filer til den private Drive-mappe nu (fetch gør det også hver nat)."""
+    from .backup import take
+
+    try:
+        with run("backup") as r:
+            result = take()
+            r.summary = f"backup taget, {result.files} nye filer"
+    except Problem as exc:
+        _fail(exc)
+    click.echo(f"Backup taget {result.at} ({result.files} nye filer lagt op).")
+
+
 @main.command("google-login")
 def google_login() -> None:
     """Giv adgang til Google Calendar og Drive (én gang)."""

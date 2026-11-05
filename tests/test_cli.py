@@ -2,7 +2,7 @@ from click.testing import CliRunner
 
 import json
 
-from aula_agent import aula_source, cli, store
+from aula_agent import aula_source, cli, gcal, store
 from aula_agent.ledger import Ledger
 
 
@@ -83,3 +83,17 @@ def test_status_runs_without_any_setup(monkeypatch, tmp_path):
     r = CliRunner().invoke(cli.main, ["status"])
     assert r.exit_code == 0, r.output
     assert "Ikke logget ind" in r.output and "Mangler OAuth-nøgle" in r.output
+
+
+def test_backup_without_google_exits_4():
+    r = CliRunner().invoke(cli.main, ["backup"])
+    assert r.exit_code == cli.EXIT_GOOGLE_LOGIN and "GOOGLE_LOGIN_REQUIRED" in r.output
+    assert Ledger.load().last_run("backup")["outcome"] == "google_login"
+
+
+def test_backup_takes_a_backup_now(monkeypatch, google):
+    monkeypatch.setattr(gcal.Google, "connect", staticmethod(lambda: google))
+    r = CliRunner().invoke(cli.main, ["backup"])
+    assert r.exit_code == 0, r.output
+    assert google.in_folder("Aula-arkiv") == ["archive.sqlite"]
+    assert Ledger.load().last_run("backup")["outcome"] == "ok"
