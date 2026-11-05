@@ -58,6 +58,25 @@ def fetch(first_run_days: int) -> None:
     click.echo(f"Indbakke: {store.INBOX_FILE}")
 
 
+@main.command()
+def backfill() -> None:
+    """Hent alt, hvad Aula stadig har, til arkivet (rører ikke inbox). Kan køres igen."""
+    from .aula_source import backfill as do_backfill
+
+    try:
+        with run("backfill") as r:
+            result = asyncio.run(do_backfill())
+            r.summary = (
+                f"{result.posts} opslag, {result.threads} tråde med {result.messages} beskeder,"
+                f" {result.new_versions} nye versioner"
+            ) + (f", {len(result.warnings)} advarsler" if result.warnings else "")
+    except Problem as exc:
+        _fail(exc)
+    click.echo(f"Arkiveret: {r.summary}")
+    for w in result.warnings:
+        click.echo(f"ADVARSEL: {w}", err=True)
+
+
 RESULT_LABELS = (("created", "oprettet"), ("updated", "opdateret"), ("deleted", "slettet"), ("skipped", "sprunget over"))
 
 

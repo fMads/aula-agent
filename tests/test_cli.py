@@ -85,6 +85,40 @@ def test_status_runs_without_any_setup(monkeypatch, tmp_path):
     assert "Ikke logget ind" in r.output and "Mangler OAuth-nøgle" in r.output
 
 
+def test_backfill_without_aula_login_exits_like_fetch_and_never_starts_mitid(monkeypatch, tmp_path):
+    token_file = tmp_path / "tokens.json"
+    token_file.write_text("{}")
+    monkeypatch.setattr("aula.config.DEFAULT_TOKEN_FILE", token_file)
+    monkeypatch.setattr("aula.config.load_config", lambda: {"mitid_username": "x"})
+    mitid_started = []
+
+    async def fake_auth(username, storage, on_login_required):
+        on_login_required()  # what the library does right before MitID
+        mitid_started.append(username)
+
+    monkeypatch.setattr(aula_source, "authenticate_and_create_client", fake_auth)
+    r = CliRunner().invoke(cli.main, ["backfill"])
+
+    assert mitid_started == []
+    assert r.exit_code == cli.EXIT_AULA_LOGIN
+    assert "AULA_LOGIN_REQUIRED" in r.output and "uv run aula login" in r.output
+    assert Ledger.load().last_run("backfill")["outcome"] == "aula_login"
+    assert not store.INBOX_FILE.exists()
+
+
+def test_backfill_logs_what_it_archived(monkeypatch):
+    async def backfilled():
+        return aula_source.Backfilled(posts=9, threads=30, messages=69, new_versions=78, warnings=["Tråd 5 blev ikke læst helt"])
+
+    monkeypatch.setattr(aula_source, "backfill", backfilled)
+    r = CliRunner().invoke(cli.main, ["backfill"])
+
+    assert r.exit_code == 0, r.output
+    assert "9 opslag" in r.output and "ADVARSEL: Tråd 5" in r.output
+    run = Ledger.load().last_run("backfill")
+    assert run["outcome"] == "ok" and run["summary"] == "9 opslag, 30 tråde med 69 beskeder, 78 nye versioner, 1 advarsler"
+
+
 def test_backup_without_google_exits_4():
     r = CliRunner().invoke(cli.main, ["backup"])
     assert r.exit_code == cli.EXIT_GOOGLE_LOGIN and "GOOGLE_LOGIN_REQUIRED" in r.output

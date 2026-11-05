@@ -27,7 +27,7 @@ class Result:
 
 
 def take(google: gcal.Google | Callable[[], gcal.Google] | None = None, *, now: dt.datetime | None = None) -> Result:
-    """Take a backup now (``fetch`` does at the end, and so will ``backfill``).
+    """Take a backup now (``fetch`` and ``backfill`` do at the end).
 
     Raises :class:`gcal.GoogleLoginRequired` without Google access.
     """

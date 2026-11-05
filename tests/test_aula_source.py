@@ -55,6 +55,7 @@ class FakeAula:
         self.calendar_ranges = []
         self.incomplete_threads = set()
         self.broken_urls = set()
+        self.thread_cutoffs = []
 
     async def __aenter__(self):
         return self
@@ -73,7 +74,9 @@ class FakeAula:
         return self.posts[offset : offset + limit]
 
     async def get_all_message_threads_result(self, cutoff):
-        return PaginationResult(items=self.threads, complete=True, termination_reason="cutoff")
+        self.thread_cutoffs.append(cutoff)
+        listed = [t for t in self.threads if dt.datetime.fromisoformat(t["lastMessageDate"]).date() >= cutoff]
+        return PaginationResult(items=listed, complete=True, termination_reason="cutoff")
 
     async def get_all_messages_for_thread_result(self, thread_id):
         complete = thread_id not in self.incomplete_threads
@@ -526,6 +529,67 @@ def test_a_partial_read_of_a_thread_loses_nothing_in_the_archive(aula):
     assert archived("message:80:b").sensitive is True
 
 
+# ------------------------------------------------------------------ backfill
+
+
+def run_backfill():
+    return asyncio.run(aula_source.backfill())
+
+
+def test_backfill_archives_every_post_and_thread_aula_still_has(aula):
+    threads = [
+        {"id": 90, "subject": "Skolefest", "lastMessageDate": iso(1)},
+        {"id": 91, "subject": "Lejrskole i foråret", "lastMessageDate": iso(200), "sensitive": True},
+    ]
+    msgs = {
+        "90": [message("a", attachments=[file_att(5, "program.pdf")]), {"id": "s1", "messageType": "RecipientsAdded"}],
+        "91": [message("b", 200), message("c", 199, messageType="Forward", attachments=None)],
+    }
+    posts = [post(i, f"Opslag {i}", 3 * i, attachments=[file_att(100 + i, f"{i}.pdf")] if i == 40 else ()) for i in range(1, 41)]
+    client = FakeAula([child(1, "Emma")], posts, threads, msgs)
+    aula["client"] = client
+
+    run_backfill()
+
+    with archive.open() as a:
+        keys = sorted(i.key for i in a.items())
+        assert [m["id"] for m in a.thread("90").messages] == ["a", "s1"]
+    assert keys == sorted([*(f"post:{i}" for i in range(1, 41)), "message:90:a", "message:91:b", "message:91:c"])
+    assert archived("post:40").files[0].path == "attachments/post_40/140-40.pdf"  # 120 days old
+    assert archived("message:90:a").files[0].path == "attachments/message_90_a/5-program.pdf"
+    assert archived("message:91:b").sensitive is True
+    assert archived("post:1").versions[0].child_ids == [1]
+    assert client.thread_cutoffs[0] <= dt.date(2000, 1, 1)  # all threads, not just the latest month
+
+
+def test_backfill_twice_gives_no_duplicates_and_leaves_inbox_and_intake_alone(aula):
+    thread = {"id": 95, "subject": "Juleklip", "lastMessageDate": iso(1)}
+    msgs = {"95": [message("a", attachments=[file_att(5, "seddel.pdf")])]}
+    client = FakeAula([child(1, "Emma")], [post(10, "Nyt", 1, attachments=[file_att(6, "plan.pdf")])], [thread], msgs)
+    aula["client"] = client
+    run_fetch()
+    ledger = Ledger.load()
+    ledger.mark_processed(["post:10"])  # the agent handled one of them
+    ledger.save()
+    state = json.loads(store.STATE_FILE.read_text())
+    inbox = store.INBOX_FILE.read_text()
+
+    client.posts.append(post(11, "Nyt, men ikke hentet endnu", 0.5))
+    client.downloads.clear()
+    first, second = run_backfill(), run_backfill()
+
+    assert (first.posts, first.threads, first.messages, first.new_versions) == (2, 1, 1, 1)  # only post:11 is new
+    assert (second.posts, second.new_versions) == (2, 0)
+    with archive.open() as a:
+        items = a.items()
+    assert sorted(i.key for i in items) == ["message:95:a", "post:10", "post:11"]
+    assert all(len(i.versions) == 1 for i in items)
+    assert [len(i.files) for i in items] == [1, 1, 0]
+    assert client.downloads == []  # the files were already archived
+    assert store.INBOX_FILE.read_text() == inbox
+    assert json.loads(store.STATE_FILE.read_text()) == state  # seen, pending, last_fetch, ...
+
+
 # ------------------------------------------------------------------ backup
 
 
@@ -551,3 +615,18 @@ def test_a_failed_backup_is_a_warning_and_fetch_still_writes_the_inbox(aula, goo
     assert "Backup" in warning and ("500" in warning or "Google-adgang" in warning)
     inbox = json.loads(store.INBOX_FILE.read_text())
     assert [i["key"] for i in inbox["items"]] == ["post:10"]
+
+
+def test_backfill_ends_with_a_backup_of_the_archive(aula):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(10, "Indbydelse", 90, attachments=[file_att(5, "plan.pdf")])], [], {})
+    assert run_backfill().warnings == []
+    assert aula["google"].in_folder("Aula-arkiv") == ["archive.sqlite", "attachments/post_10/5-plan.pdf"]
+
+
+def test_a_failed_backup_is_a_warning_after_backfill(aula):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(10, "Indbydelse", 90)], [], {})
+    aula["google"] = GoogleLoginRequired("Ingen Google-adgang endnu.")
+    result = run_backfill()
+    [warning] = result.warnings
+    assert "Backup" in warning and "Google-adgang" in warning
+    assert archived("post:10") is not None
