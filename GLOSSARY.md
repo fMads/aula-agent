@@ -1,11 +1,11 @@
 # aula-agent
 
-Finder arrangementer og frister i forældrenes Aula og lægger dem i en Google-kalender pr. barn. En LLM-agent læser indholdet; koden henter, husker og synkroniserer.
+Finder arrangementer og frister i forældrenes Aula og lægger dem i børnenes Google-kalendere. En LLM-agent læser indholdet; koden henter, husker og synkroniserer.
 
 ## Fra Aula
 
 **Child**:
-Et af forælderens børn i Aula. Hvert event gælder et eller flere børn, og hvert barn har sin egen kalender.
+Et af forælderens børn i Aula. Hvert event gælder et eller flere børn, og hvert barn hører til præcis én kalender.
 _Avoid_: Elev, profil
 
 **Item**:
@@ -98,15 +98,24 @@ Et item i arkivet, hvis nyeste version mangler en classification, og som ikke er
 
 ## I kalenderen
 
-**Child's calendar**:
-Den Google-kalender, aula-agent opretter til ét barn ("Skole – <fornavn>").
+**Calendar**:
+En Google-kalender, som aula-agent lægger events i, for et eller flere børn. Hvert barn hører til præcis én kalender. Om børnene har hver sin, eller nogle deler én, vælger hver installation selv.
+_Avoid_: Child's calendar, Aula calendar (det er Aulas egen)
+
+**Joint calendar**:
+En calendar for flere børn. Hvert event i den viser i titlen, hvilke af kalenderens børn det gælder, og i beskrivelsen deres fulde navne. En kalender for ét barn gør ingen af delene.
+_Avoid_: Delt kalender, shared calendar (at dele en kalender er noget, man gør med andre i Google), fælles kalender (kun i brugertekst)
+
+**Short name**:
+Det korte navn for et barn, som står i titlen på events i en joint calendar, fx et kælenavn eller ét bogstav. Er der ikke valgt et, er det barnets fornavn.
+_Avoid_: Nickname, kælenavn (kun i brugertekst), kaldenavn
 
 **Synced entry**:
-Ét event i ét barns kalender. Et event for to børn giver to synced entries.
+Ét event i én kalender for de af eventets børn, der hører til den kalender. Et event for to børn giver to synced entries, når de har hver sin kalender, og én, når de deler.
 _Avoid_: Kalenderpost (kun i brugertekst)
 
 **Removed by user**:
-En synced entry, som en forælder har fjernet på web-siden. Eventet må aldrig komme i det barns kalender igen, heller ikke under en ny key; eventets andre børn beholder det.
+Et event, som en forælder har fjernet for ét barn på web-siden. Eventet må aldrig komme tilbage for det barn, heller ikke under en ny key. Eventets andre børn beholder det, også når de deler kalender med barnet.
 _Avoid_: Ignored, deleted
 
 **Ledger**:

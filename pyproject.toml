@@ -7,7 +7,10 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
-    "aula>=1.15",
+    # Låst: aula_source bladrer med page = offset + 1, fordi 1.15.0 sender page-1 som index.
+    # En version med upstream-rettelsen (#14) ville få den omvej til at springe opslag over,
+    # så opgradering og fjernelse af omvejen skal ske i samme commit.
+    "aula==1.15.0",
     "click>=8.0",
     "google-api-python-client>=2.150",
     "google-auth-oauthlib>=1.2",
