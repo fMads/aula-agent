@@ -1,0 +1,9 @@
+# Personlige data: tokens, beskeder, vedhæftede filer, kalender-id'er
+data/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Cache fra Cloudflare-CLI (cf)
+.cloudflare/

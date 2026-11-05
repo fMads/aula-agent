@@ -1,0 +1,12 @@
+[Unit]
+Description=aula-agent natkørsel (AI-agent læser Aula og opdaterer kalenderen)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/deploy/nightly.sh
+Environment=TZ=Europe/Copenhagen
+Environment=AULA_AGENT=@AGENT@
+TimeoutStartSec=45min

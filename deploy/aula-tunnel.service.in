@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare-tunnel til aula-agent web-siden
+Wants=aula-web.service
+After=aula-web.service
+
+[Service]
+Type=simple
+ExecStart=@CLOUDFLARED@ tunnel --no-autoupdate --metrics 127.0.0.1:20243 run --token-file %h/.config/aula-agent/tunnel-token
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

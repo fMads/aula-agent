@@ -1,0 +1,16 @@
+[Unit]
+Description=aula-agent web-side (127.0.0.1:8787)
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+ExecStart=@UV@ run --frozen aula-agent web --host 127.0.0.1 --port 8787
+Restart=always
+RestartSec=5
+Environment=TZ=Europe/Copenhagen
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target
