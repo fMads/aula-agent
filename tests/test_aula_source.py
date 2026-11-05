@@ -159,6 +159,16 @@ def test_first_fetch_collects_recent_items_with_attachments(aula):
     assert store.load_config()["children"]["1"]["name"] == "Emma Jensen"
 
 
+def test_the_archive_file_is_readable_by_the_owner_only(aula):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(10, "Post", 1)], [], {})
+    run_fetch()
+    assert (store.path("ARCHIVE_FILE").stat().st_mode & 0o777) == 0o600
+
+    store.path("ARCHIVE_FILE").chmod(0o644)  # made before the archive kept itself private
+    run_fetch()
+    assert (store.path("ARCHIVE_FILE").stat().st_mode & 0o777) == 0o600
+
+
 def test_second_fetch_only_returns_new_or_changed(aula):
     client = FakeAula([child(1, "Emma")], [post(10, "Post", 1)], [], {})
     aula["client"] = client

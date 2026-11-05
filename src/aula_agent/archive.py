@@ -499,6 +499,8 @@ def open(*, at: dt.datetime | None = None) -> Iterator[Archive]:  # noqa: A001 -
     """
     file = store.path("ARCHIVE_FILE")
     file.parent.mkdir(parents=True, exist_ok=True)
+    file.touch(mode=0o600)  # about other children and parents: the owner only (SQLite's journal follows)
+    file.chmod(0o600)
     db = sqlite3.connect(file, timeout=30)
     try:
         with db:
