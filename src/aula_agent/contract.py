@@ -12,10 +12,11 @@ from __future__ import annotations
 import datetime as dt
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from . import store
+from . import archive, store
+from .archive import Category, Classification
 from .ledger import Ledger
 from .runs import Outcome, Problem
 
@@ -75,6 +76,8 @@ class Event:
 class EventsDoc:
     processed: tuple[str, ...]
     events: tuple[Event, ...]
+    classifications: dict[str, Classification] = field(default_factory=dict)  # item key -> its classification
+    new_topics: dict[str, str] = field(default_factory=dict)  # name -> description
 
 
 # ----------------------------------------------------------------------------- events in
@@ -183,12 +186,147 @@ def _event(raw: Any, children: set[str], problems: list[str], where: str) -> Eve
     )
 
 
-def parse(raw: str | dict[str, Any], *, children: Iterable[str], pending_keys: Iterable[str]) -> EventsDoc:
+SUMMARY_MAX = 120
+MAX_TOPICS = 3
+
+
+def _span(raw: Any) -> tuple[dt.date, dt.date]:
+    if not isinstance(raw, dict) or not raw.get("start"):
+        raise ValueError("span skal have start")
+    try:
+        start = dt.date.fromisoformat(raw["start"])
+        end = dt.date.fromisoformat(raw["end"]) if raw.get("end") else start
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"span skal være datoer (YYYY-MM-DD): {raw!r}") from exc
+    if end < start:
+        raise ValueError("span slutter før den starter")
+    return start, end
+
+
+def _classification(
+    raw: dict[str, Any], *, topics: set[str], children: set[str], sensitive: bool, problems: list[str], where: str
+) -> Classification | None:
+    before = len(problems)
+    category = raw.get("category")
+    if category not in tuple(Category):
+        problems.append(f"{where}: category skal være en af {', '.join(Category)} (ikke {category!r})")
+    is_reply = category == Category.SVAR
+    span_start = span_end = None
+    if raw.get("span") is not None:
+        try:
+            span_start, span_end = _span(raw["span"])
+        except ValueError as exc:
+            problems.append(f"{where}: {exc}")
+    raw_topics = raw.get("topics") or []
+    if not isinstance(raw_topics, list) or not all(isinstance(t, str) and t.strip() for t in raw_topics):
+        problems.append(f"{where}: topics skal være en liste af navne")
+        raw_topics = []
+    item_topics = tuple(dict.fromkeys(t.strip() for t in raw_topics))
+    if not (0 if is_reply else 1) <= len(item_topics) <= MAX_TOPICS:
+        problems.append(f"{where}: skal have 1–{MAX_TOPICS} topics" + (" (svar må have 0)" if not is_reply else ""))
+    for name in item_topics:
+        if name not in topics:
+            problems.append(f"{where}: ukendt topic {name!r} (genbrug et fra inbox, eller tilføj det i new_topics)")
+    summary = raw.get("summary")
+    if summary is not None and not isinstance(summary, str):
+        problems.append(f"{where}: summary skal være tekst")
+        summary = None
+    summary = (summary or "").strip() or None
+    if sensitive and summary:
+        problems.append(f"{where}: følsom tråd – intet resumé")
+    elif summary is None and not is_reply and not sensitive:
+        problems.append(f"{where}: summary mangler")
+    elif summary and len(summary) > SUMMARY_MAX:
+        problems.append(f"{where}: summary er {len(summary)} tegn (højst {SUMMARY_MAX})")
+    child_ids: list[int] = []
+    raw_children = raw.get("child_ids") or []
+    if not isinstance(raw_children, list):
+        problems.append(f"{where}: child_ids skal være en liste")
+        raw_children = []
+    for cid in raw_children:
+        if str(cid) not in children:
+            problems.append(f"{where}: ukendt barn {cid}")
+        else:
+            child_ids.append(int(cid))
+    if len(problems) > before:
+        return None
+    return Classification(
+        Category(category), span_start, span_end, item_topics, summary, tuple(dict.fromkeys(child_ids))
+    )
+
+
+def _new_topics(raw: Any, problems: list[str]) -> dict[str, str]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        problems.append("new_topics skal være et objekt {navn: beskrivelse}")
+        return {}
+    out: dict[str, str] = {}
+    for name, description in raw.items():
+        if not name.strip():
+            problems.append("new_topics: et topic mangler navn")
+        elif not isinstance(description, str) or not description.strip():
+            problems.append(f"new_topics: {name!r} mangler en beskrivelse")
+        else:
+            out[name.strip()] = description.strip()
+    return out
+
+
+def _classifications(
+    raw: Any,
+    *,
+    topics: set[str],
+    children: set[str],
+    pending: set[str],
+    to_classify: set[str],
+    sensitive: set[str],
+    problems: list[str],
+) -> dict[str, Classification]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, list):
+        problems.append("classifications skal være en liste")
+        return {}
+    out: dict[str, Classification] = {}
+    for i, entry in enumerate(raw):
+        item = entry.get("item") if isinstance(entry, dict) else None
+        where = f"classifications[{i}] ({item or '?'})"
+        if not isinstance(entry, dict):
+            problems.append(f"{where}: skal være et objekt")
+            continue
+        if not isinstance(item, str) or not item:
+            problems.append(f"{where}: item mangler")
+            continue
+        if item in out:
+            problems.append(f"{where}: item er klassificeret to gange")
+        if item not in pending and item not in to_classify:
+            problems.append(f"{where}: {item} er hverken i items eller to_classify i indbakken")
+        c = _classification(
+            entry, topics=topics, children=children, sensitive=item in sensitive, problems=problems, where=where
+        )
+        if c:
+            out[item] = c
+    return out
+
+
+def parse(
+    raw: str | dict[str, Any],
+    *,
+    children: Iterable[str],
+    pending_keys: Iterable[str],
+    topics: Iterable[str] = (),
+    to_classify: Iterable[str] = (),
+    sensitive_keys: Iterable[str] = (),
+) -> EventsDoc:
     """Validate an events document (JSON text or already decoded).
 
     ``children`` are the known child ids, ``pending_keys`` the inbox items the
-    agent was given - all of them must be in ``processed``. Raises
-    :class:`EventError` listing every problem.
+    agent was given - all of them must be in ``processed``, and every processed
+    one needs a classification. ``to_classify`` are the unclassified items it
+    was given: a classification for them is optional, and they never give
+    events. ``topics`` are the topics that exist already, ``sensitive_keys``
+    the items from sensitive threads (no summary). Raises :class:`EventError`
+    listing every problem.
     """
     if isinstance(raw, str):
         try:
@@ -222,16 +360,75 @@ def parse(raw: str | dict[str, Any], *, children: Iterable[str], pending_keys: I
         if ev:
             events.append(ev)
 
-    missing = sorted(set(pending_keys) - set(raw_processed))
+    pending, queued = set(pending_keys), set(to_classify)
+    for i, ev in enumerate(events):
+        if ev.source in queued:
+            problems.append(f"events[{i}] ({ev.key}): {ev.source} er fra to_classify og må ikke give events")
+    missing = sorted(pending - set(raw_processed))
     if missing:
         problems.append(
             "processed mangler disse items fra indbakken: " + ", ".join(missing)
             + " (læs dem i data/inbox.json – den kan være hentet igen siden)"
         )
 
+    new_topics = _new_topics(raw.get("new_topics"), problems)
+    raw_classifications = raw.get("classifications")
+    classifications = _classifications(
+        raw_classifications,
+        topics={*topics, *new_topics},
+        children=known,
+        pending=pending,
+        to_classify=queued,
+        sensitive=set(sensitive_keys),
+        problems=problems,
+    )
+    listed = raw_classifications if isinstance(raw_classifications, list) else []
+    given = {c.get("item") for c in listed if isinstance(c, dict)}
+    for key in dict.fromkeys(raw_processed):
+        if key in pending and key not in given:  # one given with errors is reported already
+            problems.append(f"{key}: classification mangler (hvert behandlet item skal have en)")
+
     if problems:
         raise EventError("Events-filen har fejl:\n  " + "\n  ".join(problems))
-    return EventsDoc(processed=tuple(raw_processed), events=tuple(events))
+    return EventsDoc(
+        processed=tuple(raw_processed), events=tuple(events), classifications=classifications, new_topics=new_topics
+    )
+
+
+def _span_text(c: Classification) -> str:
+    if c.span_start is None:
+        return ""
+    return f" {c.span_start}" + (f"–{c.span_end}" if c.span_end != c.span_start else "")
+
+
+def accept(raw: str | dict[str, Any], cfg: dict[str, Any], ledger: Ledger, *, dry_run: bool = False, echo=print) -> EventsDoc:
+    """Validate an events document against the inbox and the archive, and save its
+    classifications and new topics in the archive.
+
+    This happens before anything goes to Google, so a missing Google login does
+    not lose them. A classification is saved for the item version the agent got.
+    With ``dry_run`` they are only shown. Raises :class:`EventError` (nothing saved).
+    """
+    pending = ledger.pending_keys()
+    with archive.open() as arch:
+        sensitive = [key for key in pending if (item := arch.item(key)) and item.sensitive]
+        doc = parse(
+            raw, children=cfg["children"], pending_keys=pending,
+            topics=[t.name for t in arch.topics()], sensitive_keys=sensitive,
+        )
+        if dry_run:
+            for name in doc.new_topics:
+                echo(f"[prøvekørsel] Nyt topic: {name}")
+            for key, c in doc.classifications.items():
+                echo(f"[prøvekørsel] Classification: {key} {c.category}{_span_text(c)}")
+            return doc
+        for name, description in doc.new_topics.items():
+            arch.create_topic(name, description)
+        for key, c in doc.classifications.items():
+            version = (ledger.pending_item(key) or {}).get("archive_version")
+            if not arch.classify(key, c, version=version):
+                echo(f"ADVARSEL: {key} findes ikke i arkivet; dens classification er ikke gemt.")
+    return doc
 
 
 # ----------------------------------------------------------------------------- inbox out
@@ -242,6 +439,8 @@ def write_inbox(ledger: Ledger, cfg: dict[str, Any], aula_calendar: list[dict[st
     from zoneinfo import ZoneInfo
 
     today = dt.date.today().isoformat()
+    with archive.open() as arch:
+        topics = [{"name": t.name, "description": t.description, "items": t.items} for t in arch.topics()]
     all_ids = [int(cid) for cid in cfg["children"]]
     store.write_json(
         store.path("INBOX_FILE"),
@@ -252,6 +451,7 @@ def write_inbox(ledger: Ledger, cfg: dict[str, Any], aula_calendar: list[dict[st
                 {"id": int(cid), **{k: c.get(k) for k in ("name", "institution")}} for cid, c in cfg["children"].items()
             ],
             "items": ledger.pending(),
+            "topics": topics,
             "existing_events": [
                 {"key": u.key, "child_ids": u.child_ids, "title": u.title, "start": u.start, "end": u.end, "source": u.source}
                 for u in ledger.upcoming(today)

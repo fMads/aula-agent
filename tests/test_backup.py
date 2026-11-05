@@ -67,7 +67,7 @@ def test_backup_folder_is_not_the_shared_folder_for_calendar_attachments(google,
     ledger.save()
     (data_dir / "attachments").mkdir()
     (data_dir / "attachments" / "55-indbydelse.pdf").write_bytes(b"%PDF")
-    gcal.sync({"processed": ["post:9"], "events": [{"key": "post:9#1", "source": "post:9", "child_ids": [1], "title": "Juleklip",
+    gcal.sync({"processed": ["post:9"], "classifications": [{"item": "post:9", "category": "svar"}], "events": [{"key": "post:9#1", "source": "post:9", "child_ids": [1], "title": "Juleklip",
                "start": "2099-12-04", "attachments": ["attachments/55-indbydelse.pdf"]}]}, google=google)
     archive_post(1, "plan.pdf")
 

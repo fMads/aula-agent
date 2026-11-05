@@ -353,7 +353,7 @@ def sync(
     With ``dry_run`` the plan is printed and nothing is changed.
     """
     cfg, ledger = store.load_config(), Ledger.load()
-    doc = contract.parse(raw_doc, children=cfg["children"], pending_keys=ledger.pending_keys())
+    doc = contract.accept(raw_doc, cfg, ledger, dry_run=dry_run, echo=echo)
     actions = plan(doc, ledger, cfg)
     if dry_run:
         names = {"create": "Opret", "update": "Opdatér", "delete": "Slet", "skip": "Spring over"}
