@@ -208,6 +208,21 @@ def test_home_says_login_expired_after_fetch_needed_login(monkeypatch, tmp_path)
         assert "Login udløbet" not in c.get("/", headers=auth()).text
 
 
+def test_home_says_login_expired_after_backfill_needed_login(monkeypatch, tmp_path):
+    token = tmp_path / "tokens.json"
+    token.write_text("{}")
+    monkeypatch.setattr("aula.config.DEFAULT_TOKEN_FILE", token)
+    monkeypatch.setattr("aula.config.load_config", lambda: {"mitid_username": "u"})
+    configure()
+    with make_client() as c:
+        runs.record("backfill", Outcome.AULA_LOGIN, "Session udløbet")
+        assert "Login udløbet" in c.get("/", headers=auth()).text
+        runs.record("backfill-rescue", Outcome.OK, "2 opslag")  # a rescue copy says nothing about the session
+        assert "Login udløbet" in c.get("/", headers=auth()).text
+        runs.record("backfill", Outcome.OK, "2 opslag")
+        assert "Login udløbet" not in c.get("/", headers=auth()).text
+
+
 # ------------------------------------------------------------------ MitID login
 
 

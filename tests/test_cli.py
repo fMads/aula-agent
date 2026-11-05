@@ -142,7 +142,7 @@ def test_backfill_from_a_rescue_copy_needs_no_aula_login(tmp_path):
     r = CliRunner().invoke(cli.main, ["backfill", str(rescue)])
 
     assert r.exit_code == 0, r.output
-    assert Ledger.load().last_run("backfill")["summary"].startswith("1 opslag, 0 tråde med 0 beskeder, 1 nye versioner")
+    assert Ledger.load().last_run("backfill-rescue")["summary"].startswith("1 opslag, 0 tråde med 0 beskeder, 1 nye versioner")
 
 
 def test_backfill_refuses_a_rescue_copy_without_its_date(tmp_path):
@@ -150,4 +150,4 @@ def test_backfill_refuses_a_rescue_copy_without_its_date(tmp_path):
     rescue.mkdir()
     r = CliRunner().invoke(cli.main, ["backfill", str(rescue)])
     assert r.exit_code == 1 and "rescue-2026-11-05" in r.output
-    assert Ledger.load().last_run("backfill")["outcome"] == "error"
+    assert Ledger.load().last_run("backfill-rescue")["outcome"] == "error"
