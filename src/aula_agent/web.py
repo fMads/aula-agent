@@ -378,12 +378,86 @@ async def home(request: Request) -> Response:
         for r in last_runs
     ) or '<li class="mut">Ingen kørsler endnu.</li>'
 
-    body = f"""<div class="cards">{cards}</div>
+    body = f"""<p><b>Status</b> · <a href="/overblik">Overblik</a></p><div class="cards">{cards}</div>
 <h2>Kommende begivenheder</h2>{events_html}
 <h2>Børn og kalendere</h2><ul class="list">{children_html}</ul>
 <h2>Seneste kørsler</h2><ul class="list">{runs_html}</ul>
 <p class="mut" style="margin-top:2rem">Logget ind som {e(getattr(request.state, "email", ""))}</p>"""
     return page("Aula → Kalender", body, request.query_params.get("msg"))
+
+
+CATEGORY_NAMES = {
+    archive.Category.ARRANGEMENT: "Arrangement",
+    archive.Category.FRIST: "Frist",
+    archive.Category.PERIODE: "Periode",
+    archive.Category.INFO: "Stående info",
+    archive.Category.ORIENTERING: "Orientering",
+    archive.Category.SVAR: "Svar",
+}
+
+
+def fmt_span(c: archive.Classification) -> str:
+    if not c.span_start:
+        return ""
+    start = c.span_start.strftime("%d.%m.%Y")
+    if not c.span_end or c.span_end == c.span_start:
+        return start
+    return f"{start}–{c.span_end:%d.%m.%Y}"
+
+
+def overview_item(item: archive.Item) -> str:
+    c, latest = item.classification, item.versions[-1]
+    meta = [m for m in ("opslag" if item.kind == "post" else "besked", fmt_date((latest.date or "")[:10])) if m]
+    if span := fmt_span(c):
+        meta.append(f"gælder {span}")
+    if c.topics:
+        meta.append(f"emner: {', '.join(c.topics)}")
+    summary = "🔒 Følsom tråd" if item.sensitive else (c.summary or "")
+    return (
+        f'<li><span class="grow">{e(latest.title or "(uden titel)")}'
+        f'{"<br>" + e(summary) if summary else ""}'
+        f'<br><span class="mut">{e(" · ".join(meta))}</span></span></li>'
+    )
+
+
+async def overview(request: Request) -> Response:
+    """The raw list of the agent's classifications (trin 1 of the overview), to judge them by."""
+    pending = Ledger.load().pending_keys()
+
+    def read() -> tuple[list[archive.Item], list[archive.Topic], int] | None:
+        with archive.read() as a:
+            if a is None:
+                return None
+            return a.items(), a.topics(), len(a.unclassified(exclude=pending))
+
+    nav = '<p><a href="/">Status</a> · <b>Overblik</b></p>'
+    got = await asyncio.to_thread(read)
+    if got is None:
+        body = '<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>'
+        return page("Overblik", nav + body)
+    items, topics, unclassified = got
+    groups: dict[archive.Category, list[archive.Item]] = {c: [] for c in archive.Category}
+    for item in items:
+        if item.classification:
+            groups[item.classification.category].append(item)
+    sections = []
+    for category, members in groups.items():
+        if not members:
+            continue
+        members.sort(key=lambda i: i.versions[-1].date or "", reverse=True)
+        sections.append(
+            f'<h2>{e(CATEGORY_NAMES[category])} <span class="mut">({len(members)})</span></h2>'
+            f'<ul class="list">{"".join(overview_item(i) for i in members)}</ul>'
+        )
+    topics_html = "".join(
+        f'<li><span class="grow">{e(t.name)}<br><span class="mut">{e(t.description)}</span></span>'
+        f'<span class="mut">{t.items}</span></li>'
+        for t in topics
+    ) or '<li class="mut">Ingen emner endnu.</li>'
+    body = f"""{nav}<p>{unclassified} endnu ikke inddelt · {len(topics)} {"emne" if len(topics) == 1 else "emner"}</p>
+{"".join(sections) or '<p class="mut">Intet er inddelt endnu.</p>'}
+<h2>Emner</h2><ul class="list">{topics_html}</ul>"""
+    return page("Overblik", body)
 
 
 async def remove_event(request: Request) -> Response:
@@ -540,6 +614,7 @@ def create_app(*, verifier_factory=default_verifier_factory, mitid: MitIDLogin |
     app = Starlette(
         routes=[
             Route("/", home),
+            Route("/overblik", overview),
             Route("/events/remove", remove_event, methods=["POST"]),
             Route("/aula/login", aula_login_page),
             Route("/aula/login", aula_login_start, methods=["POST"]),

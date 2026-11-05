@@ -355,3 +355,102 @@ def test_remove_for_one_child_in_a_joint_calendar_keeps_the_entry_until_no_child
         assert [u.child_ids for u in ledger.upcoming()] == [[2]]
         c.post("/events/remove", data={"key": "k1", "child_id": "2"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
     assert google.events == {} and Ledger.load().upcoming() == []
+
+
+# ------------------------------------------------------------------ overview (trin 1: the raw list)
+
+
+def post(pid, title, publish="2026-11-02T08:00:00", body="<p>x</p>"):
+    return {"id": pid, "title": title, "content": {"html": body}, "publishAt": publish,
+            "ownerProfile": {"id": 3, "profileId": 4}}
+
+
+def classify(a, key, category, *, topics=(), summary=None, start=None, end=None):
+    a.classify(key, archive.Classification(
+        archive.Category(category), start and dt.date.fromisoformat(start), end and dt.date.fromisoformat(end),
+        tuple(topics), summary,
+    ))
+
+
+def section(html, heading):
+    """The part of the page under an <h2> heading, up to the next one."""
+    return html[html.index(f"<h2>{heading}"):].split("<h2>")[1]
+
+
+def test_overview_lists_the_classifications_by_category_with_the_number_unclassified():
+    configure()
+    with archive.open() as a:
+        a.save_post(post(1, "Svømning i november"))
+        a.save_post(post(2, "Juleklip"))
+        a.save_post(post(3, "Skema for året"))
+        a.save_post(post(4, "Endnu ikke læst"))
+        a.save_thread("7", [{"id": "m1", "messageType": "Message", "text": {"html": "<p>Tak</p>"},
+                             "sendDateTime": "2026-11-03T09:00:00"}], thread={"id": 7, "subject": "Svar om tur"})
+        a.create_topic("svømning", "Svømmeundervisning og badetøj")
+        a.create_topic("jul", "Julearrangementer i klassen")
+        classify(a, "post:1", "periode", topics=["svømning"], summary="Svømning mandage, husk badetøj.",
+                 start="2026-11-02", end="2026-11-30")
+        classify(a, "post:2", "arrangement", topics=["jul", "svømning"], summary="Juleklip, husk saks.", start="2026-12-04")
+        classify(a, "post:3", "info", topics=["jul"], summary="Skemaet gælder hele året.")
+        classify(a, "message:7:m1", "svar")
+    with make_client() as c:
+        r = c.get("/overblik", headers=auth())
+    assert r.status_code == 200
+    html = r.text
+    assert "1 endnu ikke inddelt" in html and "2 emner" in html
+
+    periode = section(html, "Periode")
+    assert "Svømning i november" in periode and "Svømning mandage, husk badetøj." in periode
+    assert "02.11.2026–30.11.2026" in periode and "svømning" in periode and "opslag" in periode
+    arrangement = section(html, "Arrangement")
+    assert "Juleklip" in arrangement and "04.12.2026" in arrangement and "jul, svømning" in arrangement
+    assert "Skema for året" in section(html, "Stående info")
+    svar = section(html, "Svar")
+    assert "Svar om tur" in svar and "besked" in svar and "03.11.2026" in svar
+    assert "Endnu ikke læst" not in html
+
+    topics = section(html, "Emner")
+    assert "Svømmeundervisning og badetøj" in topics and "Julearrangementer i klassen" in topics
+    assert html.index("Periode") > html.index("Arrangement")  # categories in their own order
+
+
+def test_overview_shows_a_sensitive_thread_without_its_summary():
+    configure()
+    with archive.open() as a:
+        a.save_thread("9", [{"id": "m1", "messageType": "Message", "text": {"html": "<p>Fortroligt</p>"}}],
+                      thread={"id": 9, "subject": "Samtale", "sensitive": True})
+        a.create_topic("trivsel", "Trivsel og samtaler")
+        classify(a, "message:9:m1", "orientering", topics=["trivsel"], summary="Et resumé der ikke må ses")
+    with make_client() as c:
+        html = section(c.get("/overblik", headers=auth()).text, "Orientering")
+    assert "🔒 Følsom tråd" in html and "Et resumé der ikke må ses" not in html and "Fortroligt" not in html
+
+
+def test_overview_without_an_archive_or_with_one_not_migrated_yet_says_so_and_changes_nothing():
+    import sqlite3
+
+    configure()
+    with make_client() as c:
+        r = c.get("/overblik", headers=auth())
+    assert r.status_code == 200 and "ikke klar" in r.text
+    assert not store.ARCHIVE_FILE.exists()
+
+    with archive.open() as a:
+        a.save_post(post(1, "Juleklip"))
+    db = sqlite3.connect(store.ARCHIVE_FILE)
+    db.execute("PRAGMA user_version = 3")  # as before classifications
+    db.commit()
+    db.close()
+    with make_client() as c:
+        r = c.get("/overblik", headers=auth())
+    assert r.status_code == 200 and "ikke klar" in r.text
+    db = sqlite3.connect(store.ARCHIVE_FILE)
+    assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+    db.close()
+
+
+def test_status_and_overview_link_to_each_other():
+    configure()
+    with make_client() as c:
+        assert 'href="/overblik"' in c.get("/", headers=auth()).text
+        assert 'href="/"' in c.get("/overblik", headers=auth()).text and "Status" in c.get("/overblik", headers=auth()).text
