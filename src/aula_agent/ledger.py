@@ -74,7 +74,7 @@ class SyncedEntry:
     link: str | None = None
 
 
-Action = Literal["created", "updated", "cancelled"]
+HistoryAction = Literal["created", "updated", "cancelled"]
 
 
 @dataclass
@@ -82,7 +82,7 @@ class HistoryLine:
     """One item that changed an event: ``created``, ``updated`` or ``cancelled`` it."""
 
     item: str | None
-    action: Action
+    action: HistoryAction
     at: str | None  # None: synced before there was a history
 
 
@@ -259,7 +259,7 @@ class Ledger:
 
     # ------------------------------------------------------------------ event history
 
-    def add_history(self, key: str, action: Action, item: str | None, *, title: str = "", start: str = "", end: str = "") -> None:
+    def add_history(self, key: str, action: HistoryAction, item: str | None, *, title: str = "", start: str = "", end: str = "") -> None:
         """An item created, updated or cancelled an event. A cancellation keeps the
         title, dates and children the event had; otherwise the children are those
         in its synced entries. The same item doing the same again adds no line."""
