@@ -292,7 +292,8 @@ def fmt_when(value: str | None) -> str:
 def archive_text(status: archive.Status) -> str:
     if not status.last_saved:
         return "intet gemt endnu"
-    return f"{status.posts} opslag · sidst gemt {fmt_when(status.last_saved)}"
+    messages = f"{status.messages} {'besked' if status.messages == 1 else 'beskeder'}"
+    return f"{status.posts} opslag · {messages} · sidst gemt {fmt_when(status.last_saved)}"
 
 
 # ----------------------------------------------------------------------------- routes

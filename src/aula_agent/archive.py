@@ -27,13 +27,18 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aula.models.attachment import Attachment
+from aula.models.message import Message
 from aula.models.post import Post
 
 from . import store
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
-_SCHEMA = """
+# Message types that are items; the rest (RecipientsAdded, SystemReply, AutoReply,
+# MessageDeleted, ...) are system messages and are only kept in the raw thread.
+MESSAGE_ITEM_TYPES = ("Message", "MessageEdited", "Forward")
+
+_SCHEMA_1 = """
 CREATE TABLE items (
     key        TEXT PRIMARY KEY,   -- item key, as everywhere else: post:123, message:<thread>:<id>
     kind       TEXT NOT NULL,      -- post | message
@@ -63,6 +68,15 @@ CREATE TABLE files (
     path           TEXT,           -- relative to data/; empty until downloaded, always for links and secure documents
     backed_up      INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (item_key, attachment_id)
+);
+"""
+
+_SCHEMA_2 = """
+CREATE TABLE threads (
+    id         TEXT PRIMARY KEY,
+    saved_at   TEXT NOT NULL,
+    raw        TEXT NOT NULL,      -- Aula's own JSON for the thread
+    messages   TEXT NOT NULL       -- the latest raw list of all its messages, system messages too
 );
 """
 
@@ -119,8 +133,19 @@ class Item:
 
 
 @dataclass
+class Thread:
+    """A message thread as Aula last sent it, with all its messages."""
+
+    id: str
+    saved_at: str
+    raw: dict[str, Any]
+    messages: list[dict[str, Any]]
+
+
+@dataclass
 class Status:
     posts: int = 0
+    messages: int = 0
     last_saved: str | None = None  # when the newest item version was saved
 
 
@@ -149,9 +174,63 @@ class Archive:
             attachments=post.attachments,
         )
 
-    def _save_item(self, key, kind, raw, *, title, author, date, groups, child_ids, body, attachments) -> bool:
+    def save_thread(
+        self,
+        thread_id: str,
+        messages: list[dict[str, Any]],
+        *,
+        thread: dict[str, Any] | None = None,
+        complete: bool = True,
+        child_ids: Sequence[int] = (),
+    ) -> dict[str, bool]:
+        """Save a message thread with all its messages, as Aula sent them.
+
+        ``thread`` is Aula's thread; None keeps the one already saved (a thread
+        read again without being listed). The raw list of messages is replaced
+        only by a ``complete`` read, so a partial read never loses messages.
+        Messages of :data:`MESSAGE_ITEM_TYPES` become items marked with the
+        thread's sensitivity. Returns, per item key, whether it gave a new item version.
+        """
+        stored = self._db.execute("SELECT raw, messages FROM threads WHERE id = ?", (thread_id,)).fetchone()
+        raw_thread = thread if thread is not None else (json.loads(stored[0]) if stored else {})
+        raw_messages = messages if complete or not stored else json.loads(stored[1])
+        self._db.execute(
+            "INSERT INTO threads (id, saved_at, raw, messages) VALUES (?, ?, ?, ?)"
+            " ON CONFLICT (id) DO UPDATE SET saved_at = excluded.saved_at, raw = excluded.raw, messages = excluded.messages",
+            (thread_id, _now(), _json(raw_thread), _json(raw_messages)),
+        )
+        sensitive = bool(raw_thread.get("sensitive"))
+        new: dict[str, bool] = {}
+        for raw in messages:
+            if raw.get("messageType") not in MESSAGE_ITEM_TYPES:
+                continue
+            msg = Message.from_dict(raw)
+            key = f"message:{thread_id}:{msg.id}"
+            new[key] = self._save_item(
+                key,
+                "message",
+                raw,
+                title=raw_thread.get("subject"),
+                author=msg.sender_name,
+                date=_iso(msg.send_datetime),
+                groups=[],
+                child_ids=list(child_ids),
+                body=msg.content_markdown,
+                attachments=msg.attachments,
+                thread_id=thread_id,
+                sensitive=sensitive,
+            )
+        return new
+
+    def _save_item(
+        self, key, kind, raw, *, title, author, date, groups, child_ids, body, attachments, thread_id=None, sensitive=False
+    ) -> bool:
         version = _version_hash(title, body, attachments)
-        self._db.execute("INSERT OR IGNORE INTO items (key, kind) VALUES (?, ?)", (key, kind))
+        self._db.execute(
+            "INSERT INTO items (key, kind, thread_id, sensitive) VALUES (?, ?, ?, ?)"
+            " ON CONFLICT (key) DO UPDATE SET thread_id = excluded.thread_id, sensitive = excluded.sensitive",
+            (key, kind, thread_id, int(sensitive)),
+        )
         latest = self._db.execute(
             "SELECT hash FROM versions WHERE item_key = ? ORDER BY id DESC LIMIT 1", (key,)
         ).fetchone()
@@ -161,7 +240,7 @@ class Archive:
             "INSERT INTO versions (item_key, hash, saved_at, title, author, date, groups, child_ids, body, raw)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (key, version, _now(), title, author, date, json.dumps(groups, ensure_ascii=False),
-             json.dumps(child_ids), body, json.dumps(raw, ensure_ascii=False, default=str)),
+             json.dumps(child_ids), body, _json(raw)),
         )
         return True
 
@@ -226,13 +305,21 @@ class Archive:
         ]
         return item
 
+    def thread(self, thread_id: str) -> Thread | None:
+        row = self._db.execute("SELECT id, saved_at, raw, messages FROM threads WHERE id = ?", (thread_id,)).fetchone()
+        return Thread(row[0], row[1], json.loads(row[2]), json.loads(row[3])) if row else None
+
     def items(self) -> list[Item]:
         return [self.item(key) for (key,) in self._db.execute("SELECT key FROM items ORDER BY key")]
 
     def status(self) -> Status:
-        posts = self._db.execute("SELECT count(*) FROM items WHERE kind = 'post'").fetchone()[0]
+        counts = dict(self._db.execute("SELECT kind, count(*) FROM items GROUP BY kind").fetchall())
         last = self._db.execute("SELECT max(saved_at) FROM versions").fetchone()[0]
-        return Status(posts=posts, last_saved=last)
+        return Status(posts=counts.get("post", 0), messages=counts.get("message", 0), last_saved=last)
+
+
+def _json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def _version_hash(title: str | None, body: str, attachments: list[Attachment]) -> str:
@@ -253,8 +340,10 @@ def _migrate(db: sqlite3.Connection) -> None:
         return
     if current > SCHEMA_VERSION:
         raise RuntimeError(f"Arkivet har skema {current}, men denne version af aula-agent kender kun {SCHEMA_VERSION}.")
-    if current == 0:
-        db.executescript(_SCHEMA)
+    if current < 1:
+        db.executescript(_SCHEMA_1)
+    if current < 2:
+        db.executescript(_SCHEMA_2)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
