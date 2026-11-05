@@ -11,7 +11,7 @@ Finder arrangementer i Aula-opslag og -beskeder og lægger dem i Google Calendar
 - `src/aula_agent/web.py` – valgfri web-side (Starlette, 127.0.0.1:8787) bag Cloudflare Tunnel + Access. Appen validerer selv Access-JWT'en og e-mail-allowlisten (`web` i `data/config.json`, sættes med `aula-agent web-setup`) og afviser alt, når den ikke er sat op.
 - `deploy/` – systemd-skabeloner (`*.in`) + `install-services.sh` (web, tunnel, nightly) og `nightly.sh` (natkørsel uden T3 med Claude Code eller Codex, styret af `AULA_AGENT`).
 - Instruktionerne her er fælles for alle agenter: Codex læser `AGENTS.md`, Claude Code læser `CLAUDE.md`, som importerer denne fil.
-- `data/` – personlige data, git-ignoreret: `config.json` (børn → kalendere), `state.json`, `inbox.json`, `attachments/`, Google-tokens.
+- `data/` – personlige data, git-ignoreret: `config.json` (børn → kalendere), `state.json`, `inbox.json`, `attachments/`, Google-tokens. I et git-worktree (T3 Code og Codex kører ofte i et) bliver `data/` automatisk et link til hovedcheckoutets `data/`, så logins, historik og "fjernet af dig" er de samme.
 - Tests: `uv run pytest -q`. Domænesprog: `GLOSSARY.md`.
 
 ## Natlig kørsel

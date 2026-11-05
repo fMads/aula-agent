@@ -1,5 +1,5 @@
 # Personlige data: tokens, beskeder, vedhæftede filer, kalender-id'er
-data/
+/data
 .venv/
 __pycache__/
 *.pyc
