@@ -55,7 +55,7 @@ Python-delen forstår ikke selv tekst. Den henter og gemmer data og taler med Au
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh     # hvis du ikke har uv
-git clone <repo-url> aula-agent && cd aula-agent
+git clone https://github.com/fMads/aula-agent.git && cd aula-agent
 uv sync
 ```
 
@@ -234,3 +234,7 @@ uv run pytest -q
 ```
 
 Agentens fremgangsmåde står i [`AGENTS.md`](AGENTS.md): hvad der tæller som et arrangement, hvordan rettelser genkendes, og hvordan børn tildeles. Ret den, hvis agenten skal opføre sig anderledes.
+
+## Licens
+
+[MIT](LICENSE). Projektet er ikke tilknyttet Aula, KOMBIT, MitID, Google, Anthropic eller OpenAI. Du bruger det på eget ansvar.
