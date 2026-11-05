@@ -58,6 +58,7 @@ def test_sync_creates_calendar_per_child_uploads_once_and_marks_processed(google
     (data_dir / "attachments" / "55-indbydelse.pdf").write_bytes(b"%PDF")
     doc = {
         "processed": ["post:9"],
+        "classifications": [{"item": "post:9", "category": "svar"}],
         "events": [ev("post:9#1", source="post:9", child_ids=[1, 2], title="Juleklip", attachments=["attachments/55-indbydelse.pdf"])],
     }
     result = gcal.sync(doc, google=google)
@@ -153,8 +154,9 @@ def test_dry_run_prints_the_plan_and_touches_nothing():
     setup_children((1, "Emma"))
     add_pending("post:1", type="post")
     lines = []
-    gcal.sync({"processed": ["post:1"], "events": [ev(title="Juleklip")]}, dry_run=True, google=lambda: pytest.fail("no Google in dry-run"), echo=lines.append)
-    assert lines[0] == "[prøvekørsel] Opret: 2099-11-12 Juleklip → Emma"
+    doc = {"processed": ["post:1"], "classifications": [{"item": "post:1", "category": "svar"}], "events": [ev(title="Juleklip")]}
+    gcal.sync(doc, dry_run=True, google=lambda: pytest.fail("no Google in dry-run"), echo=lines.append)
+    assert lines[:2] == ["[prøvekørsel] Classification: post:1 svar", "[prøvekørsel] Opret: 2099-11-12 Juleklip → Emma"]
     assert "post:1" in Ledger.load().pending_keys()
     assert not store.load_config()["children"]["1"].get("calendar_id")
 
