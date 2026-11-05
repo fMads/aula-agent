@@ -275,48 +275,69 @@ def execute(actions: list[Action], doc: EventsDoc, google: Google, ledger: Ledge
     """Carry out a plan. The ledger is saved after every change, so a crash
     half-way loses nothing that already happened in Google."""
     result: dict[str, list[str]] = {"created": [], "updated": [], "deleted": [], "processed": [], "skipped": []}
-    for a in actions:
-        ev, label = a.event, a.label(cfg)
+    existed = {ev.key: ledger.has_event(ev.key) for ev in doc.events}
+    last = {a.event.key: i for i, a in enumerate(actions)}
+    changed: set[str] = set()
+    for i, a in enumerate(actions):
         if a.kind == "skip":
-            result["skipped"].append(label)
-            continue
-        calendar_id = a.calendar_id or ensure_calendar(google, cfg, a.child_ids[0])
-        event_id = a.event_id or google.find_event(calendar_id, ev.key)  # local state may have been lost
-
-        if a.kind == "delete":
-            if event_id and google.delete_event(calendar_id, event_id):
-                result["deleted"].append(label)
-            ledger.forget(ev.key, calendar_id)
-            ledger.save()
-            continue
-
-        source_item = _source_item(ev, ledger)
-        attachments = [_upload(google, ledger, cfg, rel) for rel in ev.attachments]
-        body = build_event_body(ev, source_item, attachments)
-        before = ledger.synced(ev.key, calendar_id)
-        if event_id and before and ("T" in before.start) == ev.all_day:
-            # All-day <-> timed: Google cannot patch one into the other; replace it.
-            google.delete_event(calendar_id, event_id)
-            event_id, link = google.insert_event(calendar_id, body)
-            result["updated"].append(label)
-        elif event_id:
-            event_id, link = google.patch_event(calendar_id, event_id, body)
-            result["updated"].append(label)
+            result["skipped"].append(a.label(cfg))
         else:
-            event_id, link = google.insert_event(calendar_id, body)
-            result["created"].append(label)
-        ledger.record(
-            SyncedEntry(
-                key=ev.key, child_ids=[int(c) for c in a.child_ids], calendar_id=calendar_id, event_id=event_id,
-                title=ev.title, start=ev.start_text, end=ev.end_text, source=ev.source,
-                source_item=source_item, link=link,
-            )
-        )
-        ledger.save()
+            _carry_out(a, google, ledger, cfg, result)
+            changed.add(a.event.key)
+        if last[a.event.key] == i and a.event.key in changed:
+            _add_history(a.event, existed[a.event.key], ledger)
+            ledger.save()
 
     result["processed"] = ledger.mark_processed(list(doc.processed))
     ledger.save()
     return result
+
+
+def _add_history(ev: Event, existed: bool, ledger: Ledger) -> None:
+    """Remember which item created, updated or cancelled the event (once per event and run)."""
+    if ev.cancelled:
+        ledger.add_history(ev.key, "cancelled", ev.source)
+    else:
+        action = "updated" if existed else "created"
+        ledger.add_history(ev.key, action, ev.source, title=ev.title, start=ev.start_text, end=ev.end_text)
+
+
+def _carry_out(a: Action, google: Google, ledger: Ledger, cfg: dict[str, Any], result: dict[str, list[str]]) -> None:
+    """One create, update or delete in Google, recorded in the ledger."""
+    ev, label = a.event, a.label(cfg)
+    calendar_id = a.calendar_id or ensure_calendar(google, cfg, a.child_ids[0])
+    event_id = a.event_id or google.find_event(calendar_id, ev.key)  # local state may have been lost
+
+    if a.kind == "delete":
+        if event_id and google.delete_event(calendar_id, event_id):
+            result["deleted"].append(label)
+        ledger.forget(ev.key, calendar_id)
+        ledger.save()
+        return
+
+    source_item = _source_item(ev, ledger)
+    attachments = [_upload(google, ledger, cfg, rel) for rel in ev.attachments]
+    body = build_event_body(ev, source_item, attachments)
+    before = ledger.synced(ev.key, calendar_id)
+    if event_id and before and ("T" in before.start) == ev.all_day:
+        # All-day <-> timed: Google cannot patch one into the other; replace it.
+        google.delete_event(calendar_id, event_id)
+        event_id, link = google.insert_event(calendar_id, body)
+        result["updated"].append(label)
+    elif event_id:
+        event_id, link = google.patch_event(calendar_id, event_id, body)
+        result["updated"].append(label)
+    else:
+        event_id, link = google.insert_event(calendar_id, body)
+        result["created"].append(label)
+    ledger.record(
+        SyncedEntry(
+            key=ev.key, child_ids=[int(c) for c in a.child_ids], calendar_id=calendar_id, event_id=event_id,
+            title=ev.title, start=ev.start_text, end=ev.end_text, source=ev.source,
+            source_item=source_item, link=link,
+        )
+    )
+    ledger.save()
 
 
 def sync(
