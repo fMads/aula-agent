@@ -83,12 +83,24 @@ class Google:
         ).execute()
         return {"fileId": meta["id"], "fileUrl": meta["webViewLink"], "title": meta["name"], "mimeType": meta["mimeType"]}
 
-    def replace_file(self, file_id: str, path: Path) -> None:
-        """Replace the content of a file this tool uploaded earlier (name and folder stay)."""
+    def replace_file(self, file_id: str, path: Path) -> bool:
+        """Replace the content of a file this tool uploaded earlier (name and folder stay).
+
+        False when the file is gone from Drive or in the trash (itself or its folder).
+        """
+        from googleapiclient.errors import HttpError
         from googleapiclient.http import MediaFileUpload
 
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        self._drive.files().update(fileId=file_id, media_body=MediaFileUpload(str(path), mimetype=mime), fields="id").execute()
+        try:
+            meta = self._drive.files().update(
+                fileId=file_id, media_body=MediaFileUpload(str(path), mimetype=mime), fields="id,trashed"
+            ).execute()
+        except HttpError as exc:
+            if exc.resp.status == 404:
+                return False
+            raise
+        return not meta.get("trashed")
 
 
 # ----------------------------------------------------------------------------- event body

@@ -1,6 +1,8 @@
 import asyncio
 import json
 
+import pytest
+
 from aula.models.attachment import Attachment
 
 from aula_agent import archive, backup, gcal, store
@@ -35,6 +37,25 @@ def test_backup_puts_the_archive_and_its_files_in_a_private_folder_and_replaces_
         "archive.sqlite", "attachments/post_1/50-plan.pdf", "attachments/post_2/50-program.pdf",
     ]  # the archive was replaced, each file uploaded once
     assert len(google.replaced) == 1
+
+
+@pytest.mark.parametrize("new_file", [False, True], ids=["nothing-new", "a-new-file"])
+@pytest.mark.parametrize("remove", ["trash", "delete"])
+def test_a_backup_folder_deleted_in_drive_is_made_again_with_everything(google, remove, new_file):
+    archive_post(1, "plan.pdf")
+    backup.take(google)
+    getattr(google, remove)("Aula-arkiv")
+    if new_file:
+        archive_post(2, "program.pdf")
+
+    backup.take(google)
+
+    assert google.folders == ["Aula-arkiv", "Aula-arkiv"]
+    assert google.in_folder("Aula-arkiv") == [
+        "archive.sqlite", "attachments/post_1/50-plan.pdf", *(["attachments/post_2/50-program.pdf"] if new_file else []),
+    ]
+    backup.take(google)
+    assert len(google.folders) == 2  # and from then on it is used again
 
 
 def test_backup_folder_is_not_the_shared_folder_for_calendar_attachments(google, data_dir):

@@ -329,6 +329,12 @@ class Archive:
         self._db.execute("INSERT OR REPLACE INTO drive (name, id) VALUES (?, ?)", (name, drive_id))
         self._db.commit()
 
+    def forget_drive(self) -> None:
+        """The backup is gone from Drive: forget its Drive ids, and that any file is backed up."""
+        self._db.execute("DELETE FROM drive")
+        self._db.execute("UPDATE files SET backed_up = 0")
+        self._db.commit()
+
     def files_to_back_up(self) -> list[tuple[str, File]]:
         """Stored files not in the backup yet, as (item key, file)."""
         return [
