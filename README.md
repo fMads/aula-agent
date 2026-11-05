@@ -8,7 +8,7 @@ Hver aften sker følgende:
 
 1. Nye beskeder og opslag hentes fra Aula, sammen med de vedhæftede filer.
 2. En AI-agent (Claude Code eller Codex) læser teksten og filerne. Den finder arrangementer og frister, f.eks. *"Fredag d. 14. er der juleklip, husk saks"* eller *"tilmelding senest 10/11"*.
-3. Arrangementerne lægges i en Google-kalender. Hvert barn har sin egen kalender. Indbydelser og andre filer bliver hængt på begivenhederne.
+3. Arrangementerne lægges i en Google-kalender. Som standard har hvert barn sin egen kalender, men flere børn kan dele én. Indbydelser og andre filer bliver hængt på begivenhederne.
 
 Hvis skolen sender en rettelse, f.eks. *"det er flyttet til torsdag"*, opdateres den begivenhed, der allerede ligger i kalenderen. Der bliver ikke oprettet en ny.
 
@@ -203,6 +203,8 @@ Se opsætningen med `uv run aula-agent web-setup`. Hvis du kører `--email` igen
   - I Google Calendar: Indstillinger → *Skole – …* → Delt med → tilføj vedkommende med *Se alle begivenhedsdetaljer*. Gør det ikke med redigeringsret, for rettelser fra skolen overskriver ændringer.
   - Vedhæftede filer ligger i Drive-mappen **"Aula"**. Den skal også deles, hvis den anden forælder skal kunne åbne filerne. Del **ikke** mappen "Aula-arkiv" (backuppen af arkivet).
 - **Flere børn:** Hvert barn får sin egen kalender. Et nyt barn bliver fundet automatisk ved næste `fetch`. Aula fortæller ikke, hvilket barn et opslag gælder, så agenten afgør det ud fra klasse og grupper og ud fra indholdet. Når det er uklart, lægger den begivenheden hos alle relevante børn.
+- **Fælles kalender for flere børn:** Hvert barn hører til præcis én kalender, men flere børn kan dele den. Sæt det samme `calendar_id` (og `calendar_name`) på børnene i `data/config.json`. En begivenhed for flere børn i samme kalender bliver så til én post dér, ikke én pr. barn. Fjerner du den for ét barn på web-siden, bliver posten liggende for de andre og slettes først, når ingen af kalenderens børn er tilbage. En rettelse, der ikke længere nævner et af børnene, gør det samme.
+  - Har du før ladet flere børn pege på samme kalender (den gamle omvej), kender poster fra dengang kun ét af børnene, indtil begivenheden bliver rettet. Der kommer ikke dubletter.
 
 ## Kommandoer
 

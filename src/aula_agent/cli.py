@@ -1,4 +1,4 @@
-"""aula-agent: Aula posts/messages -> Google Calendar (one calendar per child)."""
+"""aula-agent: Aula posts/messages -> Google Calendar (each child in one calendar, which children may share)."""
 
 from __future__ import annotations
 
