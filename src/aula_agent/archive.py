@@ -217,6 +217,15 @@ class Classification:
     child_ids: tuple[int, ...] = ()  # the agent's, for when Aula set none
     saved_at: str | None = None  # when the archive saved it
 
+    def span_text(self, date_format: str = "%Y-%m-%d") -> str:
+        """The span as ``start`` or ``start–end`` ("" without one)."""
+        if self.span_start is None:
+            return ""
+        start = self.span_start.strftime(date_format)
+        if self.span_end is None or self.span_end == self.span_start:
+            return start
+        return f"{start}–{self.span_end.strftime(date_format)}"
+
 
 @dataclass(frozen=True)
 class Topic:
@@ -238,6 +247,11 @@ class Item:
     files: list[File] = field(default_factory=list)
 
     @property
+    def latest(self) -> Version:
+        """The newest version (an item in the archive has at least one)."""
+        return self.versions[-1]
+
+    @property
     def classification(self) -> Classification | None:
         """The newest classification there is (the newest version may not have one yet)."""
         return next((v.classification for v in reversed(self.versions) if v.classification), None)
@@ -245,7 +259,7 @@ class Item:
     @property
     def child_ids(self) -> list[int]:
         """The children the item is for: Aula's when it set them, else the agent's, else none (= every child)."""
-        aula = self.versions[-1].child_ids if self.versions else []
+        aula = self.latest.child_ids if self.versions else []
         return list(aula or (self.classification.child_ids if self.classification else ()))
 
 
@@ -557,9 +571,9 @@ class Archive:
         skip = set(exclude)
         out = [
             item for item in self.items()
-            if item.key not in skip and item.versions and item.versions[-1].classification is None
+            if item.key not in skip and item.versions and item.latest.classification is None
         ]
-        out.sort(key=lambda i: (i.versions[-1].date or "", i.key))
+        out.sort(key=lambda i: (i.latest.date or "", i.key))
         return out[:limit] if limit is not None else out
 
     def thread(self, thread_id: str) -> Thread | None:

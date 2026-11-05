@@ -78,11 +78,11 @@ Den stabile identitet for et event på tværs af kørsler (`<item-key>#<n>`). Sa
 Aftalen mellem kode og agent om, hvordan inbox og events document ser ud.
 
 **Classification**:
-Agentens fortolkning af én item version: hvad slags information det er, hvornår det gælder, emner og et resumé på én linje. Fakta som afsender, dato, barn og koblingen til events hører ikke til den. Dem ved koden selv.
+Agentens fortolkning af én item version: hvad slags information det er, hvornår det gælder, emner, et resumé på én linje og – når Aula ikke har sat dem – hvilke børn det gælder (ADR 0003). Har Aula sat børnene, vinder Aulas over agentens. Fakta som afsender, dato og koblingen til events hører ikke til den. Dem ved koden selv.
 _Avoid_: Inddeling (kun i brugertekst), tagging, kategorisering
 
 **Category**:
-Den vigtigste slags information i en item version, én pr. version: arrangement, frist, periode, stående info, orientering eller svar. Svar er beskeder uden ny information ("Tak", "Ok").
+Den vigtigste slags information i en item version, én pr. version: arrangement, frist, periode, stående info, orientering eller svar. Svar er beskeder uden ny information ("Tak", "Ok"). Gemmes som `arrangement`, `frist`, `periode`, `info` (stående info), `orientering` og `svar`.
 _Avoid_: Art (kun i brugertekst), kind (i koden er det opslag eller besked), type
 
 **Span**:

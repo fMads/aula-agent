@@ -5,7 +5,7 @@ Hvert barn hører til én kalender (standard: sin egen, "Skole – <fornavn>"), 
 
 - `src/aula_agent/aula_source.py` – henter fra Aula (bibliotek: `aula` på PyPI) og bestemmer via `Intake`, hvilke items agenten får. `backfill()` læser alt til arkivet uden om intake (kilden er en `BackfillSource`: Aula eller en redningskopi). Starter aldrig MitID-login selv.
 - `src/aula_agent/archive.py` – arkivet (`data/archive.sqlite`, ADR 0001): alt hvad `fetch` og `backfill` har set fra Aula eller en redningskopi (opslag og hele beskedtråde), med alle item versions og filer, uanset cutoff, og agentens classifications (pr. item version) og topics. Kun dette modul rører arkiv-filen og ejer item-nøglerne; skemaets version styres med `user_version`.
-- `src/aula_agent/contract.py` – agent-kontrakten: skriver `inbox.json` og validerer events-filen (alle fejl på én gang → exit-kode 5).
+- `src/aula_agent/contract.py` – agent-kontrakten: skriver `inbox.json`, validerer events-filen (alle fejl på én gang → exit-kode 5) og gemmer ved `apply` agentens classifications og topics i arkivet (via `archive.py`).
 - `src/aula_agent/backup.py` – backup af arkivet til den private Drive-mappe `Aula-arkiv` (aldrig den delte "Aula"); `fetch` og `backfill` tager den til sidst, en fejl er kun en advarsel. Er mappen slettet i Drive, starter den forfra.
 - `src/aula_agent/gcal.py` – Google Calendar + Drive: `plan()` beslutter (én post pr. event og kalender med kalenderens børn), `execute()` udfører via `Google`-adapteren (vedhæftninger skal ligge i Drive).
 - `src/aula_agent/ledger.py` – alt hvad der huskes mellem kørsler (`data/state.json`). Rør ikke state-dict'en direkte andre steder.

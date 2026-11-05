@@ -276,8 +276,10 @@ def execute(actions: list[Action], doc: EventsDoc, google: Google, ledger: Ledge
     half-way loses nothing that already happened in Google."""
     result: dict[str, list[str]] = {"created": [], "updated": [], "deleted": [], "processed": [], "skipped": []}
     existed = {ev.key: ledger.has_event(ev.key) for ev in doc.events}
+    # An event already in the history gets a line even when every step is a skip
+    # (the user removed it everywhere, and a later item corrects or cancels it).
+    changed = {ev.key for ev in doc.events if ledger.in_history(ev.key)}
     last = {a.event.key: i for i, a in enumerate(actions)}
-    changed: set[str] = set()
     for i, a in enumerate(actions):
         if a.kind == "skip":
             result["skipped"].append(a.label(cfg))
