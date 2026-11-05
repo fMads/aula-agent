@@ -1,4 +1,7 @@
-"""Fetch new posts and messages (with attachments) from Aula into the inbox.
+"""Fetch new posts and messages (with attachments) from Aula into the archive and the inbox.
+
+``fetch`` reads what is new each night; ``backfill`` reads everything Aula still
+has into the archive only.
 
 Never starts a MitID login on its own: if the saved session cannot be reused or
 refreshed, :class:`LoginRequired` is raised and the user has to log in (web UI
@@ -10,8 +13,9 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from aula import FileTokenStorage
@@ -19,6 +23,8 @@ from aula.api_client import AulaApiClient
 from aula.auth_flow import authenticate_and_create_client
 from aula.models.attachment import Attachment
 from aula.models.message import Message
+from aula.models.pagination import PaginationResult
+from aula.models.post import Post
 from aula.utils.html import html_to_markdown
 
 from . import archive, contract, credentials, store
@@ -27,6 +33,7 @@ from .runs import Outcome, Problem
 
 TZ = ZoneInfo(store.TIMEZONE)
 FIRST_RUN_DAYS = 30
+BACKFILL_SINCE = dt.date(2000, 1, 1)  # long before anything Aula still has
 MAX_MEDIA_PER_ITEM = 3  # more images than this is a photo gallery, not an invitation
 MAX_BODY_CHARS = 20_000
 POSTS_PER_PAGE = 30
@@ -116,19 +123,29 @@ class Intake:
 SECURE_DOCUMENT_NOTE = "Sikkert dokument – kan kun ses i Aula"
 
 
+Download = Callable[[Attachment], Awaitable[bytes]]
+
+
+def _from_aula(client: AulaApiClient) -> Download:
+    async def download(att: Attachment) -> bytes:
+        return await client.download_file(att.file.url)
+
+    return download
+
+
 async def _archive_files(
-    client: AulaApiClient, arch: archive.Archive, item_key: str, attachments: list[Attachment], warnings: list[str]
+    download: Download, arch: archive.Archive, item_key: str, attachments: list[Attachment], warnings: list[str]
 ) -> list[archive.File]:
     """Every file and image of an item, in the archive (downloaded unless it already is)."""
 
-    async def download(att: Attachment) -> bytes | None:
+    async def guarded(att: Attachment) -> bytes | None:
         try:
-            return await client.download_file(att.file.url)
+            return await download(att)
         except Exception as exc:  # one bad file must not stop the run
             warnings.append(f"Kunne ikke hente {att.name!r} fra {item_key}: {exc}")
             return None
 
-    return await arch.save_files(item_key, attachments, download)
+    return await arch.save_files(item_key, attachments, guarded)
 
 
 def _inbox_attachments(files: list[archive.File]) -> list[dict[str, Any]]:
@@ -165,21 +182,33 @@ def _child_hints(raw: dict[str, Any]) -> list[str]:
     return names
 
 
+def _children(profile) -> list[dict[str, Any]]:
+    return [{"id": c.id, "name": c.name, "institution": c.institution_name} for c in profile.children]
+
+
+def _only_child(children: list[dict[str, Any]]) -> list[int]:
+    """With one child everything is about that child; with more it has to be decided per item."""
+    return [children[0]["id"]] if len(children) == 1 else []
+
+
+def _thread_child_ids(thread: dict[str, Any], children: list[dict[str, Any]]) -> list[int]:
+    hints = _child_hints(thread)
+    return [c["id"] for c in children if c["name"] in hints] or _only_child(children)
+
+
 def _update_children(cfg: dict[str, Any], profile) -> list[dict[str, Any]]:
     """Add new children to the config; keep the calendars already assigned."""
-    children = []
-    for child in profile.children:
-        entry = cfg["children"].setdefault(str(child.id), {})
-        entry["name"] = child.name
-        entry["institution"] = child.institution_name
-        children.append({"id": child.id, "name": child.name, "institution": child.institution_name})
+    children = _children(profile)
+    for child in children:
+        entry = cfg["children"].setdefault(str(child["id"]), {})
+        entry["name"] = child["name"]
+        entry["institution"] = child["institution"]
     store.save_config(cfg)
     return children
 
 
-async def _take_posts(
-    client, profile, arch: archive.Archive, intake: Intake, only_child: list[int], warnings: list[str]
-) -> None:
+async def _read_posts(client, profile, warnings: list[str]) -> AsyncIterator[Post]:
+    """Every post Aula has, newest first."""
     # Aula only returns posts when asked with the guardian's own institution
     # profile(s) as well as the children's, so a post cannot be attributed to a
     # child from the request; with several children the agent decides from the
@@ -191,30 +220,37 @@ async def _take_posts(
         # Aula reads `index` as an element offset, but the library sends `page - 1`.
         posts = await client.get_posts(profile_ids, page=offset + 1, limit=POSTS_PER_PAGE)
         for post in posts:
-            key = f"post:{post.id}"
-            arch.save_post(post._raw or {}, child_ids=only_child)
-            files = await _archive_files(client, arch, key, post.attachments, warnings)
-            published = _aware(post.publish_at or post.timestamp)
-
-            async def build(post=post, key=key, published=published, files=files) -> dict[str, Any]:
-                return {
-                    "key": key,
-                    "type": "post",
-                    "child_ids": only_child,
-                    "title": post.title,
-                    "author": post.owner.full_name if post.owner else None,
-                    "published": _iso(published),
-                    "edited": _iso(post.edited_at),
-                    "groups": [g.get("name") for g in post.shared_with_groups if isinstance(g, dict)],
-                    "body": post.content_markdown[:MAX_BODY_CHARS],
-                    "attachments": _inbox_attachments(files),
-                }
-
-            version = _version(post.edited_at, post.content_html, len(post.attachments))
-            await intake.offer(key, version, _aware(post.edited_at) or published, build)
+            yield post
         if len(posts) < POSTS_PER_PAGE:
             return
     warnings.append(f"Der var flere end {MAX_POST_PAGES * POSTS_PER_PAGE} opslag; de ældste er ikke læst.")
+
+
+async def _take_posts(
+    client, profile, arch: archive.Archive, intake: Intake, only_child: list[int], warnings: list[str]
+) -> None:
+    async for post in _read_posts(client, profile, warnings):
+        key = f"post:{post.id}"
+        arch.save_post(post._raw or {}, child_ids=only_child)
+        files = await _archive_files(_from_aula(client), arch, key, post.attachments, warnings)
+        published = _aware(post.publish_at or post.timestamp)
+
+        async def build(post=post, key=key, published=published, files=files) -> dict[str, Any]:
+            return {
+                "key": key,
+                "type": "post",
+                "child_ids": only_child,
+                "title": post.title,
+                "author": post.owner.full_name if post.owner else None,
+                "published": _iso(published),
+                "edited": _iso(post.edited_at),
+                "groups": [g.get("name") for g in post.shared_with_groups if isinstance(g, dict)],
+                "body": post.content_markdown[:MAX_BODY_CHARS],
+                "attachments": _inbox_attachments(files),
+            }
+
+        version = _version(post.edited_at, post.content_html, len(post.attachments))
+        await intake.offer(key, version, _aware(post.edited_at) or published, build)
 
 
 async def _take_messages(
@@ -224,7 +260,6 @@ async def _take_messages(
     intake: Intake,
     since: dt.datetime,
     children: list[dict],
-    only_child: list[int],
     warnings: list[str],
 ) -> None:
     threads = await client.get_all_message_threads_result(since.date())
@@ -239,7 +274,7 @@ async def _take_messages(
         msgs = await client.get_all_messages_for_thread_result(thread_id)
         all_files = True
         hints = _child_hints(thread)
-        child_ids = [c["id"] for c in children if c["name"] in hints] or only_child
+        child_ids = _thread_child_ids(thread, children)
         arch.save_thread(
             thread_id, msgs.items, thread=listed.get(thread_id), complete=msgs.complete, child_ids=child_ids
         )
@@ -249,7 +284,7 @@ async def _take_messages(
             msg = Message.from_dict(raw)
             sent = _aware(msg.send_datetime)
             key = f"message:{thread_id}:{msg.id}"
-            files = await _archive_files(client, arch, key, msg.attachments, warnings)
+            files = await _archive_files(_from_aula(client), arch, key, msg.attachments, warnings)
             all_files &= all(f.path for f in files if f.kind in ("file", "image"))
 
             async def build(msg=msg, key=key, sent=sent, files=files) -> dict[str, Any]:
@@ -328,13 +363,103 @@ async def fetch(*, first_run_days: int = FIRST_RUN_DAYS) -> dict[str, Any]:
     async with await open_client() as client:
         profile = await client.get_profile()
         children = _update_children(cfg, profile)
-        only_child = [children[0]["id"]] if len(children) == 1 else []
+        only_child = _only_child(children)
         with archive.open() as arch:
             await _take_posts(client, profile, arch, intake, only_child, warnings)
-            await _take_messages(client, ledger, arch, intake, since, children, only_child, warnings)
+            await _take_messages(client, ledger, arch, intake, since, children, warnings)
         aula_calendar = await _read_aula_calendar(client, profile, now, warnings)
 
     ledger.last_fetch = now.isoformat(timespec="seconds")
     ledger.save()
     contract.write_inbox(ledger, cfg, aula_calendar, warnings)
     return {"new": intake.new_keys, "pending": len(ledger.pending_keys()), "warnings": warnings, "first_run": first_run}
+
+
+# ----------------------------------------------------------------------------- backfill
+
+
+class BackfillSource(Protocol):
+    """What backfill reads: everything Aula still has, as Aula sends it.
+
+    Read from Aula itself here; a rescue copy of the same data can stand in for it.
+    """
+
+    children: list[dict[str, Any]]
+
+    def posts(self) -> AsyncIterator[dict[str, Any]]:
+        """Every post, as Aula's raw JSON."""
+        ...
+
+    def threads(self) -> AsyncIterator[tuple[dict[str, Any], PaginationResult[dict]]]:
+        """Every message thread (raw) with all its messages, system messages too."""
+        ...
+
+    async def download(self, att: Attachment) -> bytes:
+        """The content of a file or image."""
+        ...
+
+
+class _AulaBackfill:
+    def __init__(self, client: AulaApiClient, profile, warnings: list[str]):
+        self._client, self._profile, self._warnings = client, profile, warnings
+        self.children = _children(profile)
+        self.download = _from_aula(client)
+
+    async def posts(self) -> AsyncIterator[dict[str, Any]]:
+        async for post in _read_posts(self._client, self._profile, self._warnings):
+            yield post._raw or {}
+
+    async def threads(self) -> AsyncIterator[tuple[dict[str, Any], PaginationResult[dict]]]:
+        listed = await self._client.get_all_message_threads_result(BACKFILL_SINCE)
+        if not listed.complete:
+            self._warnings.append(f"Beskedlisten blev ikke læst helt ({listed.termination_reason}).")
+        for thread in listed.items:
+            yield thread, await self._client.get_all_messages_for_thread_result(str(thread.get("id")))
+
+
+@dataclass
+class Backfilled:
+    posts: int = 0
+    threads: int = 0
+    messages: int = 0
+    new_versions: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+
+async def _backfill_from(source: BackfillSource, warnings: list[str]) -> Backfilled:
+    result = Backfilled(warnings=warnings)
+    only_child = _only_child(source.children)
+    with archive.open() as arch:
+        async for raw in source.posts():
+            post = Post.from_dict(raw)
+            result.posts += 1
+            result.new_versions += arch.save_post(raw, child_ids=only_child)
+            await _archive_files(source.download, arch, f"post:{post.id}", post.attachments, warnings)
+        async for thread, msgs in source.threads():
+            thread_id = str(thread.get("id"))
+            result.threads += 1
+            saved = arch.save_thread(
+                thread_id, msgs.items, thread=thread, complete=msgs.complete,
+                child_ids=_thread_child_ids(thread, source.children),
+            )
+            result.messages += len(saved)
+            result.new_versions += sum(saved.values())
+            for raw in msgs.items:
+                if raw.get("messageType") in archive.MESSAGE_ITEM_TYPES:
+                    msg = Message.from_dict(raw)
+                    await _archive_files(source.download, arch, f"message:{thread_id}:{msg.id}", msg.attachments, warnings)
+            if not msgs.complete:
+                warnings.append(f"Tråd {thread_id} blev ikke læst helt ({msgs.termination_reason}); kør backfill igen.")
+    return result
+
+
+async def backfill() -> Backfilled:
+    """Read everything Aula still has into the archive: all posts and all threads.
+
+    Touches neither the inbox nor intake (``seen``, ``pending``, ``last_fetch``),
+    and can be run again: what is already archived is skipped.
+    """
+    warnings: list[str] = []
+    async with await open_client() as client:
+        profile = await client.get_profile()
+        return await _backfill_from(_AulaBackfill(client, profile, warnings), warnings)

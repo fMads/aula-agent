@@ -30,7 +30,7 @@ Hvis skolen sender en rettelse, f.eks. *"det er flyttet til torsdag"*, opdateres
 
 Python-delen forstår ikke selv tekst. Den henter og gemmer data og taler med Aula og Google. Det er agenten, der læser og vurderer indholdet.
 
-**Arkivet.** Aula sletter opslag og beskeder efter nogle måneder. Derfor gemmer `fetch` hvert opslag og hver beskedtråd, den ser, i et arkiv (`data/archive.sqlite`) med alle filer og billeder, også det der er for gammelt til agenten. En tråd gemmes hel, som Aula sendte den, også systembeskeder (fx modtagere tilføjet); beskeder fra en følsom tråd er markeret som følsomme. Retter skolen et opslag eller en besked, gemmes den nye version ved siden af den gamle. Arkivet rydder aldrig op. Det er en almindelig SQLite-fil, som du kan åbne med SQLite-værktøjer, DuckDB eller ClickHouse.
+**Arkivet.** Aula sletter opslag og beskeder efter nogle måneder. Derfor gemmer `fetch` hvert opslag og hver beskedtråd, den ser, i et arkiv (`data/archive.sqlite`) med alle filer og billeder, også det der er for gammelt til agenten. En tråd gemmes hel, som Aula sendte den, også systembeskeder (fx modtagere tilføjet); beskeder fra en følsom tråd er markeret som følsomme. Retter skolen et opslag eller en besked, gemmes den nye version ved siden af den gamle. Hver nat læser `fetch` kun de tråde, der er ændret; `uv run aula-agent backfill` henter én gang alt, hvad Aula stadig har (alle opslag og alle tråde), til arkivet. Den kan køres igen uden dubletter, giver ikke agenten noget og starter aldrig et MitID-login. Arkivet rydder aldrig op. Det er en almindelig SQLite-fil, som du kan åbne med SQLite-værktøjer, DuckDB eller ClickHouse.
 
 ## Hvad er påkrævet, og hvad er valgfrit?
 
@@ -208,6 +208,7 @@ Se opsætningen med `uv run aula-agent web-setup`. Hvis du kører `--email` igen
 |---|---|
 | `aula-agent status` | Viser logins, børn, kalendere og hvad der venter |
 | `aula-agent fetch` | Henter nye beskeder og opslag med filer til `data/inbox.json` og gemmer alle opslag og læste tråde i arkivet |
+| `aula-agent backfill` | Henter alt, hvad Aula stadig har (alle opslag og tråde med filer), til arkivet. Rører ikke indbakken og kan køres igen |
 | `aula-agent apply FIL [--dry-run]` | Opretter, opdaterer og sletter begivenheder ud fra en events-fil |
 | `aula-agent google-login` | Forbinder Google fra en terminal |
 | `aula-agent web-setup [...]` | Viser eller ændrer web-sidens opsætning |
