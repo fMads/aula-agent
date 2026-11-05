@@ -219,7 +219,7 @@ Alle kommandoer køres som `uv run aula-agent …` fra projektmappen.
 |---|---|
 | 3 | Aula-login mangler |
 | 4 | Google-login mangler |
-| 5 | Ugyldig events-fil |
+| 5 | Ugyldig events-fil (fx ugyldig JSON, eller items fra indbakken mangler i `processed`) |
 
 ## Filer
 
@@ -233,7 +233,7 @@ Alle kommandoer køres som `uv run aula-agent …` fra projektmappen.
 uv run pytest -q
 ```
 
-Agentens fremgangsmåde står i [`AGENTS.md`](AGENTS.md): hvad der tæller som et arrangement, hvordan rettelser genkendes, og hvordan børn tildeles. Ret den, hvis agenten skal opføre sig anderledes.
+Begreberne (item, event, ledger, …) er forklaret i [`GLOSSARY.md`](GLOSSARY.md). Agentens fremgangsmåde står i [`AGENTS.md`](AGENTS.md): hvad der tæller som et arrangement, hvordan rettelser genkendes, og hvordan børn tildeles. Ret den, hvis agenten skal opføre sig anderledes.
 
 ## Licens
 

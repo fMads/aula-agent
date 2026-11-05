@@ -1,124 +1,90 @@
-"""Google Calendar + Drive: one calendar per child, attachments via Drive.
+"""Put events into Google Calendar: one calendar per child, attachments via Drive.
 
-Scopes are kept narrow:
-- ``calendar.app.created``: only calendars this tool creates itself.
-- ``drive.file``: only files this tool uploads itself.
+``sync`` first makes a plan (create / update / delete / skip per event and
+child) from the events document and the ledger, then carries it out through a
+:class:`Google` adapter. Tests use an in-memory adapter with the same methods.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-import json
 import mimetypes
-from typing import Any
-from urllib.parse import parse_qs, urlparse
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
 
-from . import store
+from . import contract, credentials, store
+from .contract import Event, EventError, EventsDoc  # noqa: F401  (EventError re-exported)
+from .credentials import GoogleLoginRequired  # noqa: F401  (re-exported)
+from .ledger import Ledger, SyncedEntry
 
-SCOPES = [
-    "https://www.googleapis.com/auth/calendar.app.created",
-    "https://www.googleapis.com/auth/drive.file",
-]
-KEY_PROP = "aulaAgentKey"
-REDIRECT_URI = "http://localhost:8765/"
-
-
-class GoogleLoginRequired(RuntimeError):
-    pass
+KEY_PROP = "aulaAgentKey"  # private extended property holding the event key
 
 
-class EventError(ValueError):
-    pass
+# ----------------------------------------------------------------------------- adapter
 
 
-# --------------------------------------------------------------------------- auth
+class Google:
+    """Google Calendar + Drive, reduced to what aula-agent needs."""
 
+    def __init__(self, calendar_service, drive_service):
+        self._cal = calendar_service
+        self._drive = drive_service
 
-def credentials():
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
+    @classmethod
+    def connect(cls) -> Google:
+        """Raises :class:`GoogleLoginRequired` when there is no usable Google access."""
+        return cls(*credentials.google_services())
 
-    if not store.GOOGLE_TOKEN.exists():
-        raise GoogleLoginRequired("Ingen Google-adgang endnu.")
-    creds = Credentials.from_authorized_user_file(str(store.GOOGLE_TOKEN), SCOPES)
-    if creds.valid:
-        return creds
-    if creds.refresh_token:
+    def create_calendar(self, summary: str) -> str:
+        return self._cal.calendars().insert(body={"summary": summary, "timeZone": store.TIMEZONE}).execute()["id"]
+
+    def find_event(self, calendar_id: str, key: str) -> str | None:
+        found = self._cal.events().list(calendarId=calendar_id, privateExtendedProperty=f"{KEY_PROP}={key}").execute()
+        items = found.get("items") or []
+        return items[0]["id"] if items else None
+
+    def insert_event(self, calendar_id: str, body: dict[str, Any]) -> tuple[str, str | None]:
+        saved = self._cal.events().insert(calendarId=calendar_id, body=body, supportsAttachments=True).execute()
+        return saved["id"], saved.get("htmlLink")
+
+    def patch_event(self, calendar_id: str, event_id: str, body: dict[str, Any]) -> tuple[str, str | None]:
+        saved = self._cal.events().patch(
+            calendarId=calendar_id, eventId=event_id, body=body, supportsAttachments=True
+        ).execute()
+        return saved["id"], saved.get("htmlLink")
+
+    def delete_event(self, calendar_id: str, event_id: str) -> bool:
+        """False when the event was already gone."""
+        from googleapiclient.errors import HttpError
+
         try:
-            creds.refresh(Request())
-        except Exception as exc:
-            raise GoogleLoginRequired(f"Google-adgangen kunne ikke fornyes: {exc}") from exc
-        store.GOOGLE_TOKEN.write_text(creds.to_json())
-        return creds
-    raise GoogleLoginRequired("Google-adgangen er udløbet.")
+            self._cal.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+        except HttpError as exc:
+            if exc.resp.status in (404, 410):
+                return False
+            raise
+        return True
+
+    def create_folder(self, name: str) -> str:
+        body = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+        return self._drive.files().create(body=body, fields="id").execute()["id"]
+
+    def upload_file(self, path: Path, name: str, folder_id: str) -> dict[str, Any]:
+        """Upload a file; returns a Calendar attachment (fileId, fileUrl, title, mimeType)."""
+        from googleapiclient.http import MediaFileUpload
+
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        meta = self._drive.files().create(
+            body={"name": name, "parents": [folder_id]},
+            media_body=MediaFileUpload(str(path), mimetype=mime),
+            fields="id,name,mimeType,webViewLink",
+        ).execute()
+        return {"fileId": meta["id"], "fileUrl": meta["webViewLink"], "title": meta["name"], "mimeType": meta["mimeType"]}
 
 
-def interactive_login(prompt=input, echo=print) -> None:
-    """OAuth for a desktop client, by pasting the redirect URL back.
-
-    Works on a headless server too: the browser can be on any machine, and the
-    "page cannot be reached" after approving is expected - its URL holds the code.
-    """
-    from google_auth_oauthlib.flow import InstalledAppFlow
-
-    if not store.GOOGLE_CLIENT_SECRET.exists():
-        raise FileNotFoundError(f"Læg OAuth-nøglen fra Google Cloud her: {store.GOOGLE_CLIENT_SECRET}")
-    flow = InstalledAppFlow.from_client_secrets_file(
-        str(store.GOOGLE_CLIENT_SECRET), SCOPES, redirect_uri=REDIRECT_URI
-    )
-    url, _ = flow.authorization_url(access_type="offline", prompt="consent")
-    echo("1. Åbn denne adresse i en browser og godkend adgangen:\n")
-    echo(url + "\n")
-    echo("2. Bagefter viser browseren en fejlside (localhost kan ikke nås) – det er forventet.")
-    pasted = prompt("3. Kopiér hele adressen fra browserens adresselinje og indsæt den her: ").strip()
-    code = parse_qs(urlparse(pasted).query).get("code", [pasted])[0]
-    flow.fetch_token(code=code)
-    store.write_json(store.GOOGLE_TOKEN, json.loads(flow.credentials.to_json()))
-    store.GOOGLE_TOKEN.chmod(0o600)
-
-
-def web_flow_start(redirect_uri: str) -> tuple[str, str, str]:
-    """Start OAuth for the web UI. Returns (authorization_url, state, code_verifier)."""
-    from google_auth_oauthlib.flow import Flow
-
-    if not store.GOOGLE_CLIENT_SECRET.exists():
-        raise FileNotFoundError(f"Læg OAuth-nøglen fra Google Cloud her: {store.GOOGLE_CLIENT_SECRET}")
-    flow = Flow.from_client_secrets_file(str(store.GOOGLE_CLIENT_SECRET), SCOPES, redirect_uri=redirect_uri)
-    url, state = flow.authorization_url(access_type="offline", prompt="consent")
-    return url, state, flow.code_verifier
-
-
-def web_flow_finish(redirect_uri: str, state: str, code_verifier: str, code: str) -> None:
-    from google_auth_oauthlib.flow import Flow
-
-    flow = Flow.from_client_secrets_file(
-        str(store.GOOGLE_CLIENT_SECRET), SCOPES, redirect_uri=redirect_uri, state=state, code_verifier=code_verifier
-    )
-    flow.fetch_token(code=code)
-    store.write_json(store.GOOGLE_TOKEN, json.loads(flow.credentials.to_json()))
-    store.GOOGLE_TOKEN.chmod(0o600)
-
-
-def services():
-    from googleapiclient.discovery import build
-
-    creds = credentials()
-    return (
-        build("calendar", "v3", credentials=creds, cache_discovery=False),
-        build("drive", "v3", credentials=creds, cache_discovery=False),
-    )
-
-
-# --------------------------------------------------------------------------- event body
-
-
-def _parse_point(value: str, field: str) -> dt.date | dt.datetime:
-    try:
-        if "T" in value:
-            return dt.datetime.fromisoformat(value)
-        return dt.date.fromisoformat(value)
-    except (TypeError, ValueError) as exc:
-        raise EventError(f"{field}: ugyldig dato/tid {value!r}") from exc
+# ----------------------------------------------------------------------------- event body
 
 
 def _source_footer(item: dict[str, Any] | None) -> str:
@@ -138,226 +104,197 @@ def _source_footer(item: dict[str, Any] | None) -> str:
     return " ".join(parts)
 
 
-def build_event_body(ev: dict[str, Any], source_item: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Turn one event from the events file into a Google Calendar event body.
+def build_event_body(ev: Event, source_item: dict[str, Any] | None = None, attachments: list[dict] | None = None) -> dict[str, Any]:
+    """The full Google Calendar body for an event.
 
-    - ``start`` ``YYYY-MM-DD`` gives an all-day event; ``end`` is then the *last*
-      day (inclusive) and defaults to ``start``.
-    - ``start`` ``YYYY-MM-DDTHH:MM`` gives a timed event in Europe/Copenhagen;
-      ``end`` defaults to one hour later.
+    Every field aula-agent owns is always present (also when empty), so an
+    update clears what a correction removed.
     """
-    title = (ev.get("title") or "").strip()
-    if not title:
-        raise EventError("title mangler")
-    if not ev.get("start"):
-        raise EventError("start mangler")
-    start = _parse_point(ev["start"], "start")
-    end = _parse_point(ev["end"], "end") if ev.get("end") else None
-
-    body: dict[str, Any] = {"summary": title}
-    if isinstance(start, dt.datetime):
-        if end is None:
-            end = start + dt.timedelta(hours=1)
-        elif not isinstance(end, dt.datetime):
-            raise EventError("end skal have klokkeslæt, når start har det")
-        if end <= start:
-            raise EventError("end ligger før start")
-        body["start"] = {"dateTime": start.replace(tzinfo=None).isoformat(), "timeZone": store.TIMEZONE}
-        body["end"] = {"dateTime": end.replace(tzinfo=None).isoformat(), "timeZone": store.TIMEZONE}
+    if ev.all_day:
+        start = {"date": ev.start.isoformat()}
+        end = {"date": (ev.end + dt.timedelta(days=1)).isoformat()}  # Google's end date is exclusive
     else:
-        if end is None:
-            end = start
-        elif isinstance(end, dt.datetime):
-            raise EventError("end må ikke have klokkeslæt, når start er en hel dag")
-        if end < start:
-            raise EventError("end ligger før start")
-        body["start"] = {"date": start.isoformat()}
-        body["end"] = {"date": (end + dt.timedelta(days=1)).isoformat()}
-
-    if ev.get("location"):
-        body["location"] = ev["location"]
-    description = (ev.get("description") or "").strip()
-    footer = _source_footer(source_item)
-    body["description"] = "\n\n".join(p for p in (description, footer, "Oprettet automatisk af aula-agent") if p)
-    body["extendedProperties"] = {"private": {KEY_PROP: ev["key"]}}
-    return body
+        start = {"dateTime": ev.start.isoformat(), "timeZone": store.TIMEZONE}
+        end = {"dateTime": ev.end.isoformat(), "timeZone": store.TIMEZONE}
+    description = "\n\n".join(p for p in (ev.description, _source_footer(source_item), "Oprettet automatisk af aula-agent") if p)
+    return {
+        "summary": ev.title,
+        "start": start,
+        "end": end,
+        "location": ev.location,
+        "description": description,
+        "attachments": attachments or [],
+        "extendedProperties": {"private": {KEY_PROP: ev.key}},
+    }
 
 
-def validate(doc: dict[str, Any], cfg: dict[str, Any]) -> list[str]:
-    """Return a list of problems with an events document (empty when fine)."""
-    errors: list[str] = []
-    known = set(cfg["children"])
-    seen: set[str] = set()
-    for i, ev in enumerate(doc.get("events", [])):
-        where = f"events[{i}] ({ev.get('key') or ev.get('title') or '?'})"
-        if not ev.get("key"):
-            errors.append(f"{where}: key mangler")
-        elif ev["key"] in seen:
-            errors.append(f"{where}: key bruges to gange")
-        seen.add(ev.get("key"))
-        child_ids = ev.get("child_ids") or []
-        if not child_ids:
-            errors.append(f"{where}: child_ids mangler")
-        for cid in child_ids:
-            if str(cid) not in known:
-                errors.append(f"{where}: ukendt barn {cid}")
-        if ev.get("cancelled"):
+# ----------------------------------------------------------------------------- plan
+
+
+@dataclass(frozen=True)
+class Action:
+    kind: Literal["create", "update", "delete", "skip"]
+    event: Event
+    child_id: str | None = None
+    calendar_id: str | None = None  # None: the child's calendar does not exist yet
+    event_id: str | None = None  # known from the ledger
+    reason: str = ""
+
+    def label(self, cfg: dict[str, Any]) -> str:
+        what = "aflyst" if self.event.cancelled else self.event.start_text
+        text = f"{what} {self.event.title or self.event.key}"
+        if self.child_id:
+            text += f" → {cfg['children'][self.child_id].get('name')}"
+        return f"{text} ({self.reason})" if self.reason else text
+
+
+def plan(doc: EventsDoc, ledger: Ledger, cfg: dict[str, Any]) -> list[Action]:
+    """What ``sync`` would do, decided from local knowledge only (no Google calls)."""
+    actions: list[Action] = []
+    for ev in doc.events:
+        if ledger.is_removed(ev.key):
+            actions.append(Action("skip", ev, reason="fjernet af dig"))
             continue
-        try:
-            build_event_body(ev)
-        except EventError as exc:
-            errors.append(f"{where}: {exc}")
-        for rel in ev.get("attachments") or []:
-            if not (store.DATA_DIR / rel).is_file():
-                errors.append(f"{where}: filen findes ikke: {rel}")
-    return errors
+        for cid in map(str, ev.child_ids):
+            calendar_id = cfg["children"][cid].get("calendar_id")
+            known = ledger.synced(ev.key, calendar_id) if calendar_id else None
+            event_id = known.event_id if known else None
+            if ev.cancelled:
+                if calendar_id:
+                    actions.append(Action("delete", ev, cid, calendar_id, event_id))
+                else:
+                    actions.append(Action("skip", ev, cid, reason="ikke i kalenderen"))
+            else:
+                actions.append(Action("update" if known else "create", ev, cid, calendar_id, event_id))
+    return actions
 
 
-# --------------------------------------------------------------------------- sync
+# ----------------------------------------------------------------------------- execute
 
 
-def ensure_calendar(cal_service, cfg: dict[str, Any], child_id: str) -> str:
+def ensure_calendar(google: Google, cfg: dict[str, Any], child_id: str) -> str:
     child = cfg["children"][child_id]
     if child.get("calendar_id"):
         return child["calendar_id"]
-    summary = cfg["calendar_name_template"].format(name=child.get("name", child_id).split()[0])
-    created = cal_service.calendars().insert(body={"summary": summary, "timeZone": store.TIMEZONE}).execute()
-    child["calendar_id"] = created["id"]
+    first_name = (child.get("name") or "").split() or [child_id]
+    summary = cfg["calendar_name_template"].format(name=first_name[0])
+    child["calendar_id"] = google.create_calendar(summary)
     child["calendar_name"] = summary
     store.save_config(cfg)
-    return created["id"]
+    return child["calendar_id"]
 
 
-def _drive_folder(drive, cfg: dict[str, Any], st: dict[str, Any]) -> str:
-    if st.get("drive_folder_id"):
-        return st["drive_folder_id"]
-    folder = drive.files().create(
-        body={"name": cfg["drive_folder_name"], "mimeType": "application/vnd.google-apps.folder"},
-        fields="id",
-    ).execute()
-    st["drive_folder_id"] = folder["id"]
-    store.save_state(st)
-    return folder["id"]
-
-
-def upload(drive, cfg: dict[str, Any], st: dict[str, Any], rel_path: str) -> dict[str, Any]:
-    if rel_path in st["uploads"]:
-        return st["uploads"][rel_path]
-    from googleapiclient.http import MediaFileUpload
-
+def _upload(google: Google, ledger: Ledger, cfg: dict[str, Any], rel_path: str) -> dict[str, Any]:
+    if cached := ledger.upload(rel_path):
+        return cached
+    if not ledger.drive_folder_id:
+        ledger.drive_folder_id = google.create_folder(cfg["drive_folder_name"])
+        ledger.save()
     path = store.DATA_DIR / rel_path
-    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    name = path.name.split("-", 1)[-1]  # drop the Aula id prefix
-    meta = drive.files().create(
-        body={"name": name, "parents": [_drive_folder(drive, cfg, st)]},
-        media_body=MediaFileUpload(str(path), mimetype=mime),
-        fields="id,name,mimeType,webViewLink",
-    ).execute()
-    info = {"fileId": meta["id"], "fileUrl": meta["webViewLink"], "title": meta["name"], "mimeType": meta["mimeType"]}
-    st["uploads"][rel_path] = info
-    store.save_state(st)
+    info = google.upload_file(path, path.name.split("-", 1)[-1], ledger.drive_folder_id)  # drop the Aula id prefix
+    ledger.record_upload(rel_path, info)
+    ledger.save()
     return info
 
 
-def _find_existing(cal, calendar_id: str, key: str) -> str | None:
-    found = cal.events().list(calendarId=calendar_id, privateExtendedProperty=f"{KEY_PROP}={key}").execute()
-    items = found.get("items") or []
-    return items[0]["id"] if items else None
+def _source_item(ev: Event, ledger: Ledger) -> dict[str, Any]:
+    item = ledger.pending_item(ev.source) or ledger.source_item_for(ev.key) or {}
+    return {k: v for k, v in item.items() if k not in ("body", "attachments")}
 
 
-def sync(doc: dict[str, Any], *, dry_run: bool = False, svc=None, echo=print) -> dict[str, Any]:
-    cfg = store.load_config()
-    st = store.load_state()
-    errors = validate(doc, cfg)
-    if errors:
-        raise EventError("Events-filen har fejl:\n  " + "\n  ".join(errors))
-
-    result = {"created": [], "updated": [], "deleted": [], "processed": [], "skipped": []}
-    if not dry_run:
-        cal, drive = svc or services()
-
-    for ev in doc.get("events", []):
-        if ev["key"] in st["ignored"]:
-            result["skipped"].append(f"{ev.get('title', ev['key'])} (fjernet af dig)")
+def execute(actions: list[Action], doc: EventsDoc, google: Google, ledger: Ledger, cfg: dict[str, Any]) -> dict[str, list[str]]:
+    """Carry out a plan. The ledger is saved after every change, so a crash
+    half-way loses nothing that already happened in Google."""
+    result: dict[str, list[str]] = {"created": [], "updated": [], "deleted": [], "processed": [], "skipped": []}
+    for a in actions:
+        ev, label = a.event, a.label(cfg)
+        if a.kind == "skip":
+            result["skipped"].append(label)
             continue
-        source_item = st["pending"].get(ev.get("source")) or next(
-            (e.get("source_item") for e in st["events"].values() if e["key"] == ev["key"]), None
+        calendar_id = a.calendar_id or ensure_calendar(google, cfg, a.child_id)
+        event_id = a.event_id or google.find_event(calendar_id, ev.key)  # local state may have been lost
+
+        if a.kind == "delete":
+            if event_id and google.delete_event(calendar_id, event_id):
+                result["deleted"].append(label)
+            ledger.forget(ev.key, calendar_id)
+            ledger.save()
+            continue
+
+        source_item = _source_item(ev, ledger)
+        attachments = [_upload(google, ledger, cfg, rel) for rel in ev.attachments]
+        body = build_event_body(ev, source_item, attachments)
+        before = ledger.synced(ev.key, calendar_id)
+        if event_id and before and ("T" in before.start) == ev.all_day:
+            # All-day <-> timed: Google cannot patch one into the other; replace it.
+            google.delete_event(calendar_id, event_id)
+            event_id, link = google.insert_event(calendar_id, body)
+            result["updated"].append(label)
+        elif event_id:
+            event_id, link = google.patch_event(calendar_id, event_id, body)
+            result["updated"].append(label)
+        else:
+            event_id, link = google.insert_event(calendar_id, body)
+            result["created"].append(label)
+        ledger.record(
+            SyncedEntry(
+                key=ev.key, child_id=int(a.child_id), calendar_id=calendar_id, event_id=event_id,
+                title=ev.title, start=ev.start_text, end=ev.end_text, source=ev.source,
+                source_item=source_item, link=link,
+            )
         )
-        for cid in map(str, ev["child_ids"]):
-            label = f"{ev['start'] if not ev.get('cancelled') else 'aflyst'} {ev.get('title', ev['key'])} → {cfg['children'][cid].get('name')}"
-            if dry_run:
-                echo(f"[prøvekørsel] {label}")
-                continue
-            calendar_id = ensure_calendar(cal, cfg, cid)
-            skey = f"{ev['key']}|{calendar_id}"
-            event_id = (st["events"].get(skey) or {}).get("event_id") or _find_existing(cal, calendar_id, ev["key"])
+        ledger.save()
 
-            if ev.get("cancelled"):
-                if event_id:
-                    cal.events().delete(calendarId=calendar_id, eventId=event_id).execute()
-                    result["deleted"].append(label)
-                st["events"].pop(skey, None)
-                store.save_state(st)
-                continue
-
-            body = build_event_body(ev, source_item)
-            attachments = [upload(drive, cfg, st, rel) for rel in ev.get("attachments") or []]
-            if attachments:
-                body["attachments"] = attachments
-            if event_id:
-                saved = cal.events().patch(
-                    calendarId=calendar_id, eventId=event_id, body=body, supportsAttachments=True
-                ).execute()
-                result["updated"].append(label)
-            else:
-                saved = cal.events().insert(calendarId=calendar_id, body=body, supportsAttachments=True).execute()
-                result["created"].append(label)
-            st["events"][skey] = {
-                "key": ev["key"],
-                "child_id": int(cid),
-                "calendar_id": calendar_id,
-                "event_id": saved["id"],
-                "title": ev["title"],
-                "start": ev["start"],
-                "end": ev.get("end") or ev["start"],
-                "source": ev.get("source"),
-                "source_item": {k: v for k, v in (source_item or {}).items() if k not in ("body", "attachments")},
-                "link": saved.get("htmlLink"),
-            }
-            store.save_state(st)
-
-    if not dry_run:
-        for key in doc.get("processed", []):
-            if st["pending"].pop(key, None) is not None:
-                result["processed"].append(key)
-        store.save_state(st)
+    result["processed"] = ledger.mark_processed(list(doc.processed))
+    ledger.save()
     return result
 
 
-def remove_event(key: str, *, svc=None) -> int:
-    """Delete an event (on every child's calendar) and never recreate this key.
+def sync(
+    raw_doc: str | dict[str, Any],
+    *,
+    dry_run: bool = False,
+    google: Google | Callable[[], Google] | None = None,
+    echo=print,
+) -> dict[str, list[str]]:
+    """Validate an events document and put it into Google Calendar.
 
-    Returns how many calendar entries were deleted.
+    Raises :class:`EventError` (nothing changed) or :class:`GoogleLoginRequired`.
+    With ``dry_run`` the plan is printed and nothing is changed.
     """
-    st = store.load_state()
-    entries = {skey: e for skey, e in st["events"].items() if e["key"] == key}
+    cfg, ledger = store.load_config(), Ledger.load()
+    doc = contract.parse(raw_doc, children=cfg["children"], pending_keys=ledger.pending_keys())
+    actions = plan(doc, ledger, cfg)
+    if dry_run:
+        names = {"create": "Opret", "update": "Opdatér", "delete": "Slet", "skip": "Spring over"}
+        for a in actions:
+            echo(f"[prøvekørsel] {names[a.kind]}: {a.label(cfg)}")
+        echo(f"[prøvekørsel] Markeres som behandlet: {len(doc.processed)}")
+        return {"created": [], "updated": [], "deleted": [], "processed": [], "skipped": []}
+    google = _resolve(google)
+    return execute(actions, doc, google, ledger, cfg)
+
+
+def remove_event(key: str, *, google: Google | Callable[[], Google] | None = None) -> int:
+    """Delete an event from every child's calendar and never recreate this key.
+
+    Returns how many calendar entries there were. Raises KeyError for unknown keys.
+    """
+    ledger = Ledger.load()
+    entries = ledger.entries(key)
     if not entries:
         raise KeyError(key)
-    cal, _ = svc or services()
-    from googleapiclient.errors import HttpError
-
-    for skey, e in entries.items():
-        try:
-            cal.events().delete(calendarId=e["calendar_id"], eventId=e["event_id"]).execute()
-        except HttpError as exc:
-            if exc.resp.status not in (404, 410):  # already gone is fine
-                raise
-        del st["events"][skey]
-    first = next(iter(entries.values()))
-    st["ignored"][key] = {
-        "title": first["title"],
-        "start": first["start"],
-        "removed_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-    }
-    store.save_state(st)
+    google = _resolve(google)
+    for e in entries:
+        google.delete_event(e.calendar_id, e.event_id)
+        ledger.forget(e.key, e.calendar_id)
+    first = entries[0]
+    ledger.mark_removed(key, title=first.title, start=first.start, end=first.end)
+    ledger.save()
     return len(entries)
+
+
+def _resolve(google: Google | Callable[[], Google] | None) -> Google:
+    if google is None:
+        return Google.connect()
+    return google() if callable(google) and not isinstance(google, Google) else google

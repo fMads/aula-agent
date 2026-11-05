@@ -1,6 +1,9 @@
 from click.testing import CliRunner
 
+import json
+
 from aula_agent import aula_source, cli, store
+from aula_agent.ledger import Ledger
 
 
 def test_web_setup_saves_and_shows_config():
@@ -40,10 +43,43 @@ def test_fetch_login_message_without_web_ui(monkeypatch):
     r = _fetch_needing_login(monkeypatch)
     assert r.exit_code == cli.EXIT_AULA_LOGIN
     assert "AULA_LOGIN_REQUIRED" in r.output and "uv run aula login" in r.output and "http" not in r.output
-    assert store.load_state()["runs"][-1]["ok"] is False
+    assert Ledger.load().last_run("fetch")["outcome"] == "aula_login"
 
 
 def test_fetch_login_message_points_to_web_ui(monkeypatch):
     CliRunner().invoke(cli.main, ["web-setup", "--url", "https://aula.example.dk"])
     r = _fetch_needing_login(monkeypatch)
     assert "https://aula.example.dk/aula/login" in r.output
+
+
+def test_apply_rejects_invalid_json_with_exit_5(tmp_path):
+    bad = tmp_path / "events.json"
+    bad.write_text('{"events": [')
+    r = CliRunner().invoke(cli.main, ["apply", str(bad)])
+    assert r.exit_code == cli.EXIT_BAD_EVENTS and "ikke gyldig JSON" in r.output
+
+
+def test_apply_dry_run_reports_unprocessed_inbox_items(tmp_path):
+    ledger = Ledger()
+    ledger.add_pending({"key": "post:1", "child_ids": []})
+    ledger.save()
+    doc = tmp_path / "events.json"
+    doc.write_text(json.dumps({"processed": [], "events": []}))
+    r = CliRunner().invoke(cli.main, ["apply", str(doc), "--dry-run"])
+    assert r.exit_code == cli.EXIT_BAD_EVENTS and "post:1" in r.output
+    assert Ledger.load().last_run("apply") is None  # dry runs are not logged
+
+
+def test_apply_without_google_exits_4(tmp_path):
+    doc = tmp_path / "events.json"
+    doc.write_text(json.dumps({"processed": [], "events": []}))
+    r = CliRunner().invoke(cli.main, ["apply", str(doc)])
+    assert r.exit_code == cli.EXIT_GOOGLE_LOGIN and "GOOGLE_LOGIN_REQUIRED" in r.output
+    assert Ledger.load().last_run("apply")["outcome"] == "google_login"
+
+
+def test_status_runs_without_any_setup(monkeypatch, tmp_path):
+    monkeypatch.setattr("aula.config.DEFAULT_TOKEN_FILE", tmp_path / "none.json")
+    r = CliRunner().invoke(cli.main, ["status"])
+    assert r.exit_code == 0, r.output
+    assert "Ikke logget ind" in r.output and "Mangler OAuth-nøgle" in r.output

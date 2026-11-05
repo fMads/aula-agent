@@ -1,9 +1,9 @@
-"""Fetch new posts and messages (with attachments) from Aula into the local inbox.
+"""Fetch new posts and messages (with attachments) from Aula into the inbox.
 
 Never starts a MitID login on its own: if the saved session cannot be reused or
-refreshed, :class:`LoginRequired` is raised and the user has to run ``aula login``
-in a terminal. That protects the MitID account from being locked by repeated
-unattended login attempts.
+refreshed, :class:`LoginRequired` is raised and the user has to log in (web UI
+or ``aula login`` in a terminal). That protects the MitID account from being
+locked by repeated unattended login attempts.
 """
 
 from __future__ import annotations
@@ -11,43 +11,47 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import re
-from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from aula import FileTokenStorage
 from aula.api_client import AulaApiClient
 from aula.auth_flow import authenticate_and_create_client
-from aula.config import DEFAULT_TOKEN_FILE
-from aula.config import load_config as load_aula_config
 from aula.models.attachment import Attachment
 from aula.models.message import Message
 from aula.utils.html import html_to_markdown
 
-from . import store
+from . import contract, credentials, store
+from .ledger import Ledger
+from .runs import Outcome, Problem
 
 TZ = ZoneInfo(store.TIMEZONE)
 FIRST_RUN_DAYS = 30
 MAX_MEDIA_PER_ITEM = 3  # more images than this is a photo gallery, not an invitation
 MAX_BODY_CHARS = 20_000
+POSTS_PER_PAGE = 30
+MAX_POST_PAGES = 5
+MAX_THREAD_ATTEMPTS = 3  # read an incomplete thread again this many nights, then give up
 CALENDAR_DAYS = 112  # how far ahead to read Aula's own calendar
 CALENDAR_CHUNK_DAYS = 28  # Aula answers 403 for ranges much longer than a month
+DOWNLOAD_FAILED = "Download fejlede"
 
 
-class LoginRequired(RuntimeError):
-    pass
+class LoginRequired(Problem):
+    outcome = Outcome.AULA_LOGIN
+    label = "Aula-login mangler"
 
 
 async def open_client() -> AulaApiClient:
-    username = load_aula_config().get("mitid_username")
-    if not username or not Path(DEFAULT_TOKEN_FILE).exists():
+    if not credentials.aula_session_saved():
         raise LoginRequired("Ingen gemt Aula-session.")
 
     def refuse_login() -> None:
         raise LoginRequired("Den gemte Aula-session er udløbet.")
 
     return await authenticate_and_create_client(
-        username, FileTokenStorage(DEFAULT_TOKEN_FILE), on_login_required=refuse_login
+        credentials.aula_username(), FileTokenStorage(credentials.aula_token_file()), on_login_required=refuse_login
     )
 
 
@@ -71,12 +75,57 @@ def _version(*parts: Any) -> str:
     return hashlib.sha256("\x1f".join(str(p) for p in parts).encode()).hexdigest()[:16]
 
 
+# ----------------------------------------------------------------------------- intake
+
+
+class Intake:
+    """Decides which Aula items go to the agent.
+
+    An item is handed over when it is new or changed since it was last handed
+    over, and not older than ``cutoff``. If an attachment could not be
+    downloaded, the item is handed over anyway and tried again on the next run;
+    it is handed over a second time only once the download works.
+    """
+
+    def __init__(self, ledger: Ledger, cutoff: dt.datetime):
+        self._ledger = ledger
+        self._cutoff = cutoff
+        self.new_keys: list[str] = []
+
+    async def offer(
+        self, key: str, version: str, when: dt.datetime | None, build: Callable[[], Awaitable[dict[str, Any]]]
+    ) -> bool:
+        """``when`` is the item's latest change; ``build`` makes the inbox item
+        (downloading attachments) and is only called when the item may go to the agent.
+
+        Returns False while an attachment of the item still could not be downloaded.
+        """
+        if when and when < self._cutoff:  # old news, also on later runs
+            self._ledger.remember_old(key, version)
+            return True
+        before = self._ledger.seen_version(key)
+        if before == version:
+            return True
+        item = await build()
+        complete = all(a.get("note") != DOWNLOAD_FAILED for a in item.get("attachments") or [])
+        partial = f"{version}~partial"
+        if not complete and before == partial:  # still failing: the agent already has it
+            return False
+        self._ledger.mark_seen(key, version if complete else partial)
+        self._ledger.add_pending(item)
+        self.new_keys.append(key)
+        return complete
+
+
+# ----------------------------------------------------------------------------- sources
+
+
 async def _download_attachments(
     client: AulaApiClient, item_key: str, attachments: list[Attachment], warnings: list[str]
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     media_count = sum(1 for a in attachments if a.media is not None)
-    folder = store.ATTACHMENTS_DIR / _safe(item_key.replace(":", "_"))
+    folder = store.path("ATTACHMENTS_DIR") / _safe(item_key.replace(":", "_"))
     for att in attachments:
         entry: dict[str, Any] = {"name": att.name}
         if att.document is not None:
@@ -98,7 +147,7 @@ async def _download_attachments(
                         path.write_bytes(data)
                     except Exception as exc:  # one bad file must not stop the run
                         warnings.append(f"Kunne ikke hente {att.name!r} fra {item_key}: {exc}")
-                        entry["note"] = "Download fejlede"
+                        entry["note"] = DOWNLOAD_FAILED
                 if path.exists():
                     entry["path"] = str(path.relative_to(store.DATA_DIR))
         else:
@@ -121,64 +170,34 @@ def _child_hints(raw: dict[str, Any]) -> list[str]:
     return names
 
 
-async def fetch(*, first_run_days: int = FIRST_RUN_DAYS) -> dict[str, Any]:
-    """Fetch new items into ``state['pending']`` and write the inbox file.
+def _update_children(cfg: dict[str, Any], profile) -> list[dict[str, Any]]:
+    """Add new children to the config; keep the calendars already assigned."""
+    children = []
+    for child in profile.children:
+        entry = cfg["children"].setdefault(str(child.id), {})
+        entry["name"] = child.name
+        entry["institution"] = child.institution_name
+        children.append({"id": child.id, "name": child.name, "institution": child.institution_name})
+    store.save_config(cfg)
+    return children
 
-    Returns a summary dict (counts and warnings).
-    """
-    cfg = store.load_config()
-    st = store.load_state()
-    now = dt.datetime.now(TZ)
-    first_run = st["last_fetch"] is None
-    cutoff = now - dt.timedelta(days=first_run_days)
-    warnings: list[str] = []
-    new_keys: list[str] = []
 
-    async with await open_client() as client:
-        profile = await client.get_profile()
-
-        # Children: keep calendar ids already assigned, add new children.
-        children = []
-        for child in profile.children:
-            entry = cfg["children"].setdefault(str(child.id), {})
-            entry["name"] = child.name
-            entry["institution"] = child.institution_name
-            children.append({"id": child.id, "name": child.name, "institution": child.institution_name})
-        store.save_config(cfg)
-        only_child = [children[0]["id"]] if len(children) == 1 else []
-
-        def add_pending(key: str, version: str, item: dict[str, Any]) -> bool:
-            if st["seen"].get(key) == version:
-                return False
-            st["seen"][key] = version
-            existing = st["pending"].get(key)
-            if existing:  # unprocessed and changed again: keep latest content
-                item["child_ids"] = sorted(set(existing["child_ids"]) | set(item["child_ids"]))
-            st["pending"][key] = item
-            new_keys.append(key)
-            return True
-
-        # --- Posts. Aula only returns posts when asked with the guardian's own
-        # institution profile(s) as well as the children's, so a post cannot be
-        # attributed to a child from the request; with several children, Claude
-        # decides from the groups/class the post is shared with.
-        profile_ids = list(dict.fromkeys([*profile.institution_profile_ids, *(c.id for c in profile.children)]))
-        posts = await client.get_posts(profile_ids, page=1, limit=30) if profile_ids else []
-
+async def _take_posts(client, profile, intake: Intake, cutoff: dt.datetime, only_child: list[int], warnings: list[str]) -> None:
+    # Aula only returns posts when asked with the guardian's own institution
+    # profile(s) as well as the children's, so a post cannot be attributed to a
+    # child from the request; with several children the agent decides from the
+    # groups/class the post is shared with.
+    profile_ids = list(dict.fromkeys([*profile.institution_profile_ids, *(c.id for c in profile.children)]))
+    if not profile_ids:
+        return
+    for page in range(1, MAX_POST_PAGES + 1):
+        posts = await client.get_posts(profile_ids, page=page, limit=POSTS_PER_PAGE)
         for post in posts:
             key = f"post:{post.id}"
             published = _aware(post.publish_at or post.timestamp)
-            latest = _aware(post.edited_at) or published
-            version = _version(post.edited_at, post.content_html, len(post.attachments))
-            if latest and latest < cutoff:  # old news, also on later runs
-                st["seen"].setdefault(key, version)
-                continue
-            if st["seen"].get(key) == version:
-                continue
-            add_pending(
-                key,
-                version,
-                {
+
+            async def build(post=post, key=key, published=published) -> dict[str, Any]:
+                return {
                     "key": key,
                     "type": "post",
                     "child_ids": only_child,
@@ -189,103 +208,122 @@ async def fetch(*, first_run_days: int = FIRST_RUN_DAYS) -> dict[str, Any]:
                     "groups": [g.get("name") for g in post.shared_with_groups if isinstance(g, dict)],
                     "body": post.content_markdown[:MAX_BODY_CHARS],
                     "attachments": await _download_attachments(client, key, post.attachments, warnings),
-                },
-            )
+                }
 
-        # --- Messages: only threads with activity since the last run.
-        since = cutoff if first_run else dt.datetime.fromisoformat(st["last_fetch"]) - dt.timedelta(days=1)
-        threads = await client.get_all_message_threads_result(since.date())
-        if not threads.complete:
-            warnings.append(f"Beskedlisten blev ikke læst helt ({threads.termination_reason}).")
-        for thread in threads.items:
-            thread_id = str(thread.get("id"))
-            last = thread.get("lastMessageDate") or thread.get("lastUpdatedDate") or ""
-            if st["threads"].get(thread_id) == last:
+            version = _version(post.edited_at, post.content_html, len(post.attachments))
+            await intake.offer(key, version, _aware(post.edited_at) or published, build)
+        dates = [_aware(p.publish_at or p.timestamp) for p in posts if p.publish_at or p.timestamp]
+        # Stop when a page has nothing new left (one old pinned post must not stop us).
+        if len(posts) < POSTS_PER_PAGE or (dates and all(d < cutoff for d in dates)):
+            return
+    warnings.append(f"Der var flere end {MAX_POST_PAGES * POSTS_PER_PAGE} nye opslag; de ældste er ikke læst.")
+
+
+async def _take_messages(
+    client, ledger: Ledger, intake: Intake, since: dt.datetime, children: list[dict], only_child: list[int], warnings: list[str]
+) -> None:
+    threads = await client.get_all_message_threads_result(since.date())
+    if not threads.complete:
+        warnings.append(f"Beskedlisten blev ikke læst helt ({threads.termination_reason}).")
+    listed = {str(t.get("id")): t for t in threads.items}
+    retry = ledger.threads_to_retry()
+    for thread_id, thread in {**retry, **listed}.items():
+        last = thread.get("lastMessageDate") or thread.get("lastUpdatedDate") or ""
+        if thread_id not in retry and ledger.thread_read_at(thread_id) == last:
+            continue
+        msgs = await client.get_all_messages_for_thread_result(thread_id)
+        all_files = True
+        hints = _child_hints(thread)
+        hinted_ids = [c["id"] for c in children if c["name"] in hints]
+        for raw in msgs.items:
+            if raw.get("messageType") not in ("Message", "MessageEdited"):
                 continue
-            msgs = await client.get_all_messages_for_thread_result(thread_id)
+            msg = Message.from_dict(raw)
+            sent = _aware(msg.send_datetime)
+            key = f"message:{thread_id}:{msg.id}"
+
+            async def build(msg=msg, key=key, sent=sent) -> dict[str, Any]:
+                return {
+                    "key": key,
+                    "type": "message",
+                    "thread_id": thread_id,
+                    "child_ids": hinted_ids or only_child,
+                    "child_hints": hints,
+                    "subject": thread.get("subject"),
+                    "sender": msg.sender_name,
+                    "sent": _iso(sent),
+                    "body": html_to_markdown(msg.content_html)[:MAX_BODY_CHARS],
+                    "attachments": await _download_attachments(client, key, msg.attachments, warnings),
+                }
+
+            all_files &= await intake.offer(key, _version(msg.content_html, len(msg.attachments)), sent, build)
+
+        if msgs.complete and all_files:
+            ledger.stop_retrying_thread(thread_id)
+            ledger.mark_thread_read(thread_id, last)
+            continue
+        # Read it again next run (messages already handed over are skipped), but not forever.
+        keep = {k: thread.get(k) for k in ("id", "subject", "lastMessageDate", "lastUpdatedDate", "regardingChildren")}
+        attempts = ledger.retry_thread(thread_id, keep)
+        if attempts >= MAX_THREAD_ATTEMPTS:
+            ledger.stop_retrying_thread(thread_id)
+            ledger.mark_thread_read(thread_id, last)
             if not msgs.complete:
-                warnings.append(f"Tråd {thread_id} blev ikke læst helt ({msgs.termination_reason}).")
-            hints = _child_hints(thread)
-            hinted_ids = [c["id"] for c in children if c["name"] in hints]
-            for raw in msgs.items:
-                if raw.get("messageType") not in ("Message", "MessageEdited"):
-                    continue
-                msg = Message.from_dict(raw)
-                sent = _aware(msg.send_datetime)
-                key = f"message:{thread_id}:{msg.id}"
-                version = _version(msg.content_html, len(msg.attachments))
-                if sent and sent < cutoff:
-                    st["seen"].setdefault(key, version)
-                    continue
-                if st["seen"].get(key) == version:
-                    continue
-                add_pending(
-                    key,
-                    version,
-                    {
-                        "key": key,
-                        "type": "message",
-                        "thread_id": thread_id,
-                        "child_ids": hinted_ids or only_child,
-                        "child_hints": hints,
-                        "subject": thread.get("subject"),
-                        "sender": msg.sender_name,
-                        "sent": _iso(sent),
-                        "body": html_to_markdown(msg.content_html)[:MAX_BODY_CHARS],
-                        "attachments": await _download_attachments(client, key, msg.attachments, warnings),
-                    },
-                )
-            st["threads"][thread_id] = last
-
-        # --- What Aula's own calendar already has (not lessons), to avoid duplicates.
-        aula_calendar = []
-        if profile.children:
-            try:
-                events = []
-                for offset in range(0, CALENDAR_DAYS, CALENDAR_CHUNK_DAYS):  # Aula rejects long ranges
-                    start = now + dt.timedelta(days=offset)
-                    end = now + dt.timedelta(days=min(offset + CALENDAR_CHUNK_DAYS, CALENDAR_DAYS) - 1)
-                    events += await client.get_calendar_events([c.id for c in profile.children], start, end)
-                seen_ids: set = set()
-                for ev in events:
-                    if ev.id in seen_ids:  # multi-day events show up in several chunks
-                        continue
-                    seen_ids.add(ev.id)
-                    raw = ev._raw or {}
-                    if raw.get("type") == "lesson" or raw.get("lesson"):
-                        continue
-                    aula_calendar.append(
-                        {"title": ev.title, "start": _iso(ev.start_datetime), "end": _iso(ev.end_datetime), "child_id": ev.belongs_to}
-                    )
-            except Exception as exc:
-                warnings.append(f"Kunne ikke læse Aula-kalenderen: {exc}")
-
-    st["last_fetch"] = now.isoformat(timespec="seconds")
-    store.save_state(st)
-    write_inbox(st, cfg, aula_calendar, warnings)
-    return {"new": new_keys, "pending": len(st["pending"]), "warnings": warnings, "first_run": first_run}
+                warnings.append(f"Tråd {thread_id} kunne ikke læses helt efter {attempts} forsøg; giver op.")
+        elif not msgs.complete:
+            warnings.append(f"Tråd {thread_id} blev ikke læst helt ({msgs.termination_reason}); prøver igen næste gang.")
 
 
-def write_inbox(st: dict[str, Any], cfg: dict[str, Any], aula_calendar: list[dict], warnings: list[str]) -> None:
-    today = dt.date.today().isoformat()
-    upcoming = [
-        {k: v for k, v in ev.items() if k in ("key", "child_id", "title", "start", "end", "source")}
-        for ev in st["events"].values()
-        if (ev.get("end") or ev.get("start") or "") >= today
-    ]
-    store.write_json(
-        store.INBOX_FILE,
-        {
-            "generated_at": dt.datetime.now(TZ).isoformat(timespec="seconds"),
-            "today": today,
-            "children": [{"id": int(cid), **{k: c.get(k) for k in ("name", "institution")}} for cid, c in cfg["children"].items()],
-            "items": sorted(st["pending"].values(), key=lambda i: i.get("published") or i.get("sent") or ""),
-            "existing_events": sorted(upcoming, key=lambda e: e.get("start") or ""),
-            "removed_by_user": [
-                {"key": k, "title": v.get("title"), "start": v.get("start")} for k, v in st["ignored"].items()
-                if (v.get("start") or "") >= today
-            ],
-            "aula_calendar": aula_calendar,
-            "warnings": warnings,
-        },
-    )
+async def _read_aula_calendar(client, profile, now: dt.datetime, warnings: list[str]) -> list[dict[str, Any]]:
+    """What Aula's own calendar already has (not lessons), so the agent can skip duplicates."""
+    if not profile.children:
+        return []
+    out: list[dict[str, Any]] = []
+    try:
+        events = []
+        for offset in range(0, CALENDAR_DAYS, CALENDAR_CHUNK_DAYS):  # Aula rejects long ranges
+            start = now + dt.timedelta(days=offset)
+            end = now + dt.timedelta(days=min(offset + CALENDAR_CHUNK_DAYS, CALENDAR_DAYS) - 1)
+            events += await client.get_calendar_events([c.id for c in profile.children], start, end)
+        seen_ids: set = set()
+        for ev in events:
+            if ev.id in seen_ids:  # multi-day events show up in several chunks
+                continue
+            seen_ids.add(ev.id)
+            raw = ev._raw or {}
+            if raw.get("type") == "lesson" or raw.get("lesson"):
+                continue
+            out.append({"title": ev.title, "start": _iso(ev.start_datetime), "end": _iso(ev.end_datetime), "child_id": ev.belongs_to})
+    except Exception as exc:
+        warnings.append(f"Kunne ikke læse Aula-kalenderen: {exc}")
+    return out
+
+
+# ----------------------------------------------------------------------------- fetch
+
+
+async def fetch(*, first_run_days: int = FIRST_RUN_DAYS) -> dict[str, Any]:
+    """Fetch new items for the agent and write the inbox file.
+
+    Returns a summary dict (new keys, how many wait, warnings).
+    """
+    cfg, ledger = store.load_config(), Ledger.load()
+    now = dt.datetime.now(TZ)
+    first_run = ledger.last_fetch is None
+    cutoff = now - dt.timedelta(days=first_run_days)
+    since = cutoff if first_run else dt.datetime.fromisoformat(ledger.last_fetch) - dt.timedelta(days=1)
+    warnings: list[str] = []
+    intake = Intake(ledger, cutoff)
+
+    async with await open_client() as client:
+        profile = await client.get_profile()
+        children = _update_children(cfg, profile)
+        only_child = [children[0]["id"]] if len(children) == 1 else []
+        await _take_posts(client, profile, intake, cutoff, only_child, warnings)
+        await _take_messages(client, ledger, intake, since, children, only_child, warnings)
+        aula_calendar = await _read_aula_calendar(client, profile, now, warnings)
+
+    ledger.last_fetch = now.isoformat(timespec="seconds")
+    ledger.save()
+    contract.write_inbox(ledger, cfg, aula_calendar, warnings)
+    return {"new": intake.new_keys, "pending": len(ledger.pending_keys()), "warnings": warnings, "first_run": first_run}

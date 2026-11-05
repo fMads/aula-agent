@@ -6,7 +6,9 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
-from aula_agent import store, web
+from aula_agent import runs, store, web
+from aula_agent.ledger import Ledger, SyncedEntry
+from aula_agent.runs import Outcome
 
 TEAM = "myteam.cloudflareaccess.com"
 AUD = "aud-tag-123"
@@ -101,15 +103,12 @@ def test_home_shows_status_events_and_escapes_html(monkeypatch, tmp_path):
     cfg = store.load_config()
     cfg["children"]["1"] = {"name": "Emma Jensen", "institution": "Skolen", "calendar_id": "c1", "calendar_name": "Skole – Emma"}
     store.save_config(cfg)
-    st = store.load_state()
-    st["events"]["k1|c1"] = {
-        "key": "k1", "child_id": 1, "calendar_id": "c1", "event_id": "e1",
-        "title": "<script>alert(1)</script>Juleklip", "start": "2099-12-04", "end": "2099-12-04",
-        "source_item": {"title": "Opslag om jul"}, "link": "https://cal/e1",
-    }
-    st["events"]["old|c1"] = {"key": "old", "child_id": 1, "calendar_id": "c1", "event_id": "e0", "title": "Gammel", "start": "2001-01-01"}
-    store.save_state(st)
-    store.log_run("fetch", True, "2 nye/ændrede, 0 venter")
+    ledger = Ledger()
+    ledger.record(SyncedEntry("k1", 1, "c1", "e1", "<script>alert(1)</script>Juleklip", "2099-12-04", "2099-12-04",
+                              source_item={"title": "Opslag om jul"}, link="https://cal/e1"))
+    ledger.record(SyncedEntry("old", 1, "c1", "e0", "Gammel", "2001-01-01", "2001-01-01"))
+    ledger.save()
+    runs.record("fetch", Outcome.OK, "2 nye/ændrede, 0 venter")
     with make_client() as c:
         r = c.get("/", headers=auth())
     assert "&lt;script&gt;" in r.text and "<script>alert" not in r.text
@@ -119,42 +118,48 @@ def test_home_shows_status_events_and_escapes_html(monkeypatch, tmp_path):
     assert "Ikke logget ind" in r.text  # no Aula session in the test environment
 
 
-class FakeEvents:
-    def __init__(self):
-        self.deleted = []
-
-    def events(self):
-        return self
-
-    def delete(self, calendarId, eventId):
-        self.deleted.append((calendarId, eventId))
-        return type("C", (), {"execute": lambda self: {}})()
-
-
-def test_remove_event_deletes_everywhere_and_is_remembered():
-    configure()
-    st = store.load_state()
+def synced_on_two_calendars(google):
+    ledger = Ledger()
     for cal in ("c1", "c2"):
-        st["events"][f"k1|{cal}"] = {"key": "k1", "child_id": 1, "calendar_id": cal, "event_id": f"e-{cal}", "title": "Skovtur", "start": "2099-01-01"}
-    store.save_state(st)
-    fake = FakeEvents()
-    with make_client(google_services=lambda: (fake, None)) as c:
+        google.events[(cal, f"e-{cal}")] = {"extendedProperties": {"private": {"aulaAgentKey": "k1"}}}
+        ledger.record(SyncedEntry("k1", 1, cal, f"e-{cal}", "Skovtur", "2099-01-01", "2099-01-01"))
+    ledger.save()
+
+
+def test_remove_event_deletes_everywhere_and_is_remembered(google):
+    configure()
+    synced_on_two_calendars(google)
+    with make_client(google=lambda: google) as c:
         r = c.post("/events/remove", data={"key": "k1"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
     assert r.status_code == 303 and "fjernet" in r.headers["location"].replace("%20", " ")
-    assert sorted(fake.deleted) == [("c1", "e-c1"), ("c2", "e-c2")]
-    st = store.load_state()
-    assert st["events"] == {} and "k1" in st["ignored"]
+    assert google.events == {}
+    ledger = Ledger.load()
+    assert ledger.upcoming() == [] and ledger.is_removed("k1")
 
 
-def test_remove_while_sync_running_says_busy():
+def test_remove_while_sync_running_says_busy(google):
     configure()
-    st = store.load_state()
-    st["events"]["k1|c1"] = {"key": "k1", "child_id": 1, "calendar_id": "c1", "event_id": "e1", "title": "x", "start": "2099-01-01"}
-    store.save_state(st)
-    with store.lock(), make_client(google_services=lambda: (FakeEvents(), None)) as c:
+    synced_on_two_calendars(google)
+    with store.lock(), make_client(google=lambda: google) as c:
         r = c.post("/events/remove", data={"key": "k1"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
     assert "Pr%C3%B8v%20igen" in r.headers["location"]
-    assert store.load_state()["events"]
+    assert len(google.events) == 2 and Ledger.load().upcoming()
+
+
+def test_home_says_login_expired_after_fetch_needed_login(monkeypatch, tmp_path):
+    token = tmp_path / "tokens.json"
+    token.write_text("{}")
+    monkeypatch.setattr("aula.config.DEFAULT_TOKEN_FILE", token)
+    monkeypatch.setattr("aula.config.load_config", lambda: {"mitid_username": "u"})
+    configure()
+    with make_client() as c:
+        assert "Logget ind" in c.get("/", headers=auth()).text
+        runs.record("fetch", Outcome.AULA_LOGIN, "Session udløbet")
+        assert "Login udløbet" in c.get("/", headers=auth()).text
+        runs.record("aula-login", Outcome.ERROR, "Login tog for lang tid")  # a failed attempt changes nothing
+        assert "Login udløbet" in c.get("/", headers=auth()).text
+        runs.record("aula-login", Outcome.OK, "Logget ind")
+        assert "Login udløbet" not in c.get("/", headers=auth()).text
 
 
 # ------------------------------------------------------------------ MitID login
@@ -201,7 +206,7 @@ def test_mitid_login_flow_shows_qr_then_finishes(monkeypatch, tmp_path):
             time.sleep(0.01)
     assert s["status"] == "done" and s["qr"] == []
     assert saved == {"mitid_username": "mads123"}
-    assert store.load_state()["runs"][-1]["command"] == "aula-login"
+    assert Ledger.load().last_run("aula-login")["ok"] is True
 
 
 def test_mitid_login_is_rate_limited():

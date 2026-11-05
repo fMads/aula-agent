@@ -3,13 +3,16 @@
 Finder arrangementer i Aula-opslag og -beskeder og lægger dem i Google Calendar,
 én kalender pr. barn ("Skole – <fornavn>"). Python 3.14 via `uv`. Brugervejledning: `README.md`.
 
-- `src/aula_agent/aula_source.py` – henter fra Aula (bibliotek: `aula` på PyPI). Starter aldrig MitID-login selv.
-- `src/aula_agent/gcal.py` – Google Calendar + Drive (vedhæftninger skal ligge i Drive).
+- `src/aula_agent/aula_source.py` – henter fra Aula (bibliotek: `aula` på PyPI) og bestemmer via `Intake`, hvilke items agenten får. Starter aldrig MitID-login selv.
+- `src/aula_agent/contract.py` – agent-kontrakten: skriver `inbox.json` og validerer events-filen (alle fejl på én gang → exit-kode 5).
+- `src/aula_agent/gcal.py` – Google Calendar + Drive: `plan()` beslutter, `execute()` udfører via `Google`-adapteren (vedhæftninger skal ligge i Drive).
+- `src/aula_agent/ledger.py` – alt hvad der huskes mellem kørsler (`data/state.json`). Rør ikke state-dict'en direkte andre steder.
+- `src/aula_agent/runs.py` – en kørsel: lås + run-log + struktureret udfald (`Outcome`). `credentials.py` – login-status og Google OAuth.
 - `src/aula_agent/web.py` – valgfri web-side (Starlette, 127.0.0.1:8787) bag Cloudflare Tunnel + Access. Appen validerer selv Access-JWT'en og e-mail-allowlisten (`web` i `data/config.json`, sættes med `aula-agent web-setup`) og afviser alt, når den ikke er sat op.
 - `deploy/` – systemd-skabeloner (`*.in`) + `install-services.sh` (web, tunnel, nightly) og `nightly.sh` (natkørsel uden T3 med Claude Code eller Codex, styret af `AULA_AGENT`).
 - Instruktionerne her er fælles for alle agenter: Codex læser `AGENTS.md`, Claude Code læser `CLAUDE.md`, som importerer denne fil.
 - `data/` – personlige data, git-ignoreret: `config.json` (børn → kalendere), `state.json`, `inbox.json`, `attachments/`, Google-tokens.
-- Tests: `uv run pytest -q`
+- Tests: `uv run pytest -q`. Domænesprog: `GLOSSARY.md`.
 
 ## Natlig kørsel
 
@@ -48,12 +51,13 @@ Når du bliver bedt om at køre den natlige Aula-synkronisering, så gør præci
    - Kun ting der ligger i dag eller senere. Ikke generelle informationer uden dato.
    - Frister ("tilmelding senest 10/11", "aflever seddel inden fredag") bliver en heldagsbegivenhed med titel `Frist: …`.
    - `key`: nye begivenheder får `<item-key>#<n>`. Er det en **rettelse/aflysning** af noget i `existing_events`, så genbrug den eksisterende `key` (så opdateres begivenheden i stedet for at blive dubleret). Aflysning: `{"key": "...", "child_ids": [...], "cancelled": true}`.
+   - Et item kan komme igen (rettet i Aula, eller nu med en vedhæftning der ikke kunne hentes før). Har `existing_events` allerede begivenheder med item'et som `source`, så genbrug deres `key`s. `existing_events` har én linje pr. begivenhed med alle børnene i `child_ids`.
    - Spring over, hvis arrangementet allerede står i `aula_calendar` (Aulas egen kalender) for samme dag.
    - `removed_by_user`: begivenheder brugeren selv har fjernet på web-siden. Opret dem **ikke** igen – heller ikke under en ny key.
    - `child_ids`: brug item'ets `child_ids` når de er sat. Er listen tom (besked og flere børn), så afgør det ud fra indhold, klasse/gruppe, `child_hints` og institution; hvis det er tvivlsomt, så sæt alle relevante børn.
    - `attachments`: kun filer der hører til arrangementet (indbydelser, sedler, programmer) – ikke billeder fra en tur der har været.
    - Titel: kort, dansk, uden barnets navn. Beskrivelse: det praktiske (hvad skal medbringes, pris, tid, tilmelding). Skriv **ikke** andre børns eller forældres navne ind i kalenderen.
-5. Kør `uv run aula-agent apply data/events-<dato>.json --dry-run`. Ved exit-kode 5 så ret filen og prøv igen.
+5. Kør `uv run aula-agent apply data/events-<dato>.json --dry-run`. Ved exit-kode 5 så ret filen (beskeden lister alle fejl) og prøv igen. Prøvekørslen viser for hvert event og barn, om det bliver oprettet, opdateret, slettet eller sprunget over.
 6. Kør `uv run aula-agent apply data/events-<dato>.json`.
    - Exit-kode 4 (`GOOGLE_LOGIN_REQUIRED`): stop og bed brugeren forbinde Google igen; gengiv kommandoens besked om hvordan.
 7. Svar med en kort dansk opsummering: hvad der blev oprettet/opdateret/slettet (dato + titel + barn), og hvad du var i tvivl om.

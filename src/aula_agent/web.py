@@ -12,20 +12,22 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import html
-import json
 import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, urlparse
 
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import store
+from . import credentials, runs, store
+from .ledger import Ledger
+from .runs import Outcome
 
 # ----------------------------------------------------------------------------- config
 
@@ -188,9 +190,6 @@ class MitIDLogin:
     async def _run(self, username: str) -> None:
         from aula import FileTokenStorage
         from aula.auth_flow import authenticate, create_client
-        from aula.config import DEFAULT_TOKEN_FILE
-        from aula.config import load_config as load_aula_config
-        from aula.config import save_config as save_aula_config
 
         auth = self._authenticate or authenticate
 
@@ -198,7 +197,7 @@ class MitIDLogin:
             return 0
 
         try:
-            storage = FileTokenStorage(DEFAULT_TOKEN_FILE)
+            storage = FileTokenStorage(credentials.aula_token_file())
             token_data = await asyncio.wait_for(
                 auth(
                     username,
@@ -217,51 +216,16 @@ class MitIDLogin:
                 self.message = f"Logget ind som {profile.display_name}."
             else:
                 self.message = "Logget ind."
-            aula_cfg = load_aula_config()
-            if aula_cfg.get("mitid_username") != username:
-                aula_cfg["mitid_username"] = username
-                save_aula_config(aula_cfg)
+            credentials.remember_aula_username(username)
             self.status = "done"
-            store.log_run("aula-login", True, self.message)
         except TimeoutError:
             self.status, self.message = "error", "Login tog for lang tid og blev afbrudt."
         except Exception as exc:
             self.status, self.message = "error", f"Login fejlede: {exc}"
         finally:
             self.qr = []
-        if self.status == "error":
-            store.log_run("aula-login", False, self.message)
-
-
-# ----------------------------------------------------------------------------- status helpers
-
-
-def aula_status() -> tuple[bool, str]:
-    from aula.config import DEFAULT_TOKEN_FILE
-    from aula.config import load_config as load_aula_config
-
-    if not load_aula_config().get("mitid_username") or not DEFAULT_TOKEN_FILE.exists():
-        return False, "Ikke logget ind"
-    st = store.load_state()
-    last = next((r for r in reversed(st["runs"]) if r["command"] in ("fetch", "aula-login")), None)
-    if last and not last["ok"] and "login" in last["summary"].lower():
-        return False, "Login udløbet"
-    return True, "Logget ind"
-
-
-def google_status() -> tuple[bool, str]:
-    if store.GOOGLE_TOKEN.exists():
-        return True, "Forbundet"
-    if not store.GOOGLE_CLIENT_SECRET.exists():
-        return False, "Mangler OAuth-nøgle"
-    return False, "Ikke forbundet"
-
-
-def client_secret_type() -> str | None:
-    try:
-        return next(iter(json.loads(store.GOOGLE_CLIENT_SECRET.read_text())))
-    except Exception:
-        return None
+        outcome = Outcome.OK if self.status == "done" else Outcome.ERROR
+        await asyncio.to_thread(runs.record, "aula-login", outcome, self.message)  # the lock may be held by a sync
 
 
 # ----------------------------------------------------------------------------- HTML
@@ -328,11 +292,10 @@ def fmt_when(value: str | None) -> str:
 
 
 async def home(request: Request) -> Response:
-    cfg, st = store.load_config(), store.load_state()
-    aula_ok, aula_txt = aula_status()
-    g_ok, g_txt = google_status()
-    last_runs = list(reversed(st["runs"]))[:8]
-    last_run = next((r for r in last_runs if r["command"] in ("fetch", "apply")), None)
+    cfg, ledger = store.load_config(), Ledger.load()
+    aula, google = credentials.aula_status(ledger), credentials.google_status()
+    last_runs = ledger.runs(8)
+    last_run = ledger.last_run("fetch", "apply")
 
     def card(label: str, ok: bool | None, text: str, action: str = "") -> str:
         cls = "" if ok is None else ("ok" if ok else "bad")
@@ -340,38 +303,33 @@ async def home(request: Request) -> Response:
 
     cards = "".join(
         [
-            card("Aula", aula_ok, aula_txt, "" if aula_ok else ' · <a href="/aula/login">Log ind</a>'),
-            card("Google", g_ok, g_txt, "" if g_ok else ' · <a href="/google">Forbind</a>'),
+            card("Aula", aula.ok, aula.text, "" if aula.ok else ' · <a href="/aula/login">Log ind</a>'),
+            card("Google", google.ok, google.text, "" if google.ok else ' · <a href="/google">Forbind</a>'),
             card(
                 "Sidste kørsel",
                 None if not last_run else last_run["ok"],
                 fmt_when(last_run["at"]) if last_run else "aldrig",
             ),
-            card("Venter", None, f"{len(st['pending'])} beskeder/opslag"),
+            card("Venter", None, f"{len(ledger.pending_keys())} beskeder/opslag"),
         ]
     )
 
-    today = dt.date.today().isoformat()
-    by_key: dict[str, dict[str, Any]] = {}
-    for ev in st["events"].values():
-        if (ev.get("end") or ev.get("start") or "") < today:
-            continue
-        merged = by_key.setdefault(ev["key"], {**ev, "children": []})
-        merged["children"].append(cfg["children"].get(str(ev["child_id"]), {}).get("name", "?").split()[0])
-    events = sorted(by_key.values(), key=lambda ev: ev.get("start") or "")
+    def first_name(child_id: int) -> str:
+        return ((cfg["children"].get(str(child_id)) or {}).get("name") or "?").split()[0]
 
+    events = ledger.upcoming()
     if events:
         items = []
         for ev in events:
-            src = ev.get("source_item") or {}
-            src_txt = src.get("title") or src.get("subject") or ""
-            link = f' <a href="{e(ev["link"])}" target="_blank" rel="noopener">åbn</a>' if ev.get("link") else ""
+            src_txt = ev.source_item.get("title") or ev.source_item.get("subject") or ""
+            link = f' <a href="{e(ev.link)}" target="_blank" rel="noopener">åbn</a>' if ev.link else ""
+            names = ", ".join(first_name(c) for c in ev.child_ids)
             items.append(
-                f'<li><span class="date">{e(fmt_date(ev["start"]))}</span><span class="grow">{e(ev["title"])}{link}'
-                f'<br><span class="mut">{e(", ".join(ev["children"]))}{" · fra " + e(src_txt) if src_txt else ""}</span></span>'
-                f'<form class="inline" method="post" action="/events/remove" data-title="{e(ev["title"])}" '
+                f'<li><span class="date">{e(fmt_date(ev.start))}</span><span class="grow">{e(ev.title)}{link}'
+                f'<br><span class="mut">{e(names)}{" · fra " + e(src_txt) if src_txt else ""}</span></span>'
+                f'<form class="inline" method="post" action="/events/remove" data-title="{e(ev.title)}" '
                 f'onsubmit="return confirm(\'Fjern »\'+this.dataset.title+\'« fra kalenderen? Den bliver ikke oprettet igen.\')">'
-                f'<input type="hidden" name="key" value="{e(ev["key"])}"><button class="small">Fjern</button></form></li>'
+                f'<input type="hidden" name="key" value="{e(ev.key)}"><button class="small">Fjern</button></form></li>'
             )
         events_html = f'<ul class="list">{"".join(items)}</ul>'
     else:
@@ -398,14 +356,14 @@ async def home(request: Request) -> Response:
 
 
 async def remove_event(request: Request) -> Response:
-    from .gcal import GoogleLoginRequired
+    from .credentials import GoogleLoginRequired
     from .gcal import remove_event as do_remove
 
-    key = (await request.form()).get("key") or ""
+    key = str((await request.form()).get("key") or "")
 
     def work() -> int:
         with store.lock(wait=False):
-            return do_remove(str(key), svc=request.app.state.google_services())
+            return do_remove(key, google=request.app.state.google)
 
     try:
         n = await asyncio.to_thread(work)
@@ -483,8 +441,9 @@ def redirect_uri() -> str:
 
 
 async def google_page(request: Request) -> Response:
-    ok, txt = google_status()
-    kind = client_secret_type()
+    status = credentials.google_status()
+    ok, txt = status.ok, status.text
+    kind = credentials.client_secret_kind()
     upload = f"""<form method="post" action="/google/client-secret" enctype="multipart/form-data">
 <p>Upload OAuth-nøglen (JSON) fra Google Cloud Console:<br><input type="file" name="file" accept=".json,application/json" required></p>
 <p><button>Upload</button></p></form>
@@ -506,19 +465,14 @@ async def google_client_secret(request: Request) -> Response:
     upload = form.get("file")
     raw = await upload.read() if upload else b""
     try:
-        data = json.loads(raw)
-        kind = next(iter(data))
-        if kind not in ("web", "installed") or "client_id" not in data[kind]:
-            raise ValueError
-    except Exception:
+        credentials.save_client_secret(raw)
+    except ValueError:
         return page("Google", '<p class="bad">Det ligner ikke en OAuth-nøgle fra Google.</p><p><a href="/google">Tilbage</a></p>')
-    store.write_json(store.GOOGLE_CLIENT_SECRET, data)
-    store.GOOGLE_CLIENT_SECRET.chmod(0o600)
     return RedirectResponse("/google", status_code=303)
 
 
 async def google_connect(request: Request) -> Response:
-    from .gcal import web_flow_start
+    from .credentials import web_flow_start
 
     url, state, verifier = await asyncio.to_thread(web_flow_start, redirect_uri())
     request.app.state.oauth_pending[state] = (verifier, time.monotonic())
@@ -526,7 +480,7 @@ async def google_connect(request: Request) -> Response:
 
 
 async def google_callback(request: Request) -> Response:
-    from .gcal import web_flow_finish
+    from .credentials import web_flow_finish
 
     state = request.query_params.get("state") or ""
     code = request.query_params.get("code")
@@ -539,11 +493,14 @@ async def google_callback(request: Request) -> Response:
         await asyncio.to_thread(web_flow_finish, redirect_uri(), state, pending[0], code)
     except Exception as exc:
         return go_home(f"Google-login fejlede: {exc}")
-    store.log_run("google-login", True, "Google forbundet")
-    return go_home("Google er forbundet.")
+    response = go_home("Google er forbundet.")
+    # Logged after the response is sent: a running sync may hold the lock for a while.
+    response.background = BackgroundTask(runs.record, "google-login", Outcome.OK, "Google forbundet")
+    return response
 
 
-def create_app(*, verifier_factory=default_verifier_factory, mitid: MitIDLogin | None = None, google_services=None) -> Starlette:
+def create_app(*, verifier_factory=default_verifier_factory, mitid: MitIDLogin | None = None, google=None) -> Starlette:
+    """``google`` makes the Calendar/Drive adapter (default: connect with the saved token)."""
     from . import gcal
 
     app = Starlette(
@@ -562,5 +519,5 @@ def create_app(*, verifier_factory=default_verifier_factory, mitid: MitIDLogin |
     )
     app.state.mitid = mitid or MitIDLogin()
     app.state.oauth_pending = {}
-    app.state.google_services = google_services or gcal.services
+    app.state.google = google or gcal.Google.connect
     return app

@@ -7,95 +7,64 @@ from aula_agent import store
 
 @pytest.fixture(autouse=True)
 def data_dir(tmp_path, monkeypatch):
+    """Every test gets its own data/ (all paths in store follow DATA_DIR)."""
     monkeypatch.setattr(store, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(store, "CONFIG_FILE", tmp_path / "config.json")
-    monkeypatch.setattr(store, "STATE_FILE", tmp_path / "state.json")
-    monkeypatch.setattr(store, "INBOX_FILE", tmp_path / "inbox.json")
-    monkeypatch.setattr(store, "ATTACHMENTS_DIR", tmp_path / "attachments")
-    monkeypatch.setattr(store, "GOOGLE_TOKEN", tmp_path / "google_token.json")
-    monkeypatch.setattr(store, "GOOGLE_CLIENT_SECRET", tmp_path / "google_client_secret.json")
     return tmp_path
 
 
-class _Call:
-    def __init__(self, fn):
-        self._fn = fn
-
-    def execute(self):
-        return self._fn()
-
-
-class FakeCalendar:
-    """Just enough of the Calendar v3 client: calendars().insert and events().*."""
+class FakeGoogle:
+    """In-memory adapter with the same methods as :class:`aula_agent.gcal.Google`."""
 
     def __init__(self):
-        self.calendars_created = []
-        self.events_by_id = {}  # (calendar_id, event_id) -> body
-        self.calls = []
+        self.calendars: dict[str, str] = {}  # id -> summary
+        self.events: dict[tuple[str, str], dict] = {}  # (calendar_id, event_id) -> body
+        self.uploads: list[str] = []
+        self.folders: list[str] = []
+        self.calls: list[tuple] = []
         self._ids = itertools.count(1)
 
-    def calendars(self):
-        outer = self
+    def create_calendar(self, summary):
+        cal_id = f"cal{next(self._ids)}@group.calendar.google.com"
+        self.calendars[cal_id] = summary
+        return cal_id
 
-        class Calendars:
-            def insert(self, body):
-                cal_id = f"cal{next(outer._ids)}@group.calendar.google.com"
-                outer.calendars_created.append(body["summary"])
-                return _Call(lambda: {"id": cal_id, **body})
-
-        return Calendars()
-
-    def events(self):
-        outer = self
-
-        class Events:
-            def insert(self, calendarId, body, supportsAttachments=None):
-                event_id = f"ev{next(outer._ids)}"
-                outer.calls.append(("insert", calendarId, supportsAttachments))
-                outer.events_by_id[(calendarId, event_id)] = body
-                return _Call(lambda: {"id": event_id, "htmlLink": f"https://cal/{event_id}"})
-
-            def patch(self, calendarId, eventId, body, supportsAttachments=None):
-                outer.calls.append(("patch", calendarId, supportsAttachments))
-                outer.events_by_id[(calendarId, eventId)] = {**outer.events_by_id[(calendarId, eventId)], **body}
-                return _Call(lambda: {"id": eventId})
-
-            def delete(self, calendarId, eventId):
-                outer.calls.append(("delete", calendarId))
-                del outer.events_by_id[(calendarId, eventId)]
-                return _Call(lambda: {})
-
-            def list(self, calendarId, privateExtendedProperty):
-                prop, value = privateExtendedProperty.split("=", 1)
-                items = [
-                    {"id": eid}
-                    for (cid, eid), body in outer.events_by_id.items()
-                    if cid == calendarId and body["extendedProperties"]["private"].get(prop) == value
-                ]
-                return _Call(lambda: {"items": items})
-
-        return Events()
-
-
-class FakeDrive:
-    def __init__(self):
-        self.uploads = []
-        self.folders = []
-
-    def files(self):
-        return self
-
-    def create(self, body, fields, media_body=None):
-        if media_body is None:
-            self.folders.append(body["name"])
-            return _Call(lambda: {"id": "folder1"})
-        self.uploads.append(body["name"])
-        n = len(self.uploads)
-        return _Call(
-            lambda: {"id": f"file{n}", "name": body["name"], "mimeType": "application/pdf", "webViewLink": f"https://drive/file{n}"}
+    def find_event(self, calendar_id, key):
+        self.calls.append(("find", calendar_id, key))
+        return next(
+            (eid for (cid, eid), body in self.events.items()
+             if cid == calendar_id and body["extendedProperties"]["private"]["aulaAgentKey"] == key),
+            None,
         )
+
+    def insert_event(self, calendar_id, body):
+        event_id = f"ev{next(self._ids)}"
+        self.calls.append(("insert", calendar_id, event_id))
+        self.events[(calendar_id, event_id)] = body
+        return event_id, f"https://cal/{event_id}"
+
+    def patch_event(self, calendar_id, event_id, body):
+        self.calls.append(("patch", calendar_id, event_id))
+        self.events[(calendar_id, event_id)] = {**self.events.get((calendar_id, event_id), {}), **body}
+        return event_id, f"https://cal/{event_id}"
+
+    def delete_event(self, calendar_id, event_id):
+        self.calls.append(("delete", calendar_id, event_id))
+        return self.events.pop((calendar_id, event_id), None) is not None
+
+    def create_folder(self, name):
+        self.folders.append(name)
+        return "folder1"
+
+    def upload_file(self, path, name, folder_id):
+        assert path.is_file() and folder_id == "folder1"
+        self.uploads.append(name)
+        n = len(self.uploads)
+        return {"fileId": f"file{n}", "fileUrl": f"https://drive/file{n}", "title": name, "mimeType": "application/pdf"}
+
+    def bodies(self):
+        return list(self.events.values())
 
 
 @pytest.fixture
 def google():
-    return FakeCalendar(), FakeDrive()
+    return FakeGoogle()
