@@ -183,11 +183,37 @@ def _inbox_attachments(files: list[archive.File]) -> list[dict[str, Any]]:
     return out
 
 
-def _archived(arch: archive.Archive, key: str) -> dict[str, Any]:
-    """What the archive adds to an inbox item: the version the agent gets (its
-    classification is saved for that one), and whether it is from a sensitive thread."""
-    item = arch.item(key)
-    return {"archive_version": item.latest.id, "sensitive": item.sensitive}
+def _post_item(
+    item: archive.Item, *, child_ids: list[int], title: str | None, author: str | None, published: str | None,
+    edited: str | None, groups: list[str], body: str, files: list[archive.File],
+) -> dict[str, Any]:
+    """An inbox item for a post, the same shape whether fetch just read it or it is queued from the archive."""
+    return {
+        "key": item.key, "type": "post", "child_ids": child_ids, "title": title, "author": author,
+        "published": published, "edited": edited, "groups": groups, **_content(item, body, files),
+    }
+
+
+def _message_item(
+    item: archive.Item, *, child_ids: list[int], child_hints: list[str], subject: str | None, sender: str | None,
+    sent: str | None, body: str, files: list[archive.File],
+) -> dict[str, Any]:
+    """An inbox item for a message, the same shape whether fetch just read it or it is queued from the archive."""
+    return {
+        "key": item.key, "type": "message", "thread_id": item.thread_id, "child_ids": child_ids,
+        "child_hints": child_hints, "subject": subject, "sender": sender, "sent": sent, **_content(item, body, files),
+    }
+
+
+def _content(item: archive.Item, body: str, files: list[archive.File]) -> dict[str, Any]:
+    """The text and files of an inbox item, and what the archive adds: the version the agent
+    gets (its classification is saved for that one), and whether it is from a sensitive thread."""
+    return {
+        "body": body[:MAX_BODY_CHARS],
+        "attachments": _inbox_attachments(files),
+        "archive_version": item.latest.id,
+        "sensitive": item.sensitive,
+    }
 
 
 def _child_hints(raw: dict[str, Any]) -> list[str]:
@@ -264,19 +290,11 @@ async def _take_posts(
         published = _aware(post.publish_at or post.timestamp)
 
         async def build(post=post, key=key, published=published, files=files) -> dict[str, Any]:
-            return {
-                "key": key,
-                "type": "post",
-                "child_ids": only_child,
-                "title": post.title,
-                "author": archive.post_author(post),
-                "published": _iso(published),
-                "edited": _iso(post.edited_at),
-                "groups": archive.post_groups(post),
-                "body": post.content_markdown[:MAX_BODY_CHARS],
-                "attachments": _inbox_attachments(files),
-                **_archived(arch, key),
-            }
+            return _post_item(
+                arch.item(key), child_ids=only_child, title=post.title, author=archive.post_author(post),
+                published=_iso(published), edited=_iso(post.edited_at), groups=archive.post_groups(post),
+                body=post.content_markdown, files=files,
+            )
 
         version = _version(post.edited_at, post.content_html, len(post.attachments))
         await intake.offer(key, version, _aware(post.edited_at) or published, build)
@@ -313,19 +331,10 @@ async def _take_messages(
             all_files &= all(f.path for f in files if f.downloadable)
 
             async def build(msg=msg, key=key, sent=sent, files=files) -> dict[str, Any]:
-                return {
-                    "key": key,
-                    "type": "message",
-                    "thread_id": thread_id,
-                    "child_ids": child_ids,
-                    "child_hints": hints,
-                    "subject": thread.get("subject"),
-                    "sender": msg.sender_name,
-                    "sent": _iso(sent),
-                    "body": html_to_markdown(msg.content_html)[:MAX_BODY_CHARS],
-                    "attachments": _inbox_attachments(files),
-                    **_archived(arch, key),
-                }
+                return _message_item(
+                    arch.item(key), child_ids=child_ids, child_hints=hints, subject=thread.get("subject"),
+                    sender=msg.sender_name, sent=_iso(sent), body=html_to_markdown(msg.content_html), files=files,
+                )
 
             all_files &= await intake.offer(key, _version(msg.content_html, len(msg.attachments)), sent, build)
 
@@ -351,36 +360,19 @@ def _queued_item(arch: archive.Archive, item: archive.Item) -> dict[str, Any]:
     """An unclassified item for the inbox's ``to_classify``: the shape of an
     inbox item, built from the archive's newest version of it."""
     version = item.latest
-    common = {
-        "child_ids": version.child_ids,
-        "body": version.body[:MAX_BODY_CHARS],
-        "attachments": _inbox_attachments(item.files),
-        "archive_version": version.id,
-        "sensitive": item.sensitive,
-    }
     if item.kind == "post":
         post = Post.from_dict(version.raw)
-        return {
-            "key": item.key,
-            "type": "post",
-            "title": version.title,
-            "author": version.author,
-            "published": _iso(_aware(post.publish_at or post.timestamp)),
-            "edited": _iso(post.edited_at),
-            "groups": version.groups,
-            **common,
-        }
+        return _post_item(
+            item, child_ids=version.child_ids, title=version.title, author=version.author,
+            published=_iso(_aware(post.publish_at or post.timestamp)), edited=_iso(post.edited_at),
+            groups=version.groups, body=version.body, files=item.files,
+        )
     thread = arch.thread(item.thread_id) if item.thread_id else None
-    return {
-        "key": item.key,
-        "type": "message",
-        "thread_id": item.thread_id,
-        "child_hints": _child_hints(thread.raw) if thread else [],
-        "subject": version.title,
-        "sender": version.author,
-        "sent": _iso(Message.from_dict(version.raw).send_datetime),
-        **common,
-    }
+    return _message_item(
+        item, child_ids=version.child_ids, child_hints=_child_hints(thread.raw) if thread else [],
+        subject=version.title, sender=version.author, sent=_iso(Message.from_dict(version.raw).send_datetime),
+        body=version.body, files=item.files,
+    )
 
 
 def _to_classify(ledger: Ledger) -> list[dict[str, Any]]:
