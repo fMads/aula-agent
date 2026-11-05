@@ -65,10 +65,13 @@ def remember_aula_username(username: str) -> None:
 def aula_status(ledger: Ledger | None = None) -> Status:
     if not aula_session_saved():
         return Status(False, "Ikke logget ind")
-    # The newest fetch or successful login tells whether the session works; a
-    # failed login attempt changes nothing about the session.
+    # The newest fetch, backfill from Aula or successful login tells whether the
+    # session works; a failed login attempt changes nothing about the session.
     last = next(
-        (r for r in (ledger or Ledger.load()).runs() if r["command"] == "fetch" or (r["command"] == "aula-login" and r["ok"])),
+        (
+            r for r in (ledger or Ledger.load()).runs()
+            if r["command"] in ("fetch", "backfill") or (r["command"] == "aula-login" and r["ok"])
+        ),
         None,
     )
     if last and last["outcome"] == Outcome.AULA_LOGIN:

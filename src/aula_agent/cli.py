@@ -69,7 +69,7 @@ def backfill(rescue: Path | None) -> None:
     from .aula_source import backfill as do_backfill
 
     try:
-        with run("backfill") as r:
+        with run("backfill" if rescue is None else "backfill-rescue") as r:  # only Aula says if the login works
             result = asyncio.run(do_backfill(rescue))
             r.summary = (
                 f"{result.posts} opslag, {result.threads} tråde med {result.messages} beskeder,"

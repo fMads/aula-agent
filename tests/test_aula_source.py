@@ -219,8 +219,23 @@ def test_photo_gallery_is_archived_but_only_noted_in_the_inbox(aula):
 
     atts = Ledger.load().pending_item("post:10")["attachments"]
     images = [a for a in atts if a["kind"] == "image"]
-    assert len(images) == 5 and all("path" not in a and "billedgalleri" in a["note"] for a in images)
+    assert len(images) == 5 and all("path" not in a and a["note"] == "Ikke hentet (billedgalleri)" for a in images)
     assert {a["kind"] for a in atts} == {"image", "secure_document", "link"}
+
+
+def test_a_file_without_url_is_left_out_of_the_inbox_and_only_noted_in_the_archive(aula):
+    atts = [file_att(5, "plan.pdf"), file_att(6, "skjult.pdf", url=None)]
+    thread = {"id": 7, "subject": "Plan", "lastMessageDate": iso(1)}
+    client = FakeAula([child(1, "Emma")], [post(10, "Plan", 1, attachments=atts)], [thread], {"7": [message("a", attachments=atts)]})
+    aula["client"] = client
+
+    summary = run_fetch()
+
+    assert sorted(summary["new"]) == ["message:7:a", "post:10"] and summary["warnings"] == []
+    for key in ("post:10", "message:7:a"):
+        assert [a["name"] for a in Ledger.load().pending_item(key)["attachments"]] == ["plan.pdf"]
+        assert [(f.name, f.path is None) for f in archived(key).files] == [("plan.pdf", False), ("skjult.pdf", True)]
+    assert Ledger.load().threads_to_retry() == {}  # nothing to download again
 
 
 def test_expired_session_never_starts_mitid(monkeypatch, tmp_path):
@@ -333,6 +348,21 @@ def test_thread_that_never_reads_completely_is_given_up(aula):
     assert run_fetch()["warnings"] == []  # given up: no warning every night
 
 
+def test_thread_whose_file_never_downloads_is_given_up_with_a_warning(aula):
+    thread = {"id": 8, "subject": "Indbydelse", "lastMessageDate": iso(1)}
+    msg = message("a", sender={"fullName": "Lærer Hansen"}, attachments=[file_att(6, "invitation.pdf", url="https://files/broken")])
+    client = FakeAula([child(1, "Emma")], [], [thread], {"8": [msg]})
+    client.broken_urls = {"https://files/broken"}
+    aula["client"] = client
+
+    warnings = [run_fetch()["warnings"] for _ in range(aula_source.MAX_THREAD_ATTEMPTS)]
+
+    assert not any("giver op" in w for w in warnings[0])
+    [given_up] = [w for w in warnings[-1] if "giver op" in w]
+    assert "Tråd 8" in given_up and "Hansen" not in given_up
+    assert run_fetch()["warnings"] == []  # given up: not read again, no warning every night
+
+
 def test_forwarded_message_is_an_item_but_system_messages_are_not(aula):
     thread = {"id": 30, "subject": "Fwd: Skolefest", "lastMessageDate": iso(1)}
     system = [
@@ -400,6 +430,24 @@ def test_a_post_gets_a_new_version_only_when_its_content_changes(aula):
     client.posts = [Post.from_dict(client.posts[0]._raw)]  # a file was added
     run_fetch()
     assert len(archived("post:10").versions) == 3
+
+
+def test_a_new_signed_url_in_the_text_gives_no_new_version(aula):
+    def text(sig, extra=""):
+        return (f'<p>Se <a href="https://media.aula.dk/plan.pdf?Expires=1&Signature={sig}#side2">planen</a>{extra}</p>'
+                f'<img src="https://media.aula.dk/kort.jpg?sig={sig}">')
+
+    client = FakeAula([child(1, "Emma")], [post(10, "Skolefest", 1, html=text("a"))], [], {})
+    aula["client"] = client
+    run_fetch()
+
+    client.posts = [post(10, "Skolefest", 1, html=text("b"))]
+    run_fetch()
+    assert len(archived("post:10").versions) == 1
+
+    client.posts = [post(10, "Skolefest", 1, html=text("c", " og kortet"))]
+    run_fetch()
+    assert len(archived("post:10").versions) == 2
 
 
 def test_a_file_that_failed_is_downloaded_into_the_archive_on_the_next_fetch(aula):
@@ -647,7 +695,7 @@ def write_rescue(folder, posts, threads, messages, files):
     for name, content in files.items():
         (folder / "files" / name).parent.mkdir(parents=True, exist_ok=True)
         (folder / "files" / name).write_bytes(content)
-    (folder / "files" / "photos_1").mkdir()
+    (folder / "files" / "photos_1").mkdir(parents=True)
     (folder / "files" / "photos_1" / "900-billede.jpeg").write_bytes(b"tagged photo")  # not until tagged photos are built
     return folder
 
@@ -752,3 +800,31 @@ def test_a_file_missing_from_the_rescue_copy_is_downloaded_from_aula_later(aula,
     run_backfill()
     assert client.downloads == ["https://files/x"]
     assert archived("post:10").files[0].path == "attachments/post_10/5-program.pdf"
+
+
+def test_an_older_rescue_copy_after_fetch_neither_replaces_the_latest_version_nor_the_thread(aula, data_dir):
+    thread = {"id": 40, "subject": "Juleklip", "lastMessageDate": iso(1)}
+    old_thread = {**thread, "lastMessageDate": iso(3)}
+    rescued_posts = [post(10, "Skolefest", 20, html="<p>Fredag kl. 17</p>")]
+    rescued_messages = {"40": [message("a", 3, text={"html": "<p>Husk saks</p>"})]}
+    rescue = write_rescue(data_dir / f"rescue-{RESCUE_DATE}", rescued_posts, [old_thread], rescued_messages, {})
+    store.save_config({"children": {"1": {"name": "Emma", "institution": "Skolen"}}})
+    newer_messages = {"40": [message("a", 3, text={"html": "<p>Husk saks og lim</p>"}), message("b")]}
+    client = FakeAula([child(1, "Emma")], [post(10, "Skolefest", 20, html="<p>Rettet: torsdag kl. 17</p>")],
+                      [thread], newer_messages)
+    aula["client"] = client
+    run_fetch()
+
+    asyncio.run(aula_source.backfill(rescue))  # taken before what fetch already saved
+    run_fetch()
+    run_backfill()
+
+    assert [v.body for v in archived("post:10").versions] == ["Fredag kl. 17", "Rettet: torsdag kl. 17"]
+    assert [v.body for v in archived("message:40:a").versions] == ["Husk saks", "Husk saks og lim"]
+    assert len(archived("message:40:b").versions) == 1
+    with archive.open() as a:
+        stored = a.thread("40")
+    assert [m["id"] for m in stored.messages] == ["a", "b"] and stored.raw["lastMessageDate"] == thread["lastMessageDate"]
+
+    asyncio.run(aula_source.backfill(rescue))  # again: the older versions are already there
+    assert [len(archived(k).versions) for k in ("post:10", "message:40:a")] == [2, 2]

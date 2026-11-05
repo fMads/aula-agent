@@ -12,6 +12,12 @@ Version rule: an item gets a new item version only when its title, its text or
 the set of its attachment ids changes. Signed URLs, comment counts, bookmarks
 and the like do not count, and while there is no new version the stored raw
 JSON stays as it was.
+
+What is saved is saved as of a time (now, or when a rescue copy was taken), and
+the latest version is the one with the newest time. Something older than what
+the archive has (a rescue copy read after ``fetch``) adds a version only when
+its content is not among the item's versions already, and never replaces the
+stored raw thread.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ import re
 import sqlite3
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +41,7 @@ from aula.models.post import Post
 from . import store
 
 SCHEMA_VERSION = 3
+_BACKUPS_SINCE = 3  # the schema version that added the backup tables
 
 # Message types that are items; the rest (RecipientsAdded, SystemReply, AutoReply,
 # MessageDeleted, ...) are system messages and are only kept in the raw thread.
@@ -93,8 +101,12 @@ CREATE TABLE backups (
 """
 
 
-def _now() -> str:
-    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
+def _stamp(at: dt.datetime) -> str:
+    return at.astimezone().isoformat(timespec="seconds") if at.tzinfo is None else at.isoformat(timespec="seconds")
+
+
+def _when(stamp: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(stamp)
 
 
 def _safe(name: str) -> str:
@@ -123,15 +135,32 @@ class Version:
     raw: dict[str, Any]
 
 
+class Kind(StrEnum):
+    """What an attachment is."""
+
+    FILE = "file"
+    IMAGE = "image"
+    LINK = "link"  # into a cloud drive
+    SECURE_DOCUMENT = "secure_document"  # can only be seen in Aula
+
+
 @dataclass
 class File:
     """A file, image, link or secure document attached to an item."""
 
     attachment_id: str
-    kind: str
+    kind: Kind
     name: str
     detail: str | None
     path: str | None  # relative to data/, None while it could not be downloaded
+
+    def __post_init__(self):
+        self.kind = Kind(self.kind)
+
+    @property
+    def downloadable(self) -> bool:
+        """A file or an image, which the archive stores; not a link or a secure document."""
+        return self.kind in (Kind.FILE, Kind.IMAGE)
 
 
 @dataclass
@@ -166,12 +195,15 @@ class Status:
 
 
 class Archive:
-    def __init__(self, db: sqlite3.Connection, at: str | None = None):
+    def __init__(self, db: sqlite3.Connection, at: dt.datetime | None = None):
         self._db = db
         self._at = at
 
+    def _now(self) -> dt.datetime:
+        return self._at or dt.datetime.now().astimezone()
+
     def _saved_at(self) -> str:
-        return self._at or _now()
+        return _stamp(self._now())
 
     # -- write side (from fetching)
 
@@ -179,13 +211,13 @@ class Archive:
         """Save a post as Aula sent it. True when it gave a new item version."""
         post = Post.from_dict(raw)
         return self._save_item(
-            f"post:{post.id}",
+            post_key(post.id),
             "post",
             raw,
             title=post.title,
-            author=post.owner.full_name if post.owner else None,
+            author=post_author(post),
             date=_iso(post.publish_at or post.timestamp),
-            groups=[g.get("name") for g in post.shared_with_groups if isinstance(g, dict)],
+            groups=post_groups(post),
             child_ids=list(child_ids),
             body=post.content_markdown,
             attachments=post.attachments,
@@ -208,21 +240,20 @@ class Archive:
         Messages of :data:`MESSAGE_ITEM_TYPES` become items marked with the
         thread's sensitivity. Returns, per item key, whether it gave a new item version.
         """
-        stored = self._db.execute("SELECT raw, messages FROM threads WHERE id = ?", (thread_id,)).fetchone()
-        raw_thread = thread if thread is not None else (json.loads(stored[0]) if stored else {})
-        raw_messages = messages if complete or not stored else json.loads(stored[1])
-        self._db.execute(
-            "INSERT INTO threads (id, saved_at, raw, messages) VALUES (?, ?, ?, ?)"
-            " ON CONFLICT (id) DO UPDATE SET saved_at = excluded.saved_at, raw = excluded.raw, messages = excluded.messages",
-            (thread_id, self._saved_at(), _json(raw_thread), _json(raw_messages)),
-        )
+        stored = self._db.execute("SELECT raw, messages, saved_at FROM threads WHERE id = ?", (thread_id,)).fetchone()
+        if stored and _when(stored[2]) > self._now():  # older than what is saved: keep that
+            raw_thread = json.loads(stored[0])
+        else:
+            raw_thread = thread if thread is not None else (json.loads(stored[0]) if stored else {})
+            raw_messages = messages if complete or not stored else json.loads(stored[1])
+            self._db.execute(
+                "INSERT INTO threads (id, saved_at, raw, messages) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (id) DO UPDATE SET saved_at = excluded.saved_at, raw = excluded.raw, messages = excluded.messages",
+                (thread_id, self._saved_at(), _json(raw_thread), _json(raw_messages)),
+            )
         sensitive = bool(raw_thread.get("sensitive"))
         new: dict[str, bool] = {}
-        for raw in messages:
-            if raw.get("messageType") not in MESSAGE_ITEM_TYPES:
-                continue
-            msg = Message.from_dict(raw)
-            key = f"message:{thread_id}:{msg.id}"
+        for key, raw, msg in thread_items(thread_id, messages):
             new[key] = self._save_item(
                 key,
                 "message",
@@ -248,10 +279,12 @@ class Archive:
             " ON CONFLICT (key) DO UPDATE SET thread_id = excluded.thread_id, sensitive = excluded.sensitive",
             (key, kind, thread_id, int(sensitive)),
         )
-        latest = self._db.execute(
-            "SELECT hash FROM versions WHERE item_key = ? ORDER BY id DESC LIMIT 1", (key,)
-        ).fetchone()
-        if latest and latest[0] == version:
+        saved = self._db.execute("SELECT hash, saved_at, id FROM versions WHERE item_key = ?", (key,)).fetchall()
+        latest = max(saved, key=lambda row: (_when(row[1]), row[2]), default=None)  # of equal times, the last saved
+        if latest and _when(latest[1]) > self._now():  # older than the latest version: only if it is not there yet
+            if any(row[0] == version for row in saved):
+                return False
+        elif latest and latest[0] == version:
             return False
         self._db.execute(
             "INSERT INTO versions (item_key, hash, saved_at, title, author, date, groups, child_ids, body, raw)"
@@ -275,11 +308,11 @@ class Archive:
         out: list[File] = []
         for att in attachments:
             if att.document is not None:
-                file = File(_attachment_id(att), "secure_document", att.name, att.document.document_type or None, None)
+                file = File(attachment_id(att), Kind.SECURE_DOCUMENT, att.name, att.document.document_type or None, None)
             elif att.link is not None:
-                file = File(_attachment_id(att), "link", att.name, att.link.url, None)
+                file = File(attachment_id(att), Kind.LINK, att.name, att.link.url, None)
             elif att.file is not None:
-                file = File(_attachment_id(att), "image" if att.media is not None else "file", att.name, None, None)
+                file = File(attachment_id(att), Kind.IMAGE if att.media is not None else Kind.FILE, att.name, None, None)
                 target = folder / stored_name(att)
                 if not target.exists() and att.file.url:
                     data = await download(att)
@@ -311,6 +344,12 @@ class Archive:
         self._db.execute("INSERT OR REPLACE INTO drive (name, id) VALUES (?, ?)", (name, drive_id))
         self._db.commit()
 
+    def forget_drive(self) -> None:
+        """The backup is gone from Drive: forget its Drive ids, and that any file is backed up."""
+        self._db.execute("DELETE FROM drive")
+        self._db.execute("UPDATE files SET backed_up = 0")
+        self._db.commit()
+
     def files_to_back_up(self) -> list[tuple[str, File]]:
         """Stored files not in the backup yet, as (item key, file)."""
         return [
@@ -334,9 +373,12 @@ class Archive:
         finally:
             copy.close()
 
-    def record_backup(self, at: str, files: int) -> None:
+    def record_backup(self, files: int) -> str:
+        """Note that a backup was taken (as of the archive's time); returns when."""
+        at = self._saved_at()
         self._db.execute("INSERT INTO backups (at, files) VALUES (?, ?)", (at, files))
         self._db.commit()
+        return at
 
     # -- read side (web, backup, tests)
 
@@ -353,6 +395,7 @@ class Archive:
             item.versions.append(
                 Version(saved_at, title, author, date, json.loads(groups), json.loads(child_ids), body, json.loads(raw))
             )
+        item.versions.sort(key=lambda v: _when(v.saved_at))  # stable: equal times keep the order they were saved in
         item.files = [
             File(*row)
             for row in self._db.execute(
@@ -372,28 +415,60 @@ class Archive:
         counts = dict(self._db.execute("SELECT kind, count(*) FROM items GROUP BY kind").fetchall())
         last = self._db.execute("SELECT max(saved_at) FROM versions").fetchone()[0]
         last_backup = None
-        if self._db.execute("PRAGMA user_version").fetchone()[0] >= 3:  # read-only: may not be migrated yet
+        if self._db.execute("PRAGMA user_version").fetchone()[0] >= _BACKUPS_SINCE:  # read-only: may not be migrated yet
             last_backup = self._db.execute("SELECT max(at) FROM backups").fetchone()[0]
         return Status(
             posts=counts.get("post", 0), messages=counts.get("message", 0), last_saved=last, last_backup=last_backup
         )
 
 
+def post_key(post_id: Any) -> str:
+    """A post's item key."""
+    return f"post:{post_id}"
+
+
+def thread_items(thread_id: str, messages: list[dict[str, Any]]) -> Iterator[tuple[str, dict[str, Any], Message]]:
+    """The messages of a thread that are items (:data:`MESSAGE_ITEM_TYPES`), as (item key, raw, message)."""
+    for raw in messages:
+        if raw.get("messageType") in MESSAGE_ITEM_TYPES:
+            msg = Message.from_dict(raw)
+            yield f"message:{thread_id}:{msg.id}", raw, msg
+
+
+def post_author(post: Post) -> str | None:
+    return post.owner.full_name if post.owner else None
+
+
+def post_groups(post: Post) -> list[str]:
+    """The names of the groups (class, ...) a post is shared with."""
+    return [g.get("name") for g in post.shared_with_groups if isinstance(g, dict)]
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+_URL_QUERY = re.compile(r"(https?://[^\s?#()<>\[\]\"']+)[?#][^\s()<>\[\]\"']*")
+
+
+def _without_signatures(text: str) -> str:
+    """The text with the query string and fragment cut off its URLs, where signatures and expiry times go."""
+    return _URL_QUERY.sub(r"\1", text)
+
+
 def _version_hash(title: str | None, body: str, attachments: list[Attachment]) -> str:
-    ids = sorted(_attachment_id(a) for a in attachments)
-    return hashlib.sha256(json.dumps([title or "", body, ids], ensure_ascii=False).encode()).hexdigest()[:16]
+    ids = sorted(attachment_id(a) for a in attachments)
+    content = [_without_signatures(title or ""), _without_signatures(body), ids]
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False).encode()).hexdigest()[:16]
 
 
 def stored_name(att: Attachment) -> str:
     """The name a file or image is stored under, in its item's folder (a rescue copy uses the same)."""
-    return f"{_attachment_id(att)}-{_safe(att.name)}"
+    return f"{attachment_id(att)}-{_safe(att.name)}"
 
 
-def _attachment_id(att: Attachment) -> str:
+def attachment_id(att: Attachment) -> str:
+    """The id the archive knows an attachment by (Aula's, not its URL)."""
     for candidate in (att.id, att.file and att.file.id, att.document and att.document.id):
         if candidate is not None:
             return str(candidate)
@@ -410,7 +485,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         db.executescript(_SCHEMA_1)
     if current < 2:
         db.executescript(_SCHEMA_2)
-    if current < 3:
+    if current < _BACKUPS_SINCE:
         db.executescript(_SCHEMA_3)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -419,7 +494,8 @@ def _migrate(db: sqlite3.Connection) -> None:
 def open(*, at: dt.datetime | None = None) -> Iterator[Archive]:  # noqa: A001 - archive.open() reads well at the call site
     """Open the archive (creating it the first time); changes are committed on a clean exit.
 
-    What is saved is saved as of ``at`` (default: now); a rescue copy is saved as of when it was taken.
+    What is saved (an item version, a backup) is saved as of ``at`` (default: now);
+    a rescue copy is saved as of when it was taken.
     """
     file = store.path("ARCHIVE_FILE")
     file.parent.mkdir(parents=True, exist_ok=True)
@@ -428,7 +504,7 @@ def open(*, at: dt.datetime | None = None) -> Iterator[Archive]:  # noqa: A001 -
         with db:
             _migrate(db)
         with db:
-            yield Archive(db, at.isoformat(timespec="seconds") if at else None)
+            yield Archive(db, at)
     finally:
         db.close()
 

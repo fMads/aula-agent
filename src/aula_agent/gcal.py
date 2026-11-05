@@ -83,12 +83,24 @@ class Google:
         ).execute()
         return {"fileId": meta["id"], "fileUrl": meta["webViewLink"], "title": meta["name"], "mimeType": meta["mimeType"]}
 
-    def replace_file(self, file_id: str, path: Path) -> None:
-        """Replace the content of a file this tool uploaded earlier (name and folder stay)."""
+    def replace_file(self, file_id: str, path: Path) -> bool:
+        """Replace the content of a file this tool uploaded earlier (name and folder stay).
+
+        False when the file is gone from Drive or in the trash (itself or its folder).
+        """
+        from googleapiclient.errors import HttpError
         from googleapiclient.http import MediaFileUpload
 
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        self._drive.files().update(fileId=file_id, media_body=MediaFileUpload(str(path), mimetype=mime), fields="id").execute()
+        try:
+            meta = self._drive.files().update(
+                fileId=file_id, media_body=MediaFileUpload(str(path), mimetype=mime), fields="id,trashed"
+            ).execute()
+        except HttpError as exc:
+            if exc.resp.status == 404:
+                return False
+            raise
+        return not meta.get("trashed")
 
 
 # ----------------------------------------------------------------------------- event body
@@ -293,7 +305,7 @@ def sync(
             echo(f"[prøvekørsel] {names[a.kind]}: {a.label(cfg)}")
         echo(f"[prøvekørsel] Markeres som behandlet: {len(doc.processed)}")
         return {"created": [], "updated": [], "deleted": [], "processed": [], "skipped": []}
-    google = _resolve(google)
+    google = resolve(google)
     return execute(actions, doc, google, ledger, cfg)
 
 
@@ -308,7 +320,7 @@ def remove_event(key: str, child_id: int | None = None, *, google: Google | Call
     entries = [e for e in ledger.entries(key) if child_id is None or e.child_id == int(child_id)]
     if not entries:
         raise KeyError(key)
-    google = _resolve(google)
+    google = resolve(google)
     for e in entries:
         google.delete_event(e.calendar_id, e.event_id)
         ledger.forget(e.key, e.calendar_id)
@@ -317,7 +329,8 @@ def remove_event(key: str, child_id: int | None = None, *, google: Google | Call
     return len(entries)
 
 
-def _resolve(google: Google | Callable[[], Google] | None) -> Google:
+def resolve(google: Google | Callable[[], Google] | None) -> Google:
+    """The Google adapter to use: the one given (or made by the given callable), else a connection."""
     if google is None:
         return Google.connect()
     return google() if callable(google) and not isinstance(google, Google) else google

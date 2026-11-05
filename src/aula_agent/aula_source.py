@@ -25,7 +25,6 @@ from aula import FileTokenStorage
 from aula.api_client import AulaApiClient
 from aula.auth_flow import authenticate_and_create_client
 from aula.models.attachment import Attachment
-from aula.models.message import Message
 from aula.models.pagination import PaginationResult
 from aula.models.post import Post
 from aula.utils.html import html_to_markdown
@@ -143,7 +142,12 @@ def _from_aula(client: AulaApiClient) -> Download:
 async def _archive_files(
     download: Download, arch: archive.Archive, item_key: str, attachments: list[Attachment], warnings: list[str]
 ) -> list[archive.File]:
-    """Every file and image of an item, in the archive (downloaded unless it already is)."""
+    """Every file and image of an item, in the archive (downloaded unless it already is).
+
+    Returns the item's attachments for the agent: a file Aula sent without a URL
+    (and that is not stored already) is only noted in the archive, and is not
+    something to download again either.
+    """
 
     async def guarded(att: Attachment) -> bytes | None:
         try:
@@ -152,21 +156,23 @@ async def _archive_files(
             warnings.append(f"Kunne ikke hente {att.name!r} fra {item_key}: {exc}")
             return None
 
-    return await arch.save_files(item_key, attachments, guarded)
+    files = await arch.save_files(item_key, attachments, guarded)
+    no_url = {archive.attachment_id(a) for a in attachments if a.file is not None and not a.file.url}
+    return [f for f in files if f.path or f.attachment_id not in no_url]
 
 
 def _inbox_attachments(files: list[archive.File]) -> list[dict[str, Any]]:
     """What the agent is pointed at: not the images of a photo gallery."""
-    gallery = sum(1 for f in files if f.kind == "image") > MAX_MEDIA_PER_ITEM
+    gallery = sum(1 for f in files if f.kind == archive.Kind.IMAGE) > MAX_MEDIA_PER_ITEM
     out: list[dict[str, Any]] = []
     for f in files:
-        entry: dict[str, Any] = {"name": f.name, "kind": f.kind}
-        if f.kind == "secure_document":
+        entry: dict[str, Any] = {"name": f.name, "kind": str(f.kind)}
+        if f.kind == archive.Kind.SECURE_DOCUMENT:
             entry["note"] = SECURE_DOCUMENT_NOTE
-        elif f.kind == "link":
+        elif f.kind == archive.Kind.LINK:
             entry["url"] = f.detail
-        elif f.kind == "image" and gallery:
-            entry["note"] = "Ikke vedlagt (billedgalleri)"
+        elif f.kind == archive.Kind.IMAGE and gallery:
+            entry["note"] = "Ikke hentet (billedgalleri)"
         elif f.path:
             entry["path"] = f.path
         else:
@@ -189,8 +195,13 @@ def _child_hints(raw: dict[str, Any]) -> list[str]:
     return names
 
 
+def _child(child_id: int, name: str | None, institution: str | None) -> dict[str, Any]:
+    """A child as the inbox (and the rest of fetch) knows it."""
+    return {"id": child_id, "name": name, "institution": institution}
+
+
 def _children(profile) -> list[dict[str, Any]]:
-    return [{"id": c.id, "name": c.name, "institution": c.institution_name} for c in profile.children]
+    return [_child(c.id, c.name, c.institution_name) for c in profile.children]
 
 
 def _only_child(children: list[dict[str, Any]]) -> list[int]:
@@ -198,8 +209,8 @@ def _only_child(children: list[dict[str, Any]]) -> list[int]:
     return [children[0]["id"]] if len(children) == 1 else []
 
 
-def _thread_child_ids(thread: dict[str, Any], children: list[dict[str, Any]]) -> list[int]:
-    hints = _child_hints(thread)
+def _thread_child_ids(hints: list[str], children: list[dict[str, Any]]) -> list[int]:
+    """The children a thread is about: the ones it names (its ``hints``), else the only child."""
     return [c["id"] for c in children if c["name"] in hints] or _only_child(children)
 
 
@@ -237,7 +248,7 @@ async def _take_posts(
     client, profile, arch: archive.Archive, intake: Intake, only_child: list[int], warnings: list[str]
 ) -> None:
     async for post in _read_posts(client, profile, warnings):
-        key = f"post:{post.id}"
+        key = archive.post_key(post.id)
         arch.save_post(post._raw or {}, child_ids=only_child)
         files = await _archive_files(_from_aula(client), arch, key, post.attachments, warnings)
         published = _aware(post.publish_at or post.timestamp)
@@ -248,10 +259,10 @@ async def _take_posts(
                 "type": "post",
                 "child_ids": only_child,
                 "title": post.title,
-                "author": post.owner.full_name if post.owner else None,
+                "author": archive.post_author(post),
                 "published": _iso(published),
                 "edited": _iso(post.edited_at),
-                "groups": [g.get("name") for g in post.shared_with_groups if isinstance(g, dict)],
+                "groups": archive.post_groups(post),
                 "body": post.content_markdown[:MAX_BODY_CHARS],
                 "attachments": _inbox_attachments(files),
             }
@@ -281,18 +292,14 @@ async def _take_messages(
         msgs = await client.get_all_messages_for_thread_result(thread_id)
         all_files = True
         hints = _child_hints(thread)
-        child_ids = _thread_child_ids(thread, children)
+        child_ids = _thread_child_ids(hints, children)
         arch.save_thread(
             thread_id, msgs.items, thread=listed.get(thread_id), complete=msgs.complete, child_ids=child_ids
         )
-        for raw in msgs.items:
-            if raw.get("messageType") not in archive.MESSAGE_ITEM_TYPES:
-                continue
-            msg = Message.from_dict(raw)
+        for key, _raw, msg in archive.thread_items(thread_id, msgs.items):
             sent = _aware(msg.send_datetime)
-            key = f"message:{thread_id}:{msg.id}"
             files = await _archive_files(_from_aula(client), arch, key, msg.attachments, warnings)
-            all_files &= all(f.path for f in files if f.kind in ("file", "image"))
+            all_files &= all(f.path for f in files if f.downloadable)
 
             async def build(msg=msg, key=key, sent=sent, files=files) -> dict[str, Any]:
                 return {
@@ -322,6 +329,8 @@ async def _take_messages(
             ledger.mark_thread_read(thread_id, last)
             if not msgs.complete:
                 warnings.append(f"Tråd {thread_id} kunne ikke læses helt efter {attempts} forsøg; giver op.")
+            else:
+                warnings.append(f"Tråd {thread_id}: filer kunne ikke hentes efter {attempts} forsøg; giver op.")
         elif not msgs.complete:
             warnings.append(f"Tråd {thread_id} blev ikke læst helt ({msgs.termination_reason}); prøver igen næste gang.")
 
@@ -455,8 +464,7 @@ class _RescueBackfill:
             raise BadRescueCopy(f"{folder}: {exc}") from exc
         self._files = {p.name: p for p in (folder / "files").glob("*/*") if p.is_file()}
         self.children = [
-            {"id": int(cid), "name": c.get("name"), "institution": c.get("institution")}
-            for cid, c in store.load_config()["children"].items()
+            _child(int(cid), c.get("name"), c.get("institution")) for cid, c in store.load_config()["children"].items()
         ]
 
     async def posts(self) -> AsyncIterator[dict[str, Any]]:
@@ -491,20 +499,18 @@ async def _backfill_from(source: BackfillSource, warnings: list[str], *, at: dt.
             post = Post.from_dict(raw)
             result.posts += 1
             result.new_versions += arch.save_post(raw, child_ids=only_child)
-            await _archive_files(source.download, arch, f"post:{post.id}", post.attachments, warnings)
+            await _archive_files(source.download, arch, archive.post_key(post.id), post.attachments, warnings)
         async for thread, msgs in source.threads():
             thread_id = str(thread.get("id"))
             result.threads += 1
             saved = arch.save_thread(
                 thread_id, msgs.items, thread=thread, complete=msgs.complete,
-                child_ids=_thread_child_ids(thread, source.children),
+                child_ids=_thread_child_ids(_child_hints(thread), source.children),
             )
             result.messages += len(saved)
             result.new_versions += sum(saved.values())
-            for raw in msgs.items:
-                if raw.get("messageType") in archive.MESSAGE_ITEM_TYPES:
-                    msg = Message.from_dict(raw)
-                    await _archive_files(source.download, arch, f"message:{thread_id}:{msg.id}", msg.attachments, warnings)
+            for key, _raw, msg in archive.thread_items(thread_id, msgs.items):
+                await _archive_files(source.download, arch, key, msg.attachments, warnings)
             if not msgs.complete:
                 warnings.append(f"Tråd {thread_id} blev ikke læst helt ({msgs.termination_reason}); kør backfill igen.")
     return result

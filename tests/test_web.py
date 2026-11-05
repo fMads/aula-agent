@@ -208,6 +208,21 @@ def test_home_says_login_expired_after_fetch_needed_login(monkeypatch, tmp_path)
         assert "Login udløbet" not in c.get("/", headers=auth()).text
 
 
+def test_home_says_login_expired_after_backfill_needed_login(monkeypatch, tmp_path):
+    token = tmp_path / "tokens.json"
+    token.write_text("{}")
+    monkeypatch.setattr("aula.config.DEFAULT_TOKEN_FILE", token)
+    monkeypatch.setattr("aula.config.load_config", lambda: {"mitid_username": "u"})
+    configure()
+    with make_client() as c:
+        runs.record("backfill", Outcome.AULA_LOGIN, "Session udløbet")
+        assert "Login udløbet" in c.get("/", headers=auth()).text
+        runs.record("backfill-rescue", Outcome.OK, "2 opslag")  # a rescue copy says nothing about the session
+        assert "Login udløbet" in c.get("/", headers=auth()).text
+        runs.record("backfill", Outcome.OK, "2 opslag")
+        assert "Login udløbet" not in c.get("/", headers=auth()).text
+
+
 # ------------------------------------------------------------------ MitID login
 
 
@@ -309,13 +324,13 @@ def test_archive_card_shows_the_last_backup_and_warns_when_it_is_missing_or_old(
     assert "ingen backup endnu" in card and 'class="bad"' in card
 
     taken = dt.datetime.now() - dt.timedelta(hours=49)
-    backup.take(google, now=taken)
+    backup.take(google, at=taken)
     with make_client() as c:
         card = archive_card(c)
     assert f"backup {taken:%d.%m. kl. %H:%M}" in card and "over 2 døgn gammel" in card and 'class="bad"' in card
 
     taken = dt.datetime.now() - dt.timedelta(hours=47)
-    backup.take(google, now=taken)
+    backup.take(google, at=taken)
     with make_client() as c:
         card = archive_card(c)
     assert f"backup {taken:%d.%m. kl. %H:%M}" in card and "over 2 døgn" not in card and 'class="bad"' not in card
