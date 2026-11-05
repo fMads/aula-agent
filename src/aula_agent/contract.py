@@ -395,12 +395,6 @@ def parse(
     )
 
 
-def _span_text(c: Classification) -> str:
-    if c.span_start is None:
-        return ""
-    return f" {c.span_start}" + (f"–{c.span_end}" if c.span_end != c.span_start else "")
-
-
 def _queued() -> dict[str, int | None]:
     """The inbox's ``to_classify``, as item key -> the version the agent got."""
     file = store.path("INBOX_FILE")
@@ -430,7 +424,7 @@ def accept(raw: str | dict[str, Any], cfg: dict[str, Any], ledger: Ledger, *, dr
             for name in doc.new_topics:
                 echo(f"[prøvekørsel] Nyt topic: {name}")
             for key, c in doc.classifications.items():
-                echo(f"[prøvekørsel] Classification: {key} {c.category}{_span_text(c)}")
+                echo(f"[prøvekørsel] Classification: {key} {' '.join(filter(None, (c.category, c.span_text())))}")
             return doc
         for name, description in doc.new_topics.items():
             arch.create_topic(name, description)

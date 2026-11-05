@@ -396,19 +396,10 @@ CATEGORY_NAMES = {
 }
 
 
-def fmt_span(c: archive.Classification) -> str:
-    if not c.span_start:
-        return ""
-    start = c.span_start.strftime("%d.%m.%Y")
-    if not c.span_end or c.span_end == c.span_start:
-        return start
-    return f"{start}–{c.span_end:%d.%m.%Y}"
-
-
 def overview_item(item: archive.Item) -> str:
-    c, latest = item.classification, item.versions[-1]
+    c, latest = item.classification, item.latest
     meta = [m for m in ("opslag" if item.kind == "post" else "besked", fmt_date((latest.date or "")[:10])) if m]
-    if span := fmt_span(c):
+    if span := c.span_text("%d.%m.%Y"):
         meta.append(f"gælder {span}")
     if item.sensitive:  # the page may stand open on a screen: no subject, summary or topics
         title, summary = "🔒 Følsom tråd", ""
@@ -447,7 +438,7 @@ async def overview(request: Request) -> Response:
     for category, members in groups.items():
         if not members:
             continue
-        members.sort(key=lambda i: i.versions[-1].date or "", reverse=True)
+        members.sort(key=lambda i: i.latest.date or "", reverse=True)
         sections.append(
             f'<h2>{e(CATEGORY_NAMES[category])} <span class="mut">({len(members)})</span></h2>'
             f'<ul class="list">{"".join(overview_item(i) for i in members)}</ul>'

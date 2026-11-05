@@ -187,7 +187,7 @@ def _archived(arch: archive.Archive, key: str) -> dict[str, Any]:
     """What the archive adds to an inbox item: the version the agent gets (its
     classification is saved for that one), and whether it is from a sensitive thread."""
     item = arch.item(key)
-    return {"archive_version": item.versions[-1].id, "sensitive": item.sensitive}
+    return {"archive_version": item.latest.id, "sensitive": item.sensitive}
 
 
 def _child_hints(raw: dict[str, Any]) -> list[str]:
@@ -350,7 +350,7 @@ async def _take_messages(
 def _queued_item(arch: archive.Archive, item: archive.Item) -> dict[str, Any]:
     """An unclassified item for the inbox's ``to_classify``: the shape of an
     inbox item, built from the archive's newest version of it."""
-    version = item.versions[-1]
+    version = item.latest
     common = {
         "child_ids": version.child_ids,
         "body": version.body[:MAX_BODY_CHARS],
