@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -36,8 +35,6 @@ MAX_THREAD_ATTEMPTS = 3  # read an incomplete thread again this many nights, the
 CALENDAR_DAYS = 112  # how far ahead to read Aula's own calendar
 CALENDAR_CHUNK_DAYS = 28  # Aula answers 403 for ranges much longer than a month
 DOWNLOAD_FAILED = "Download fejlede"
-# Message types that are items; the rest (RecipientsAdded, SystemReply, AutoReply, ...) are system messages.
-MESSAGE_ITEM_TYPES = ("Message", "MessageEdited", "Forward")
 
 
 class LoginRequired(Problem):
@@ -66,11 +63,6 @@ def _aware(value: dt.datetime | None) -> dt.datetime | None:
 def _iso(value: dt.datetime | None) -> str | None:
     value = _aware(value)
     return value.astimezone(TZ).isoformat(timespec="minutes") if value else None
-
-
-def _safe(name: str) -> str:
-    name = re.sub(r"[^\w.\- æøåÆØÅ]+", "_", name).strip(" ._")
-    return name[:120] or "fil"
 
 
 def _version(*parts: Any) -> str:
@@ -159,43 +151,6 @@ def _inbox_attachments(files: list[archive.File]) -> list[dict[str, Any]]:
     return out
 
 
-async def _download_attachments(
-    client: AulaApiClient, item_key: str, attachments: list[Attachment], warnings: list[str]
-) -> list[dict[str, Any]]:
-    """Inbox attachments of a message (messages are not archived yet; posts use :func:`_archive_files`)."""
-    out: list[dict[str, Any]] = []
-    media_count = sum(1 for a in attachments if a.media is not None)
-    folder = store.path("ATTACHMENTS_DIR") / _safe(item_key.replace(":", "_"))
-    for att in attachments:
-        entry: dict[str, Any] = {"name": att.name}
-        if att.document is not None:
-            entry["kind"] = "secure_document"
-            entry["note"] = SECURE_DOCUMENT_NOTE
-        elif att.link is not None:
-            entry["kind"] = "link"
-            entry["url"] = att.link.url
-        elif att.file is not None and att.file.url:
-            entry["kind"] = "image" if att.media is not None else "file"
-            if att.media is not None and media_count > MAX_MEDIA_PER_ITEM:
-                entry["note"] = "Ikke hentet (billedgalleri)"
-            else:
-                path = folder / f"{att.id or att.file.id}-{_safe(att.name)}"
-                if not path.exists():
-                    try:
-                        data = await client.download_file(att.file.url)
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        path.write_bytes(data)
-                    except Exception as exc:  # one bad file must not stop the run
-                        warnings.append(f"Kunne ikke hente {att.name!r} fra {item_key}: {exc}")
-                        entry["note"] = DOWNLOAD_FAILED
-                if path.exists():
-                    entry["path"] = str(path.relative_to(store.DATA_DIR))
-        else:
-            continue
-        out.append(entry)
-    return out
-
-
 def _child_hints(raw: dict[str, Any]) -> list[str]:
     """Names of children a message thread says it is about, when Aula tells us."""
     names: list[str] = []
@@ -263,7 +218,14 @@ async def _take_posts(
 
 
 async def _take_messages(
-    client, ledger: Ledger, intake: Intake, since: dt.datetime, children: list[dict], only_child: list[int], warnings: list[str]
+    client,
+    ledger: Ledger,
+    arch: archive.Archive,
+    intake: Intake,
+    since: dt.datetime,
+    children: list[dict],
+    only_child: list[int],
+    warnings: list[str],
 ) -> None:
     threads = await client.get_all_message_threads_result(since.date())
     if not threads.complete:
@@ -277,26 +239,31 @@ async def _take_messages(
         msgs = await client.get_all_messages_for_thread_result(thread_id)
         all_files = True
         hints = _child_hints(thread)
-        hinted_ids = [c["id"] for c in children if c["name"] in hints]
+        child_ids = [c["id"] for c in children if c["name"] in hints] or only_child
+        arch.save_thread(
+            thread_id, msgs.items, thread=listed.get(thread_id), complete=msgs.complete, child_ids=child_ids
+        )
         for raw in msgs.items:
-            if raw.get("messageType") not in MESSAGE_ITEM_TYPES:
+            if raw.get("messageType") not in archive.MESSAGE_ITEM_TYPES:
                 continue
             msg = Message.from_dict(raw)
             sent = _aware(msg.send_datetime)
             key = f"message:{thread_id}:{msg.id}"
+            files = await _archive_files(client, arch, key, msg.attachments, warnings)
+            all_files &= all(f.path for f in files if f.kind in ("file", "image"))
 
-            async def build(msg=msg, key=key, sent=sent) -> dict[str, Any]:
+            async def build(msg=msg, key=key, sent=sent, files=files) -> dict[str, Any]:
                 return {
                     "key": key,
                     "type": "message",
                     "thread_id": thread_id,
-                    "child_ids": hinted_ids or only_child,
+                    "child_ids": child_ids,
                     "child_hints": hints,
                     "subject": thread.get("subject"),
                     "sender": msg.sender_name,
                     "sent": _iso(sent),
                     "body": html_to_markdown(msg.content_html)[:MAX_BODY_CHARS],
-                    "attachments": await _download_attachments(client, key, msg.attachments, warnings),
+                    "attachments": _inbox_attachments(files),
                 }
 
             all_files &= await intake.offer(key, _version(msg.content_html, len(msg.attachments)), sent, build)
@@ -375,7 +342,7 @@ async def fetch(*, first_run_days: int = FIRST_RUN_DAYS) -> dict[str, Any]:
         only_child = [children[0]["id"]] if len(children) == 1 else []
         with archive.open() as arch:
             await _take_posts(client, profile, arch, intake, only_child, warnings)
-        await _take_messages(client, ledger, intake, since, children, only_child, warnings)
+            await _take_messages(client, ledger, arch, intake, since, children, only_child, warnings)
         aula_calendar = await _read_aula_calendar(client, profile, now, warnings)
 
     ledger.last_fetch = now.isoformat(timespec="seconds")

@@ -129,9 +129,15 @@ def test_home_shows_how_much_the_archive_holds():
     with archive.open() as a:
         for pid in (1, 2):
             a.save_post({"id": pid, "title": f"Opslag {pid}", "content": {"html": "<p>x</p>"}, "ownerProfile": {"id": 3, "profileId": 4}})
+        a.save_thread(
+            "7",
+            [{"id": "m1", "messageType": "Message", "text": {"html": "<p>Hej</p>"}},
+             {"id": "s1", "messageType": "RecipientsAdded"}],
+            thread={"id": 7, "subject": "Tur"},
+        )
     with make_client() as c:
         r = c.get("/", headers=auth())
-    assert "2 opslag" in r.text
+    assert "2 opslag · 1 besked · sidst gemt" in r.text
     assert any(f"sidst gemt {t:%d.%m. kl. %H:%M}" in r.text for t in (before, dt.datetime.now()))
 
 

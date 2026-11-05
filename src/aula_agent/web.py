@@ -299,7 +299,10 @@ def backup_ok(status: archive.Status) -> bool:
 
 
 def archive_text(status: archive.Status) -> str:
-    saved = f"{status.posts} opslag · sidst gemt {fmt_when(status.last_saved)}" if status.last_saved else "intet gemt endnu"
+    saved = "intet gemt endnu"
+    if status.last_saved:
+        messages = f"{status.messages} {'besked' if status.messages == 1 else 'beskeder'}"
+        saved = f"{status.posts} opslag · {messages} · sidst gemt {fmt_when(status.last_saved)}"
     if not status.last_backup:
         return f"{saved} · ingen backup endnu"
     stale = "" if backup_ok(status) else " – over 2 døgn gammel"
