@@ -106,7 +106,8 @@ def load_config() -> dict[str, Any]:
     cfg = read_json(path("CONFIG_FILE"), {})
     cfg.setdefault("children", {})  # str(child_id) -> {"name", "institution", "calendar_id", "calendar_name"}
     cfg.setdefault("calendar_name_template", "Skole – {name}")
-    cfg.setdefault("drive_folder_name", "Aula")
+    cfg.setdefault("drive_folder_name", "Aula")  # attachments of calendar events; may be shared
+    cfg.setdefault("archive_folder_name", "Aula-arkiv")  # backup of the archive; never shared
     return cfg
 
 

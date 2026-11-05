@@ -8,8 +8,10 @@ from aula.models.calendar_event import CalendarEvent
 from aula.models.pagination import PaginationResult
 from aula.models.post import Post
 
-from aula_agent import archive, aula_source, store
+from aula_agent import archive, aula_source, gcal, store
+from aula_agent.credentials import GoogleLoginRequired
 from aula_agent.ledger import Ledger
+from conftest import FakeGoogle
 
 NOW = dt.datetime.now(aula_source.TZ)
 
@@ -102,13 +104,20 @@ def child(cid, name):
 
 
 @pytest.fixture
-def aula(monkeypatch):
-    holder = {}
+def aula(monkeypatch, google):
+    """``holder["client"]`` is the Aula fetch talks to; ``holder["google"]`` the Google it backs up to."""
+    holder = {"google": google}
 
     async def open_client():
         return holder["client"]
 
+    def connect_google():
+        if isinstance(holder["google"], Exception):
+            raise holder["google"]
+        return holder["google"]
+
     monkeypatch.setattr(aula_source, "open_client", open_client)
+    monkeypatch.setattr(gcal.Google, "connect", staticmethod(connect_google))
     return holder
 
 
@@ -579,3 +588,45 @@ def test_backfill_twice_gives_no_duplicates_and_leaves_inbox_and_intake_alone(au
     assert client.downloads == []  # the files were already archived
     assert store.INBOX_FILE.read_text() == inbox
     assert json.loads(store.STATE_FILE.read_text()) == state  # seen, pending, last_fetch, ...
+
+
+# ------------------------------------------------------------------ backup
+
+
+def test_fetch_ends_with_a_backup_of_the_archive(aula):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(10, "Indbydelse", 1, attachments=[file_att(5, "plan.pdf")])], [], {})
+    summary = run_fetch()
+    assert summary["warnings"] == []
+    assert aula["google"].in_folder("Aula-arkiv") == ["archive.sqlite", "attachments/post_10/5-plan.pdf"]
+
+
+class BrokenDrive(FakeGoogle):
+    def create_folder(self, name):
+        raise RuntimeError("Drive svarer 500")
+
+
+@pytest.mark.parametrize("google", [BrokenDrive(), GoogleLoginRequired("Ingen Google-adgang endnu.")], ids=["error", "no-login"])
+def test_a_failed_backup_is_a_warning_and_fetch_still_writes_the_inbox(aula, google):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(10, "Indbydelse", 1)], [], {})
+    aula["google"] = google
+    summary = run_fetch()
+    assert summary["new"] == ["post:10"]
+    [warning] = summary["warnings"]
+    assert "Backup" in warning and ("500" in warning or "Google-adgang" in warning)
+    inbox = json.loads(store.INBOX_FILE.read_text())
+    assert [i["key"] for i in inbox["items"]] == ["post:10"]
+
+
+def test_backfill_ends_with_a_backup_of_the_archive(aula):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(10, "Indbydelse", 90, attachments=[file_att(5, "plan.pdf")])], [], {})
+    assert run_backfill().warnings == []
+    assert aula["google"].in_folder("Aula-arkiv") == ["archive.sqlite", "attachments/post_10/5-plan.pdf"]
+
+
+def test_a_failed_backup_is_a_warning_after_backfill(aula):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(10, "Indbydelse", 90)], [], {})
+    aula["google"] = GoogleLoginRequired("Ingen Google-adgang endnu.")
+    result = run_backfill()
+    [warning] = result.warnings
+    assert "Backup" in warning and "Google-adgang" in warning
+    assert archived("post:10") is not None

@@ -27,7 +27,7 @@ from aula.models.pagination import PaginationResult
 from aula.models.post import Post
 from aula.utils.html import html_to_markdown
 
-from . import archive, contract, credentials, store
+from . import archive, backup, contract, credentials, store
 from .ledger import Ledger
 from .runs import Outcome, Problem
 
@@ -347,6 +347,16 @@ async def _read_aula_calendar(client, profile, now: dt.datetime, warnings: list[
 # ----------------------------------------------------------------------------- fetch
 
 
+def _back_up(warnings: list[str]) -> None:
+    """Back up the archive; a failure must not stop the nightly run from reaching ``apply``."""
+    try:
+        backup.take()
+    except credentials.GoogleLoginRequired as exc:
+        warnings.append(f"Backup af arkivet er ikke taget: {exc} Forbind Google igen.")
+    except Exception as exc:
+        warnings.append(f"Backup af arkivet fejlede: {exc}")
+
+
 async def fetch(*, first_run_days: int = FIRST_RUN_DAYS) -> dict[str, Any]:
     """Fetch new items for the agent and write the inbox file.
 
@@ -371,6 +381,7 @@ async def fetch(*, first_run_days: int = FIRST_RUN_DAYS) -> dict[str, Any]:
 
     ledger.last_fetch = now.isoformat(timespec="seconds")
     ledger.save()
+    _back_up(warnings)
     contract.write_inbox(ledger, cfg, aula_calendar, warnings)
     return {"new": intake.new_keys, "pending": len(ledger.pending_keys()), "warnings": warnings, "first_run": first_run}
 
@@ -457,9 +468,12 @@ async def backfill() -> Backfilled:
     """Read everything Aula still has into the archive: all posts and all threads.
 
     Touches neither the inbox nor intake (``seen``, ``pending``, ``last_fetch``),
-    and can be run again: what is already archived is skipped.
+    and can be run again: what is already archived is skipped. Ends with a
+    backup, like ``fetch``; a failed backup is a warning.
     """
     warnings: list[str] = []
     async with await open_client() as client:
         profile = await client.get_profile()
-        return await _backfill_from(_AulaBackfill(client, profile, warnings), warnings)
+        result = await _backfill_from(_AulaBackfill(client, profile, warnings), warnings)
+    _back_up(warnings)
+    return result

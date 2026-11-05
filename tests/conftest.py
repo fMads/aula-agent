@@ -19,7 +19,10 @@ class FakeGoogle:
         self.calendars: dict[str, str] = {}  # id -> summary
         self.events: dict[tuple[str, str], dict] = {}  # (calendar_id, event_id) -> body
         self.uploads: list[str] = []
-        self.folders: list[str] = []
+        self.folders: list[str] = []  # names, in the order they were created
+        self.drive: dict[str, dict] = {}  # file id -> {"name", "folder", "content"}
+        self.replaced: list[str] = []  # file ids whose content was replaced
+        self._folder_ids: dict[str, str] = {}  # folder id -> name
         self.calls: list[tuple] = []
         self._ids = itertools.count(1)
 
@@ -53,13 +56,25 @@ class FakeGoogle:
 
     def create_folder(self, name):
         self.folders.append(name)
-        return "folder1"
+        folder_id = f"folder{len(self.folders)}"
+        self._folder_ids[folder_id] = name
+        return folder_id
 
     def upload_file(self, path, name, folder_id):
-        assert path.is_file() and folder_id == "folder1"
+        assert path.is_file() and folder_id in self._folder_ids
         self.uploads.append(name)
         n = len(self.uploads)
+        self.drive[f"file{n}"] = {"name": name, "folder": self._folder_ids[folder_id], "content": path.read_bytes()}
         return {"fileId": f"file{n}", "fileUrl": f"https://drive/file{n}", "title": name, "mimeType": "application/pdf"}
+
+    def replace_file(self, file_id, path):
+        assert path.is_file() and file_id in self.drive
+        self.replaced.append(file_id)
+        self.drive[file_id]["content"] = path.read_bytes()
+
+    def in_folder(self, folder_name):
+        """Names of the files in a Drive folder."""
+        return sorted(f["name"] for f in self.drive.values() if f["folder"] == folder_name)
 
     def bodies(self):
         return list(self.events.values())

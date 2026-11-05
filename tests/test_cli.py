@@ -2,7 +2,7 @@ from click.testing import CliRunner
 
 import json
 
-from aula_agent import aula_source, cli, store
+from aula_agent import aula_source, cli, gcal, store
 from aula_agent.ledger import Ledger
 
 
@@ -117,3 +117,17 @@ def test_backfill_logs_what_it_archived(monkeypatch):
     assert "9 opslag" in r.output and "ADVARSEL: Tråd 5" in r.output
     run = Ledger.load().last_run("backfill")
     assert run["outcome"] == "ok" and run["summary"] == "9 opslag, 30 tråde med 69 beskeder, 78 nye versioner, 1 advarsler"
+
+
+def test_backup_without_google_exits_4():
+    r = CliRunner().invoke(cli.main, ["backup"])
+    assert r.exit_code == cli.EXIT_GOOGLE_LOGIN and "GOOGLE_LOGIN_REQUIRED" in r.output
+    assert Ledger.load().last_run("backup")["outcome"] == "google_login"
+
+
+def test_backup_takes_a_backup_now(monkeypatch, google):
+    monkeypatch.setattr(gcal.Google, "connect", staticmethod(lambda: google))
+    r = CliRunner().invoke(cli.main, ["backup"])
+    assert r.exit_code == 0, r.output
+    assert google.in_folder("Aula-arkiv") == ["archive.sqlite"]
+    assert Ledger.load().last_run("backup")["outcome"] == "ok"

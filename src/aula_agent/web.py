@@ -289,11 +289,24 @@ def fmt_when(value: str | None) -> str:
         return value
 
 
+BACKUP_STALE_AFTER = dt.timedelta(days=2)
+
+
+def backup_ok(status: archive.Status) -> bool:
+    if not status.last_backup:
+        return False
+    return dt.datetime.now().astimezone() - dt.datetime.fromisoformat(status.last_backup) <= BACKUP_STALE_AFTER
+
+
 def archive_text(status: archive.Status) -> str:
-    if not status.last_saved:
-        return "intet gemt endnu"
-    messages = f"{status.messages} {'besked' if status.messages == 1 else 'beskeder'}"
-    return f"{status.posts} opslag · {messages} · sidst gemt {fmt_when(status.last_saved)}"
+    saved = "intet gemt endnu"
+    if status.last_saved:
+        messages = f"{status.messages} {'besked' if status.messages == 1 else 'beskeder'}"
+        saved = f"{status.posts} opslag · {messages} · sidst gemt {fmt_when(status.last_saved)}"
+    if not status.last_backup:
+        return f"{saved} · ingen backup endnu"
+    stale = "" if backup_ok(status) else " – over 2 døgn gammel"
+    return f"{saved} · backup {fmt_when(status.last_backup)}{stale}"
 
 
 # ----------------------------------------------------------------------------- routes
@@ -304,6 +317,7 @@ async def home(request: Request) -> Response:
     aula, google = credentials.aula_status(ledger), credentials.google_status()
     last_runs = ledger.runs(8)
     last_run = ledger.last_run("fetch", "apply")
+    archive_status = archive.status()
 
     def card(label: str, ok: bool | None, text: str, action: str = "") -> str:
         cls = "" if ok is None else ("ok" if ok else "bad")
@@ -319,7 +333,7 @@ async def home(request: Request) -> Response:
                 fmt_when(last_run["at"]) if last_run else "aldrig",
             ),
             card("Venter", None, f"{len(ledger.pending_keys())} beskeder/opslag"),
-            card("Arkiv", None, archive_text(archive.status())),
+            card("Arkiv", None if backup_ok(archive_status) else False, archive_text(archive_status)),
         ]
     )
 
