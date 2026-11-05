@@ -350,10 +350,11 @@ def history(item_key):
 def test_event_created_by_one_item_and_corrected_by_another_has_both_in_its_history(google):
     setup_children((1, "Emma"), (2, "Oscar"))
     add_pending("post:1", type="post", title="Skovtur")
-    gcal.sync({"processed": ["post:1"], "events": [ev("post:1#1", source="post:1", child_ids=[1, 2])]}, google=google)
+    gcal.sync({"processed": ["post:1"], "classifications": [{"item": "post:1", "category": "svar"}], "events": [ev("post:1#1", source="post:1", child_ids=[1, 2])]}, google=google)
     add_pending("message:7:a", type="message", subject="Ny dato")
     gcal.sync(
-        {"processed": ["message:7:a"], "events": [ev("post:1#1", source="message:7:a", child_ids=[1, 2], start="2099-11-13")]},
+        {"processed": ["message:7:a"], "classifications": [{"item": "message:7:a", "category": "svar"}],
+         "events": [ev("post:1#1", source="message:7:a", child_ids=[1, 2], start="2099-11-13")]},
         google=google,
     )
 
