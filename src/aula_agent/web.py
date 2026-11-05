@@ -410,11 +410,14 @@ def overview_item(item: archive.Item) -> str:
     meta = [m for m in ("opslag" if item.kind == "post" else "besked", fmt_date((latest.date or "")[:10])) if m]
     if span := fmt_span(c):
         meta.append(f"gælder {span}")
-    if c.topics:
-        meta.append(f"emner: {', '.join(c.topics)}")
-    summary = "🔒 Følsom tråd" if item.sensitive else (c.summary or "")
+    if item.sensitive:  # the page may stand open on a screen: no subject, summary or topics
+        title, summary = "🔒 Følsom tråd", ""
+    else:
+        title, summary = latest.title or "(uden titel)", c.summary or ""
+        if c.topics:
+            meta.append(f"emner: {', '.join(c.topics)}")
     return (
-        f'<li><span class="grow">{e(latest.title or "(uden titel)")}'
+        f'<li><span class="grow">{e(title)}'
         f'{"<br>" + e(summary) if summary else ""}'
         f'<br><span class="mut">{e(" · ".join(meta))}</span></span></li>'
     )

@@ -414,16 +414,20 @@ def test_overview_lists_the_classifications_by_category_with_the_number_unclassi
     assert html.index("Periode") > html.index("Arrangement")  # categories in their own order
 
 
-def test_overview_shows_a_sensitive_thread_without_its_summary():
+def test_overview_shows_a_sensitive_thread_only_as_sensitive_with_date_and_source():
     configure()
     with archive.open() as a:
-        a.save_thread("9", [{"id": "m1", "messageType": "Message", "text": {"html": "<p>Fortroligt</p>"}}],
-                      thread={"id": 9, "subject": "Samtale", "sensitive": True})
-        a.create_topic("trivsel", "Trivsel og samtaler")
-        classify(a, "message:9:m1", "orientering", topics=["trivsel"], summary="Et resumé der ikke må ses")
+        a.save_thread("9", [{"id": "m1", "messageType": "Message", "sendDateTime": "2026-11-03T08:00:00+01:00",
+                             "text": {"html": "<p>Fortroligt</p>"}}],
+                      thread={"id": 9, "subject": "Samtale om skoledagen", "sensitive": True})
+        a.create_topic("trivselssamtale", "Trivsel og samtaler")
+        classify(a, "message:9:m1", "orientering", topics=["trivselssamtale"], summary="Et resumé der ikke må ses")
     with make_client() as c:
-        html = section(c.get("/overblik", headers=auth()).text, "Orientering")
-    assert "🔒 Følsom tråd" in html and "Et resumé der ikke må ses" not in html and "Fortroligt" not in html
+        page_html = c.get("/overblik", headers=auth()).text
+    html = section(page_html, "Orientering")
+    assert "🔒 Følsom tråd" in html and "besked" in html and "03.11.2026" in html
+    for hidden in ("Samtale om skoledagen", "Et resumé der ikke må ses", "Fortroligt", "trivselssamtale"):
+        assert hidden not in html
 
 
 def test_overview_without_an_archive_or_with_one_not_migrated_yet_says_so_and_changes_nothing():
