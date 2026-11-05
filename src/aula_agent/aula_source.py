@@ -322,6 +322,8 @@ async def _take_messages(
             ledger.mark_thread_read(thread_id, last)
             if not msgs.complete:
                 warnings.append(f"Tråd {thread_id} kunne ikke læses helt efter {attempts} forsøg; giver op.")
+            else:
+                warnings.append(f"Tråd {thread_id}: filer kunne ikke hentes efter {attempts} forsøg; giver op.")
         elif not msgs.complete:
             warnings.append(f"Tråd {thread_id} blev ikke læst helt ({msgs.termination_reason}); prøver igen næste gang.")
 

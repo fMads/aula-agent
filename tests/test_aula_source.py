@@ -333,6 +333,21 @@ def test_thread_that_never_reads_completely_is_given_up(aula):
     assert run_fetch()["warnings"] == []  # given up: no warning every night
 
 
+def test_thread_whose_file_never_downloads_is_given_up_with_a_warning(aula):
+    thread = {"id": 8, "subject": "Indbydelse", "lastMessageDate": iso(1)}
+    msg = message("a", sender={"fullName": "Lærer Hansen"}, attachments=[file_att(6, "invitation.pdf", url="https://files/broken")])
+    client = FakeAula([child(1, "Emma")], [], [thread], {"8": [msg]})
+    client.broken_urls = {"https://files/broken"}
+    aula["client"] = client
+
+    warnings = [run_fetch()["warnings"] for _ in range(aula_source.MAX_THREAD_ATTEMPTS)]
+
+    assert not any("giver op" in w for w in warnings[0])
+    [given_up] = [w for w in warnings[-1] if "giver op" in w]
+    assert "Tråd 8" in given_up and "Hansen" not in given_up
+    assert run_fetch()["warnings"] == []  # given up: not read again, no warning every night
+
+
 def test_forwarded_message_is_an_item_but_system_messages_are_not(aula):
     thread = {"id": 30, "subject": "Fwd: Skolefest", "lastMessageDate": iso(1)}
     system = [
