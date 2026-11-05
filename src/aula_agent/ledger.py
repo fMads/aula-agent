@@ -10,6 +10,9 @@ calendar, the user removed an event); the on-disk shape stays in here:
 - ``events``: ``"<event key>|<calendar id>"`` -> one synced entry: the event in one
   calendar, with the event's children that belong to it (``child_ids``). Entries from
   before joint calendars have ``child_id`` (one child) and are read as ``child_ids``.
+- ``history``: event key -> the event's history: every item that created, updated
+  or cancelled it (``lines``: ``item``, ``action``, ``at``), plus its last known
+  title, dates and children. It stays when the event is cancelled.
 - ``ignored``: event key -> event the user removed from some children's calendars
   (``child_ids``; missing = every child, as before removal was per child)
 - ``uploads`` / ``drive_folder_id``: attachments already in Drive
@@ -24,7 +27,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from . import store
 
@@ -71,6 +74,31 @@ class SyncedEntry:
     link: str | None = None
 
 
+Action = Literal["created", "updated", "cancelled"]
+
+
+@dataclass
+class HistoryLine:
+    """One item that changed an event: ``created``, ``updated`` or ``cancelled`` it."""
+
+    item: str | None
+    action: Action
+    at: str | None  # None: synced before there was a history
+
+
+@dataclass
+class EventHistory:
+    """An event with every item that created, updated or cancelled it, oldest first."""
+
+    key: str
+    title: str
+    start: str
+    end: str
+    cancelled: bool
+    child_ids: list[int]
+    lines: list[HistoryLine]
+
+
 @dataclass
 class UpcomingEvent:
     """An event that is not over yet, with every child whose calendar has it."""
@@ -90,13 +118,23 @@ class Ledger:
         st = data if data is not None else {}
         for name, default in (
             ("seen", {}), ("threads", {}), ("thread_retries", {}), ("pending", {}), ("events", {}), ("uploads", {}),
-            ("ignored", {}), ("runs", []), ("drive_folder_id", None), ("last_fetch", None),
+            ("ignored", {}), ("history", {}), ("runs", []), ("drive_folder_id", None), ("last_fetch", None),
         ):
             st.setdefault(name, default)
         for raw in st["events"].values():  # from before joint calendars: one child per entry
             if "child_ids" not in raw:
                 raw["child_ids"] = [int(raw.pop("child_id"))]
+        seeded = set()
+        for raw in st["events"].values():  # from before event history: created by its source
+            if raw["key"] not in st["history"]:
+                seeded.add(raw["key"])
+                st["history"][raw["key"]] = {
+                    "title": raw["title"], "start": raw["start"], "end": raw["end"], "child_ids": [], "cancelled": False,
+                    "lines": [{"item": raw.get("source"), "action": "created", "at": None}],
+                }
         self._st = st
+        for key in seeded:
+            st["history"][key]["child_ids"] = self._children(key)
 
     @classmethod
     def load(cls) -> Ledger:
@@ -218,6 +256,43 @@ class Ledger:
                     e.key, e.title, e.start, e.end, list(e.child_ids), e.source, e.source_item, e.link
                 )
         return sorted(by_key.values(), key=lambda u: u.start)
+
+    # ------------------------------------------------------------------ event history
+
+    def add_history(self, key: str, action: Action, item: str | None, *, title: str = "", start: str = "", end: str = "") -> None:
+        """An item created, updated or cancelled an event. A cancellation keeps the
+        title, dates and children the event had; otherwise the children are those
+        in its synced entries. The same item doing the same again adds no line."""
+        h = self._st["history"].setdefault(key, {"title": "", "start": "", "end": "", "child_ids": [], "lines": []})
+        h["cancelled"] = action == "cancelled"
+        if action != "cancelled":
+            h.update(title=title, start=start, end=end)
+        if children := self._children(key):
+            h["child_ids"] = children
+        last = h["lines"][-1] if h["lines"] else {}
+        if (last.get("item"), last.get("action")) != (item, action):  # not when the same document is applied again
+            h["lines"].append({"item": item, "action": action, "at": _now()})
+
+    def has_event(self, key: str) -> bool:
+        """Whether the event was created and not cancelled (it may be in no calendar now)."""
+        h = self._st["history"].get(key)
+        return bool(self.entries(key)) or (h is not None and not h.get("cancelled"))
+
+    def _children(self, key: str) -> list[int]:
+        return sorted({c for e in self.entries(key) for c in e.child_ids})
+
+    def _history(self, key: str, raw: dict[str, Any]) -> EventHistory:
+        return EventHistory(
+            key, raw["title"], raw["start"], raw["end"], raw.get("cancelled", False),
+            self._children(key) or list(raw["child_ids"]), [HistoryLine(**line) for line in raw["lines"]],
+        )
+
+    def events_by_item(self, item_key: str) -> list[EventHistory]:
+        """The events this item created, updated or cancelled, each with its whole history."""
+        return sorted(
+            (self._history(k, h) for k, h in self._st["history"].items() if any(l["item"] == item_key for l in h["lines"])),
+            key=lambda h: h.start,
+        )
 
     # ------------------------------------------------------------------ removed by the user
 
