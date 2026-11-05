@@ -9,8 +9,12 @@ Et af forælderens børn i Aula. Hvert event gælder et eller flere børn, og hv
 _Avoid_: Elev, profil
 
 **Item**:
-Et Aula-opslag eller én Aula-besked, som agenten skal læse, med tekst og vedhæftede filer. Har en item-key som `post:123` eller `message:<tråd>:<id>`. Et svar i samme tråd er et nyt item.
+Et Aula-opslag eller én Aula-besked med tekst og vedhæftede filer. Hvilke items agenten får, afgør intake. Har en item-key som `post:123` eller `message:<tråd>:<id>`. Et svar i samme tråd er et nyt item.
 _Avoid_: Post (betyder kun opslag), besked (betyder kun besked), tråd
+
+**Item version**:
+Et item, som det så ud på et bestemt tidspunkt. Når et item rettes i Aula, bliver det en ny version af samme item, ikke et nyt item.
+_Avoid_: Revision, kopi
 
 **Intake**:
 Reglerne for, hvilke items agenten får: nye eller ændrede siden sidst og ikke ældre end cutoff.
@@ -30,6 +34,20 @@ _Avoid_: Queue, feed
 
 **Pending item**:
 Et item, der ligger i inbox, men som agenten endnu ikke har markeret som behandlet.
+
+## Arkivet
+
+**Archive**:
+Alt det, aula-agent har gemt fra Aula, med alle item versions, også efter Aula har slettet det. Arkivet fyldes med alt, hvad hver hentning ser, uanset cutoff. Intake bestemmer stadig alene, hvad agenten får.
+_Avoid_: Historik, backup, database, Ledger (Ledger husker, hvad der er sket; arkivet gemmer indholdet)
+
+**Tagged photo**:
+Et billede i Aulas galleri, hvor et af børnene er tagget. Det er de eneste galleribilleder, arkivet gemmer. Billeder vedhæftet et item hører til item'et.
+_Avoid_: Galleri, medie, billede (uden præcisering)
+
+**Backfill**:
+En hentning af alt, hvad Aula stadig har, direkte til arkivet. Den kan køres igen uden at give dubletter og giver aldrig items til agenten.
+_Avoid_: Import, første kørsel
 
 ## Fra agenten
 

@@ -61,6 +61,9 @@ Forkortelser: **R** = read-only (kan bruges), **W** = skriver eller ændrer noge
   `publish_at`, `edited_at`, `expire_at`, `is_expired`, `is_important`, `important_from`/`important_to`,
   `shared_with_groups`, `attachments`, `comment_count`, `owner`. Rå felter derudover (live): `isBookmarked`,
   `relatedProfiles`, `pendingMedia`, `canCurrentUserReport`.
+- **Paginering er forkert i biblioteket (live 2026-11-05):** `index` er et element-offset (`index=1, limit=5` gav opslag
+  2–6), men biblioteket sender `index = page-1`, så side 2 overlapper side 1. Hele kontoen havde 9 opslag
+  (7/8–28/10 2026, `hasMorePosts=false`). `expireAt` lå fra 6/11 2026 til 4/11 2027.
 - **Grænser.** Siderne er 0-indekserede internt (`index = page-1`), og der er ingen `totalSize`. Live havde
   **alle** opslag en `expireAt`. Opslag kan altså udløbe og forsvinde fra Aula. [live] De ældste opslag
   der kunne nås, var få måneder gamle. Det kan skyldes udløb eller kontoens alder; det kan ikke afgøres.
@@ -211,12 +214,18 @@ De gamle metoder på `AulaApiClient` (`get_mu_tasks`, `get_ugeplan`, `get_meeboo
 | Metode | Aula-metode | Status live |
 |---|---|---|
 | `get_gallery_albums(ipids, limit=1000, index, sort_on, order_direction, filter_by)` R | `gallery.getAlbums` | Virker (~10 album, få måneder tilbage) |
-| `get_album_pictures(ipids, album_id, limit)` R | `gallery.getMedia` | **code 40** (forkerte parametre) |
-| `get_media_by_id(media_id)` R | `gallery.getMediaById` | Ikke prøvet |
+| `get_album_pictures(ipids, album_id, limit)` R | `gallery.getMedia` | Virker med et rigtigt album-id (se nedenfor) |
+| `get_media_by_id(media_id)` R | `gallery.getMediaById` | Virker: `file.url` (kan hentes), thumbnails, `tags` |
 | `get_media_by_profile(child_id, limit)` R | `gallery.getMediaByInstitutionProfileId` | **code 10** (ukendt metode) |
 
 - **Album-felter (live):** `id`, `title`, `description`, `creationDate`, `creator`, `sharedWithGroups`,
   `thumbnailsUrls`, `regardingInstitutionProfileId`.
+- **Rettet 2026-11-05 (live):** code 40 kom af, at `getAlbums` som første album returnerer et album med `id: null`.
+  Med et rigtigt album-id svarer `gallery.getMedia` med `data{album, results, totalSize, mediaCount, limit, startIndex}`.
+  Null-albummet er barnets eget album: `userSpecificAlbum=true` uden `albumId` gav de billeder, barnet er tagget i.
+  Hvert billede har `tags` (`id` = barnets institution profile id, plus `profileId`, `name`, `institutionCode`, ...).
+  `index` er et element-offset, ikke et sidenummer, og `totalSize` passede ikke med antallet (21 mod 29).
+  `filterBy="tagged"` på `getAlbums` filtrerer ikke. Et billede i fuld størrelse var ca. 0,5 MB.
 - `utils/download.py` har `download_gallery_images`, `download_post_images` og `download_message_images` med et
   manifest (`.aula-archive.json`), der genkender filer på stabile id'er, selvom URL'erne skifter. [lib]
   Galleri-delen afhænger af `get_album_pictures`, som fejlede live.
@@ -272,6 +281,9 @@ De gamle metoder på `AulaApiClient` (`get_mu_tasks`, `get_ugeplan`, `get_meeboo
 - **Felter:** `id`, `title`, `module` (`notificationArea`), `event_type` (`notificationEventType`),
   `created_at` (`triggered`), `expires_at`, `related_child_name`, `post_id`, `album_id`, `media_id`,
   `institution_profile_id`. Rå felter derudover: `relatedChildInstitutionProfileId`. [lib; live]
+- **Rettet 2026-11-05 (live):** Uden filtre kom kun `NewMedia`. Med `children_ids` og `institution_codes` kom også
+  `TaggedInMedia`, men de har **ingen** `mediaId`/`albumId`, kun `relatedChildInstitutionProfileId`. `NewMedia` har
+  begge. `offset` ignoreres (samme 50 hver gang).
 - **Live:** ~75 notifikationer, alle fra galleriet (`NewMedia`, `TaggedInMedia`). Notifikationerne ser ud til
   kun at være de ulæste/aktuelle, og Aula giver ikke en historik.
 - **Mulige event-typer** [re]: bl.a. `InvitedToEventResponseRequired`, `EventChangedResponseRequired`,
@@ -344,6 +356,7 @@ Fundet i appen, men ikke i biblioteket [re]: Personal Reference Data, Onboarding
 
 1. `get_secure_documents` og `get_common_files` kalder `secureDocument.*`, som Aula ikke kender (code 10).
 2. `get_media_by_profile` (`gallery.getMediaByInstitutionProfileId`) er ukendt for Aula (code 10).
-3. `get_album_pictures` (`gallery.getMedia`) afvises med code 40 (parametrene passer ikke).
+3. ~~`get_album_pictures` afvises med code 40~~: virker; fejlen var albummet med `id: null` (afsnit 7). Men
+   `get_posts` (og sandsynligvis galleriet) sender sidenummer som `index`, der er et element-offset (afsnit 1).
 4. `search` (`search.findGeneric`) giver HTTP 500.
 5. `get_events_for_institutions` og `get_daily_aggregated_events` giver 403 for en forælder.
