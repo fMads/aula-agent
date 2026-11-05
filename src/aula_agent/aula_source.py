@@ -22,7 +22,7 @@ from aula.models.attachment import Attachment
 from aula.models.message import Message
 from aula.utils.html import html_to_markdown
 
-from . import contract, credentials, store
+from . import archive, contract, credentials, store
 from .ledger import Ledger
 from .runs import Outcome, Problem
 
@@ -121,10 +121,48 @@ class Intake:
 
 # ----------------------------------------------------------------------------- sources
 
+SECURE_DOCUMENT_NOTE = "Sikkert dokument – kan kun ses i Aula"
+
+
+async def _archive_files(
+    client: AulaApiClient, arch: archive.Archive, item_key: str, attachments: list[Attachment], warnings: list[str]
+) -> list[archive.File]:
+    """Every file and image of an item, in the archive (downloaded unless it already is)."""
+
+    async def download(att: Attachment) -> bytes | None:
+        try:
+            return await client.download_file(att.file.url)
+        except Exception as exc:  # one bad file must not stop the run
+            warnings.append(f"Kunne ikke hente {att.name!r} fra {item_key}: {exc}")
+            return None
+
+    return await arch.save_files(item_key, attachments, download)
+
+
+def _inbox_attachments(files: list[archive.File]) -> list[dict[str, Any]]:
+    """What the agent is pointed at: not the images of a photo gallery."""
+    gallery = sum(1 for f in files if f.kind == "image") > MAX_MEDIA_PER_ITEM
+    out: list[dict[str, Any]] = []
+    for f in files:
+        entry: dict[str, Any] = {"name": f.name, "kind": f.kind}
+        if f.kind == "secure_document":
+            entry["note"] = SECURE_DOCUMENT_NOTE
+        elif f.kind == "link":
+            entry["url"] = f.detail
+        elif f.kind == "image" and gallery:
+            entry["note"] = "Ikke vedlagt (billedgalleri)"
+        elif f.path:
+            entry["path"] = f.path
+        else:
+            entry["note"] = DOWNLOAD_FAILED
+        out.append(entry)
+    return out
+
 
 async def _download_attachments(
     client: AulaApiClient, item_key: str, attachments: list[Attachment], warnings: list[str]
 ) -> list[dict[str, Any]]:
+    """Inbox attachments of a message (messages are not archived yet; posts use :func:`_archive_files`)."""
     out: list[dict[str, Any]] = []
     media_count = sum(1 for a in attachments if a.media is not None)
     folder = store.path("ATTACHMENTS_DIR") / _safe(item_key.replace(":", "_"))
@@ -132,7 +170,7 @@ async def _download_attachments(
         entry: dict[str, Any] = {"name": att.name}
         if att.document is not None:
             entry["kind"] = "secure_document"
-            entry["note"] = "Sikkert dokument – kan kun ses i Aula"
+            entry["note"] = SECURE_DOCUMENT_NOTE
         elif att.link is not None:
             entry["kind"] = "link"
             entry["url"] = att.link.url
@@ -184,7 +222,9 @@ def _update_children(cfg: dict[str, Any], profile) -> list[dict[str, Any]]:
     return children
 
 
-async def _take_posts(client, profile, intake: Intake, only_child: list[int], warnings: list[str]) -> None:
+async def _take_posts(
+    client, profile, arch: archive.Archive, intake: Intake, only_child: list[int], warnings: list[str]
+) -> None:
     # Aula only returns posts when asked with the guardian's own institution
     # profile(s) as well as the children's, so a post cannot be attributed to a
     # child from the request; with several children the agent decides from the
@@ -197,9 +237,11 @@ async def _take_posts(client, profile, intake: Intake, only_child: list[int], wa
         posts = await client.get_posts(profile_ids, page=offset + 1, limit=POSTS_PER_PAGE)
         for post in posts:
             key = f"post:{post.id}"
+            arch.save_post(post._raw or {}, child_ids=only_child)
+            files = await _archive_files(client, arch, key, post.attachments, warnings)
             published = _aware(post.publish_at or post.timestamp)
 
-            async def build(post=post, key=key, published=published) -> dict[str, Any]:
+            async def build(post=post, key=key, published=published, files=files) -> dict[str, Any]:
                 return {
                     "key": key,
                     "type": "post",
@@ -210,7 +252,7 @@ async def _take_posts(client, profile, intake: Intake, only_child: list[int], wa
                     "edited": _iso(post.edited_at),
                     "groups": [g.get("name") for g in post.shared_with_groups if isinstance(g, dict)],
                     "body": post.content_markdown[:MAX_BODY_CHARS],
-                    "attachments": await _download_attachments(client, key, post.attachments, warnings),
+                    "attachments": _inbox_attachments(files),
                 }
 
             version = _version(post.edited_at, post.content_html, len(post.attachments))
@@ -320,7 +362,8 @@ async def fetch(*, first_run_days: int = FIRST_RUN_DAYS) -> dict[str, Any]:
         profile = await client.get_profile()
         children = _update_children(cfg, profile)
         only_child = [children[0]["id"]] if len(children) == 1 else []
-        await _take_posts(client, profile, intake, only_child, warnings)
+        with archive.open() as arch:
+            await _take_posts(client, profile, arch, intake, only_child, warnings)
         await _take_messages(client, ledger, intake, since, children, only_child, warnings)
         aula_calendar = await _read_aula_calendar(client, profile, now, warnings)
 

@@ -1,4 +1,5 @@
 import asyncio
+import datetime as dt
 import time
 
 import jwt
@@ -6,7 +7,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
-from aula_agent import runs, store, web
+from aula_agent import archive, runs, store, web
 from aula_agent.ledger import Ledger, SyncedEntry
 from aula_agent.runs import Outcome
 
@@ -116,6 +117,22 @@ def test_home_shows_status_events_and_escapes_html(monkeypatch, tmp_path):
     assert "Gammel" not in r.text
     assert "2 nye/ændrede" in r.text
     assert "Ikke logget ind" in r.text  # no Aula session in the test environment
+
+
+def test_home_shows_how_much_the_archive_holds():
+    configure()
+    with make_client() as c:
+        assert "Arkiv" in c.get("/", headers=auth()).text and "intet gemt endnu" in c.get("/", headers=auth()).text
+    assert not store.ARCHIVE_FILE.exists()  # the web page only reads the archive
+
+    before = dt.datetime.now()
+    with archive.open() as a:
+        for pid in (1, 2):
+            a.save_post({"id": pid, "title": f"Opslag {pid}", "content": {"html": "<p>x</p>"}, "ownerProfile": {"id": 3, "profileId": 4}})
+    with make_client() as c:
+        r = c.get("/", headers=auth())
+    assert "2 opslag" in r.text
+    assert any(f"sidst gemt {t:%d.%m. kl. %H:%M}" in r.text for t in (before, dt.datetime.now()))
 
 
 def synced_on_two_calendars(google):

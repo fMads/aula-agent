@@ -8,7 +8,7 @@ from aula.models.calendar_event import CalendarEvent
 from aula.models.pagination import PaginationResult
 from aula.models.post import Post
 
-from aula_agent import aula_source, store
+from aula_agent import archive, aula_source, store
 from aula_agent.ledger import Ledger
 
 NOW = dt.datetime.now(aula_source.TZ)
@@ -186,14 +186,29 @@ def test_message_child_unknown_with_two_children_unless_hinted(aula):
     assert ledger.pending_item("message:2:b")["child_ids"] == [2]
 
 
-def test_photo_gallery_not_downloaded(aula):
-    images = [{"id": i, "media": {"mediaType": "image", "file": {"id": i, "name": f"{i}.jpg", "url": f"u{i}"}}} for i in range(5)]
-    client = FakeAula([child(1, "Emma")], [post(10, "Billeder fra turen", 1, attachments=images)], [], {})
+def image(i):
+    return {"id": i, "media": {"mediaType": "image", "file": {"id": i, "name": f"{i}.jpg", "url": f"https://files/u{i}"}}}
+
+
+def test_photo_gallery_is_archived_but_only_noted_in_the_inbox(aula):
+    secure = {"id": 90, "document": {"id": 9, "title": "Samtykke", "documentType": "Generic"}}
+    link = {"id": 91, "link": {"service": "OneDrive", "name": "Mappe", "url": "https://onedrive/x"}}
+    attachments = [*(image(i) for i in range(5)), secure, link]
+    client = FakeAula([child(1, "Emma")], [post(10, "Billeder fra turen", 1, attachments=attachments)], [], {})
     aula["client"] = client
     run_fetch()
-    assert client.downloads == []
+
+    assert sorted(client.downloads) == sorted(f"https://files/u{i}" for i in range(5))
+    files = {f.name: f for f in archived("post:10").files}
+    assert files["3.jpg"].kind == "image" and files["3.jpg"].path == "attachments/post_10/3-3.jpg"
+    assert (store.DATA_DIR / files["3.jpg"].path).read_bytes() == b"%PDF-1.4"
+    assert (files["Samtykke"].kind, files["Samtykke"].detail, files["Samtykke"].path) == ("secure_document", "Generic", None)
+    assert (files["Mappe"].kind, files["Mappe"].detail) == ("link", "https://onedrive/x")
+
     atts = Ledger.load().pending_item("post:10")["attachments"]
-    assert len(atts) == 5 and all("path" not in a for a in atts)
+    images = [a for a in atts if a["kind"] == "image"]
+    assert len(images) == 5 and all("path" not in a and "billedgalleri" in a["note"] for a in images)
+    assert {a["kind"] for a in atts} == {"image", "secure_document", "link"}
 
 
 def test_expired_session_never_starts_mitid(monkeypatch, tmp_path):
@@ -321,3 +336,72 @@ def test_forwarded_message_is_an_item_but_system_messages_are_not(aula):
     inbox = json.loads(store.INBOX_FILE.read_text())
     item = next(i for i in inbox["items"] if i["key"] == "message:30:f1")
     assert item["type"] == "message" and item["body"] == "f1" and item["attachments"] == []
+
+
+# ------------------------------------------------------------------ the archive
+
+
+def archived(key):
+    with archive.open() as a:
+        return a.item(key)
+
+
+def test_archive_gets_every_post_but_the_inbox_only_the_new_ones(aula):
+    posts = [post(1, "Nyt", 1, html="<p>Juleklip <b>fredag</b></p>"), post(2, "Gammelt", 90)]
+    aula["client"] = FakeAula([child(1, "Emma")], posts, [], {})
+
+    assert run_fetch()["new"] == ["post:1"]
+
+    with archive.open() as a:
+        assert sorted(i.key for i in a.items()) == ["post:1", "post:2"]
+    item = archived("post:1")
+    assert item.kind == "post" and len(item.versions) == 1
+    version = item.versions[0]
+    assert version.title == "Nyt" and version.body == "Juleklip **fredag**" and version.author == "Lærer Hansen"
+    assert version.groups == ["2.A"] and version.child_ids == [1]
+    assert version.raw["content"]["html"] == "<p>Juleklip <b>fredag</b></p>"  # Aula's own JSON
+
+
+def test_a_post_gets_a_new_version_only_when_its_content_changes(aula):
+    def raw_post(html, url, comments=0):
+        p = post(10, "Skolefest", 1, html=html, attachments=[file_att(5, "program.pdf", url=url)])
+        p._raw["commentCount"] = comments
+        return p
+
+    client = FakeAula([child(1, "Emma")], [raw_post("<p>Fredag kl. 17</p>", "https://files/a?sig=1")], [], {})
+    aula["client"] = client
+    run_fetch()
+
+    client.posts = [raw_post("<p>Fredag kl. 17</p>", "https://files/a?sig=2", comments=3)]  # new signed URL, a comment
+    run_fetch()
+    item = archived("post:10")
+    assert len(item.versions) == 1
+    assert item.versions[0].raw["attachments"][0]["file"]["url"] == "https://files/a?sig=1"  # raw JSON untouched
+
+    client.posts = [raw_post("<p>Rettet: torsdag kl. 17</p>", "https://files/a?sig=3")]
+    run_fetch()
+    item = archived("post:10")
+    assert [v.body for v in item.versions] == ["Fredag kl. 17", "Rettet: torsdag kl. 17"]
+
+    client.posts = [raw_post("<p>Rettet: torsdag kl. 17</p>", "https://files/a?sig=3")]
+    client.posts[0]._raw["attachments"].append(file_att(6, "kort.pdf"))
+    client.posts = [Post.from_dict(client.posts[0]._raw)]  # a file was added
+    run_fetch()
+    assert len(archived("post:10").versions) == 3
+
+
+def test_a_file_that_failed_is_downloaded_into_the_archive_on_the_next_fetch(aula):
+    old = post(20, "Gammelt opslag", 90, attachments=[file_att(7, "plan.pdf", url="https://files/broken")])
+    client = FakeAula([child(1, "Emma")], [old], [], {})
+    client.broken_urls = {"https://files/broken"}
+    aula["client"] = client
+
+    assert any("plan.pdf" in w for w in run_fetch()["warnings"])
+    [file] = archived("post:20").files
+    assert (file.name, file.path) == ("plan.pdf", None)  # registered, but not stored
+
+    client.broken_urls = set()
+    assert run_fetch()["new"] == []  # still old news for the agent
+    assert archived("post:20").files[0].path == "attachments/post_20/7-plan.pdf"
+    run_fetch()
+    assert client.downloads.count("https://files/broken") == 2  # not downloaded again once it is stored
