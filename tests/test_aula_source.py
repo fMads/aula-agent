@@ -405,3 +405,113 @@ def test_a_file_that_failed_is_downloaded_into_the_archive_on_the_next_fetch(aul
     assert archived("post:20").files[0].path == "attachments/post_20/7-plan.pdf"
     run_fetch()
     assert client.downloads.count("https://files/broken") == 2  # not downloaded again once it is stored
+
+
+def test_a_thread_is_archived_raw_with_its_messages_as_items(aula):
+    thread = {"id": 40, "subject": "Skolefest", "lastMessageDate": iso(1), "recipients": [{"fullName": "Forælder"}]}
+    msgs = [
+        message("m1", sender={"fullName": "Lærer Hansen"}, attachments=[file_att(5, "program.pdf")]),
+        {"id": "s1", "messageType": "RecipientsAdded", "sendDateTime": iso(1)},
+        message("m2", messageType="MessageEdited"),
+        message("f1", 100, messageType="Forward", attachments=None),  # older than the cutoff
+        {"id": "s2", "messageType": "AutoReply", "sendDateTime": iso(1)},
+    ]
+    aula["client"] = FakeAula([child(1, "Emma")], [], [thread], {"40": msgs})
+
+    run_fetch()
+
+    with archive.open() as a:
+        assert sorted(i.key for i in a.items()) == ["message:40:f1", "message:40:m1", "message:40:m2"]
+        raw = a.thread("40")
+    assert raw.raw["recipients"] == [{"fullName": "Forælder"}]  # the thread as Aula sent it
+    assert [m["id"] for m in raw.messages] == ["m1", "s1", "m2", "f1", "s2"]  # system messages too
+
+    item = archived("message:40:m1")
+    assert (item.kind, item.thread_id, item.sensitive) == ("message", "40", False)
+    [version] = item.versions
+    assert (version.title, version.author, version.body, version.child_ids) == ("Skolefest", "Lærer Hansen", "m1", [1])
+    assert version.raw["messageType"] == "Message"
+    assert [(f.name, f.path) for f in item.files] == [("program.pdf", "attachments/message_40_m1/5-program.pdf")]
+    assert archived("message:40:f1").files == []
+
+
+def test_items_from_a_sensitive_thread_are_marked_sensitive(aula):
+    threads = [
+        {"id": 50, "subject": "Fortroligt", "lastMessageDate": iso(1), "sensitive": True},
+        {"id": 51, "subject": "Tur", "lastMessageDate": iso(1), "sensitive": False},
+    ]
+    aula["client"] = FakeAula([child(1, "Emma")], [], threads, {"50": [message("a")], "51": [message("b")]})
+    run_fetch()
+    assert archived("message:50:a").sensitive is True
+    assert archived("message:51:b").sensitive is False
+
+
+def test_an_edited_message_gets_a_new_version_an_unchanged_one_does_not(aula):
+    def thread(days_ago):
+        return {"id": 60, "subject": "Juleklip", "lastMessageDate": iso(days_ago)}
+
+    def msg(html, url):
+        return message("a", text={"html": html}, attachments=[file_att(5, "seddel.pdf", url=url)])
+
+    client = FakeAula([child(1, "Emma")], [], [thread(2)], {"60": [msg("<p>Fredag</p>", "https://files/s?sig=1")]})
+    aula["client"] = client
+    run_fetch()
+
+    client.threads = [thread(1)]  # someone answered: the thread is read again
+    client.messages["60"] = [msg("<p>Fredag</p>", "https://files/s?sig=2"), message("b")]
+    run_fetch()
+    item = archived("message:60:a")
+    assert len(item.versions) == 1
+    assert item.versions[0].raw["attachments"][0]["file"]["url"] == "https://files/s?sig=1"  # raw JSON untouched
+
+    client.threads = [thread(0)]
+    client.messages["60"] = [msg("<p>Rettet: torsdag</p>", "https://files/s?sig=3"), message("b")]
+    client.messages["60"][0]["messageType"] = "MessageEdited"
+    run_fetch()
+    assert [v.body for v in archived("message:60:a").versions] == ["Fredag", "Rettet: torsdag"]
+    assert len(archived("message:60:b").versions) == 1
+    with archive.open() as a:
+        assert [m["id"] for m in a.thread("60").messages] == ["a", "b"]
+
+
+def test_a_file_that_failed_in_an_old_message_is_downloaded_into_the_archive_later(aula):
+    thread = {"id": 70, "subject": "Plan", "lastMessageDate": iso(1)}
+    old = message("a", 90, attachments=[file_att(8, "plan.pdf", url="https://files/broken")])  # older than the cutoff
+    client = FakeAula([child(1, "Emma")], [], [thread], {"70": [old, message("b")]})
+    client.broken_urls = {"https://files/broken"}
+    aula["client"] = client
+
+    assert any("plan.pdf" in w for w in run_fetch()["warnings"])
+    assert archived("message:70:a").files[0].path is None
+
+    client.broken_urls = set()  # the thread has not changed, but it is read again
+    assert run_fetch()["new"] == []  # old news for the agent
+    assert archived("message:70:a").files[0].path == "attachments/message_70_a/8-plan.pdf"
+    run_fetch()
+    assert client.downloads.count("https://files/broken") == 2 and Ledger.load().threads_to_retry() == {}
+
+
+def test_a_partial_read_of_a_thread_loses_nothing_in_the_archive(aula):
+    thread = {"id": 80, "subject": "Lejrskole", "lastMessageDate": iso(2), "sensitive": True}
+    system = {"id": "s1", "messageType": "RecipientsAdded", "sendDateTime": iso(2)}
+    client = FakeAula([child(1, "Emma")], [], [thread], {"80": [system, message("a", 2)]})
+    aula["client"] = client
+    run_fetch()
+
+    client.threads = [{**thread, "lastMessageDate": iso(1)}]
+    client.messages["80"] = [message("b")]  # only the newest page could be read
+    client.incomplete_threads = {"80"}
+    run_fetch()
+    with archive.open() as a:
+        assert [m["id"] for m in a.thread("80").messages] == ["s1", "a"]
+    assert archived("message:80:b").sensitive is True
+
+    client.threads = []  # read again only because the last read was incomplete
+    client.incomplete_threads = set()
+    client.messages["80"] = [system, message("a", 2), message("b")]
+    run_fetch()
+    with archive.open() as a:
+        stored = a.thread("80")
+    assert [m["id"] for m in stored.messages] == ["s1", "a", "b"]
+    assert stored.raw["subject"] == "Lejrskole" and stored.raw["sensitive"] is True
+    assert archived("message:80:b").sensitive is True

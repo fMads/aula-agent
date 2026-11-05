@@ -30,7 +30,7 @@ Hvis skolen sender en rettelse, f.eks. *"det er flyttet til torsdag"*, opdateres
 
 Python-delen forstår ikke selv tekst. Den henter og gemmer data og taler med Aula og Google. Det er agenten, der læser og vurderer indholdet.
 
-**Arkivet.** Aula sletter opslag og beskeder efter nogle måneder. Derfor gemmer `fetch` hvert opslag, den ser, i et arkiv (`data/archive.sqlite`) med alle filer og billeder, også opslag der er for gamle til agenten. Retter skolen et opslag, gemmes den nye version ved siden af den gamle. Arkivet rydder aldrig op. Det er en almindelig SQLite-fil, som du kan åbne med SQLite-værktøjer, DuckDB eller ClickHouse.
+**Arkivet.** Aula sletter opslag og beskeder efter nogle måneder. Derfor gemmer `fetch` hvert opslag og hver beskedtråd, den ser, i et arkiv (`data/archive.sqlite`) med alle filer og billeder, også det der er for gammelt til agenten. En tråd gemmes hel, som Aula sendte den, også systembeskeder (fx modtagere tilføjet); beskeder fra en følsom tråd er markeret som følsomme. Retter skolen et opslag eller en besked, gemmes den nye version ved siden af den gamle. Arkivet rydder aldrig op. Det er en almindelig SQLite-fil, som du kan åbne med SQLite-værktøjer, DuckDB eller ClickHouse.
 
 ## Hvad er påkrævet, og hvad er valgfrit?
 
@@ -160,7 +160,7 @@ Den kører `deploy/nightly.sh` hver aften kl. 21:00, og loggen ligger i `data/lo
 Web-siden viser:
 - om Aula- og Google-login virker
 - de seneste kørsler
-- hvor mange opslag arkivet har, og hvornår der sidst blev gemt noget
+- hvor mange opslag og beskeder arkivet har, og hvornår der sidst blev gemt noget
 - de kommende begivenheder med en knap til at fjerne forkerte (de bliver så ikke oprettet igen). Gælder en begivenhed flere børn, er der en knap pr. barn
 
 Fra web-siden kan du også logge ind i Aula med MitID (QR-koden vises i browseren) og forbinde Google.
@@ -207,7 +207,7 @@ Se opsætningen med `uv run aula-agent web-setup`. Hvis du kører `--email` igen
 | Kommando | Hvad den gør |
 |---|---|
 | `aula-agent status` | Viser logins, børn, kalendere og hvad der venter |
-| `aula-agent fetch` | Henter nye beskeder og opslag med filer til `data/inbox.json` og gemmer alle opslag i arkivet |
+| `aula-agent fetch` | Henter nye beskeder og opslag med filer til `data/inbox.json` og gemmer alle opslag og læste tråde i arkivet |
 | `aula-agent apply FIL [--dry-run]` | Opretter, opdaterer og sletter begivenheder ud fra en events-fil |
 | `aula-agent google-login` | Forbinder Google fra en terminal |
 | `aula-agent web-setup [...]` | Viser eller ændrer web-sidens opsætning |
