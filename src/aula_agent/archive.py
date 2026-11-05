@@ -30,6 +30,7 @@ import re
 import sqlite3
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -134,15 +135,32 @@ class Version:
     raw: dict[str, Any]
 
 
+class Kind(StrEnum):
+    """What an attachment is."""
+
+    FILE = "file"
+    IMAGE = "image"
+    LINK = "link"  # into a cloud drive
+    SECURE_DOCUMENT = "secure_document"  # can only be seen in Aula
+
+
 @dataclass
 class File:
     """A file, image, link or secure document attached to an item."""
 
     attachment_id: str
-    kind: str
+    kind: Kind
     name: str
     detail: str | None
     path: str | None  # relative to data/, None while it could not be downloaded
+
+    def __post_init__(self):
+        self.kind = Kind(self.kind)
+
+    @property
+    def downloadable(self) -> bool:
+        """A file or an image, which the archive stores; not a link or a secure document."""
+        return self.kind in (Kind.FILE, Kind.IMAGE)
 
 
 @dataclass
@@ -193,13 +211,13 @@ class Archive:
         """Save a post as Aula sent it. True when it gave a new item version."""
         post = Post.from_dict(raw)
         return self._save_item(
-            f"post:{post.id}",
+            post_key(post.id),
             "post",
             raw,
             title=post.title,
-            author=post.owner.full_name if post.owner else None,
+            author=post_author(post),
             date=_iso(post.publish_at or post.timestamp),
-            groups=[g.get("name") for g in post.shared_with_groups if isinstance(g, dict)],
+            groups=post_groups(post),
             child_ids=list(child_ids),
             body=post.content_markdown,
             attachments=post.attachments,
@@ -235,11 +253,7 @@ class Archive:
             )
         sensitive = bool(raw_thread.get("sensitive"))
         new: dict[str, bool] = {}
-        for raw in messages:
-            if raw.get("messageType") not in MESSAGE_ITEM_TYPES:
-                continue
-            msg = Message.from_dict(raw)
-            key = f"message:{thread_id}:{msg.id}"
+        for key, raw, msg in thread_items(thread_id, messages):
             new[key] = self._save_item(
                 key,
                 "message",
@@ -294,11 +308,11 @@ class Archive:
         out: list[File] = []
         for att in attachments:
             if att.document is not None:
-                file = File(attachment_id(att), "secure_document", att.name, att.document.document_type or None, None)
+                file = File(attachment_id(att), Kind.SECURE_DOCUMENT, att.name, att.document.document_type or None, None)
             elif att.link is not None:
-                file = File(attachment_id(att), "link", att.name, att.link.url, None)
+                file = File(attachment_id(att), Kind.LINK, att.name, att.link.url, None)
             elif att.file is not None:
-                file = File(attachment_id(att), "image" if att.media is not None else "file", att.name, None, None)
+                file = File(attachment_id(att), Kind.IMAGE if att.media is not None else Kind.FILE, att.name, None, None)
                 target = folder / stored_name(att)
                 if not target.exists() and att.file.url:
                     data = await download(att)
@@ -406,6 +420,28 @@ class Archive:
         return Status(
             posts=counts.get("post", 0), messages=counts.get("message", 0), last_saved=last, last_backup=last_backup
         )
+
+
+def post_key(post_id: Any) -> str:
+    """A post's item key."""
+    return f"post:{post_id}"
+
+
+def thread_items(thread_id: str, messages: list[dict[str, Any]]) -> Iterator[tuple[str, dict[str, Any], Message]]:
+    """The messages of a thread that are items (:data:`MESSAGE_ITEM_TYPES`), as (item key, raw, message)."""
+    for raw in messages:
+        if raw.get("messageType") in MESSAGE_ITEM_TYPES:
+            msg = Message.from_dict(raw)
+            yield f"message:{thread_id}:{msg.id}", raw, msg
+
+
+def post_author(post: Post) -> str | None:
+    return post.owner.full_name if post.owner else None
+
+
+def post_groups(post: Post) -> list[str]:
+    """The names of the groups (class, ...) a post is shared with."""
+    return [g.get("name") for g in post.shared_with_groups if isinstance(g, dict)]
 
 
 def _json(value: Any) -> str:
