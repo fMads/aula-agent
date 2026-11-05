@@ -671,6 +671,23 @@ def open(*, at: dt.datetime | None = None) -> Iterator[Archive]:  # noqa: A001 -
         db.close()
 
 
+@contextlib.contextmanager
+def read() -> Iterator[Archive | None]:
+    """The archive opened read-only, without creating, migrating or changing the file (for the web page).
+
+    None when there is no archive yet, or its schema is not this version's (the next ``fetch`` migrates it).
+    """
+    file = store.path("ARCHIVE_FILE")
+    if not file.exists():
+        yield None
+        return
+    db = sqlite3.connect(f"{file.as_uri()}?mode=ro", uri=True, timeout=30)
+    try:
+        yield Archive(db) if db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION else None
+    finally:
+        db.close()
+
+
 def status() -> Status:
     """How much the archive holds, read without creating or changing the file (for the web page)."""
     file = store.path("ARCHIVE_FILE")
