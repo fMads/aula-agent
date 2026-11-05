@@ -36,6 +36,8 @@ MAX_THREAD_ATTEMPTS = 3  # read an incomplete thread again this many nights, the
 CALENDAR_DAYS = 112  # how far ahead to read Aula's own calendar
 CALENDAR_CHUNK_DAYS = 28  # Aula answers 403 for ranges much longer than a month
 DOWNLOAD_FAILED = "Download fejlede"
+# Message types that are items; the rest (RecipientsAdded, SystemReply, AutoReply, ...) are system messages.
+MESSAGE_ITEM_TYPES = ("Message", "MessageEdited", "Forward")
 
 
 class LoginRequired(Problem):
@@ -235,7 +237,7 @@ async def _take_messages(
         hints = _child_hints(thread)
         hinted_ids = [c["id"] for c in children if c["name"] in hints]
         for raw in msgs.items:
-            if raw.get("messageType") not in ("Message", "MessageEdited"):
+            if raw.get("messageType") not in MESSAGE_ITEM_TYPES:
                 continue
             msg = Message.from_dict(raw)
             sent = _aware(msg.send_datetime)

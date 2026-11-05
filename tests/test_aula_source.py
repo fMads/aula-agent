@@ -304,3 +304,20 @@ def test_thread_that_never_reads_completely_is_given_up(aula):
     warnings = [run_fetch()["warnings"] for _ in range(aula_source.MAX_THREAD_ATTEMPTS)]
     assert "prøver igen" in warnings[0][0] and "giver op" in warnings[-1][0]
     assert run_fetch()["warnings"] == []  # given up: no warning every night
+
+
+def test_forwarded_message_is_an_item_but_system_messages_are_not(aula):
+    thread = {"id": 30, "subject": "Fwd: Skolefest", "lastMessageDate": iso(1)}
+    system = [
+        {"id": f"s{i}", "messageType": kind, "sendDateTime": iso(1)}
+        for i, kind in enumerate(["RecipientsAdded", "RecipientsRemoved", "SystemReply", "AutoReply", "MessageDeleted"])
+    ]
+    forward = message("f1", messageType="Forward", attachments=None)
+    aula["client"] = FakeAula([child(1, "Emma")], [], [thread], {"30": [*system, forward]})
+
+    summary = run_fetch()
+
+    assert summary["new"] == ["message:30:f1"] and summary["warnings"] == []
+    inbox = json.loads(store.INBOX_FILE.read_text())
+    item = next(i for i in inbox["items"] if i["key"] == "message:30:f1")
+    assert item["type"] == "message" and item["body"] == "f1" and item["attachments"] == []
