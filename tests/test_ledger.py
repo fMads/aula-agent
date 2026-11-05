@@ -118,3 +118,25 @@ def test_entries_from_before_joint_calendars_keep_their_one_child(data_dir):
     assert [u.child_ids for u in ledger.upcoming()] == [[1, 2]]
     ledger.save()
     assert Ledger.load().synced("k", "c2").child_ids == [2]
+
+
+def test_entries_from_before_event_history_were_created_by_their_source(data_dir):
+    store.write_json(data_dir / "state.json", {"events": {
+        "post:1#1|c1": {"key": "post:1#1", "child_ids": [1], "calendar_id": "c1", "event_id": "e1", "title": "Skovtur",
+                        "start": "2099-01-01", "end": "2099-01-01", "source": "post:1"},
+        "post:1#1|c2": {"key": "post:1#1", "child_id": 2, "calendar_id": "c2", "event_id": "e2", "title": "Skovtur",
+                        "start": "2099-01-01", "end": "2099-01-01", "source": "post:1"},
+    }})
+    (h,) = Ledger.load().events_by_item("post:1")
+    assert (h.key, h.title, h.start, h.cancelled, h.child_ids) == ("post:1#1", "Skovtur", "2099-01-01", False, [1, 2])
+    assert [(line.item, line.action, line.at) for line in h.lines] == [("post:1", "created", None)]
+
+
+def test_history_is_kept_in_state_json(data_dir):
+    ledger = Ledger()
+    ledger.record(entry("post:1#1", 1, "c1", "2026-12-01", source="post:1"))
+    ledger.add_history("post:1#1", "created", "post:1", title="Skovtur", start="2026-12-01", end="2026-12-01")
+    ledger.save()
+    (h,) = Ledger.load().events_by_item("post:1")
+    assert [(line.item, line.action) for line in h.lines] == [("post:1", "created")]
+    assert Ledger.load().events_by_item("post:2") == []
