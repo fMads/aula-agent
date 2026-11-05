@@ -31,7 +31,7 @@ FIRST_RUN_DAYS = 30
 MAX_MEDIA_PER_ITEM = 3  # more images than this is a photo gallery, not an invitation
 MAX_BODY_CHARS = 20_000
 POSTS_PER_PAGE = 30
-MAX_POST_PAGES = 5
+MAX_POST_PAGES = 100  # a safety net; Aula only keeps posts for some months
 MAX_THREAD_ATTEMPTS = 3  # read an incomplete thread again this many nights, then give up
 CALENDAR_DAYS = 112  # how far ahead to read Aula's own calendar
 CALENDAR_CHUNK_DAYS = 28  # Aula answers 403 for ranges much longer than a month
@@ -184,7 +184,7 @@ def _update_children(cfg: dict[str, Any], profile) -> list[dict[str, Any]]:
     return children
 
 
-async def _take_posts(client, profile, intake: Intake, cutoff: dt.datetime, only_child: list[int], warnings: list[str]) -> None:
+async def _take_posts(client, profile, intake: Intake, only_child: list[int], warnings: list[str]) -> None:
     # Aula only returns posts when asked with the guardian's own institution
     # profile(s) as well as the children's, so a post cannot be attributed to a
     # child from the request; with several children the agent decides from the
@@ -192,8 +192,9 @@ async def _take_posts(client, profile, intake: Intake, cutoff: dt.datetime, only
     profile_ids = list(dict.fromkeys([*profile.institution_profile_ids, *(c.id for c in profile.children)]))
     if not profile_ids:
         return
-    for page in range(1, MAX_POST_PAGES + 1):
-        posts = await client.get_posts(profile_ids, page=page, limit=POSTS_PER_PAGE)
+    for offset in range(0, MAX_POST_PAGES * POSTS_PER_PAGE, POSTS_PER_PAGE):
+        # Aula reads `index` as an element offset, but the library sends `page - 1`.
+        posts = await client.get_posts(profile_ids, page=offset + 1, limit=POSTS_PER_PAGE)
         for post in posts:
             key = f"post:{post.id}"
             published = _aware(post.publish_at or post.timestamp)
@@ -214,11 +215,9 @@ async def _take_posts(client, profile, intake: Intake, cutoff: dt.datetime, only
 
             version = _version(post.edited_at, post.content_html, len(post.attachments))
             await intake.offer(key, version, _aware(post.edited_at) or published, build)
-        dates = [_aware(p.publish_at or p.timestamp) for p in posts if p.publish_at or p.timestamp]
-        # Stop when a page has nothing new left (one old pinned post must not stop us).
-        if len(posts) < POSTS_PER_PAGE or (dates and all(d < cutoff for d in dates)):
+        if len(posts) < POSTS_PER_PAGE:
             return
-    warnings.append(f"Der var flere end {MAX_POST_PAGES * POSTS_PER_PAGE} nye opslag; de ældste er ikke læst.")
+    warnings.append(f"Der var flere end {MAX_POST_PAGES * POSTS_PER_PAGE} opslag; de ældste er ikke læst.")
 
 
 async def _take_messages(
@@ -321,7 +320,7 @@ async def fetch(*, first_run_days: int = FIRST_RUN_DAYS) -> dict[str, Any]:
         profile = await client.get_profile()
         children = _update_children(cfg, profile)
         only_child = [children[0]["id"]] if len(children) == 1 else []
-        await _take_posts(client, profile, intake, cutoff, only_child, warnings)
+        await _take_posts(client, profile, intake, only_child, warnings)
         await _take_messages(client, ledger, intake, since, children, only_child, warnings)
         aula_calendar = await _read_aula_calendar(client, profile, now, warnings)
 
