@@ -305,7 +305,7 @@ def sync(
             echo(f"[prøvekørsel] {names[a.kind]}: {a.label(cfg)}")
         echo(f"[prøvekørsel] Markeres som behandlet: {len(doc.processed)}")
         return {"created": [], "updated": [], "deleted": [], "processed": [], "skipped": []}
-    google = _resolve(google)
+    google = resolve(google)
     return execute(actions, doc, google, ledger, cfg)
 
 
@@ -320,7 +320,7 @@ def remove_event(key: str, child_id: int | None = None, *, google: Google | Call
     entries = [e for e in ledger.entries(key) if child_id is None or e.child_id == int(child_id)]
     if not entries:
         raise KeyError(key)
-    google = _resolve(google)
+    google = resolve(google)
     for e in entries:
         google.delete_event(e.calendar_id, e.event_id)
         ledger.forget(e.key, e.calendar_id)
@@ -329,7 +329,8 @@ def remove_event(key: str, child_id: int | None = None, *, google: Google | Call
     return len(entries)
 
 
-def _resolve(google: Google | Callable[[], Google] | None) -> Google:
+def resolve(google: Google | Callable[[], Google] | None) -> Google:
+    """The Google adapter to use: the one given (or made by the given callable), else a connection."""
     if google is None:
         return Google.connect()
     return google() if callable(google) and not isinstance(google, Google) else google

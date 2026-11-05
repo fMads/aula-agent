@@ -40,6 +40,7 @@ from aula.models.post import Post
 from . import store
 
 SCHEMA_VERSION = 3
+_BACKUPS_SINCE = 3  # the schema version that added the backup tables
 
 # Message types that are items; the rest (RecipientsAdded, SystemReply, AutoReply,
 # MessageDeleted, ...) are system messages and are only kept in the raw thread.
@@ -358,9 +359,12 @@ class Archive:
         finally:
             copy.close()
 
-    def record_backup(self, at: str, files: int) -> None:
+    def record_backup(self, files: int) -> str:
+        """Note that a backup was taken (as of the archive's time); returns when."""
+        at = self._saved_at()
         self._db.execute("INSERT INTO backups (at, files) VALUES (?, ?)", (at, files))
         self._db.commit()
+        return at
 
     # -- read side (web, backup, tests)
 
@@ -397,7 +401,7 @@ class Archive:
         counts = dict(self._db.execute("SELECT kind, count(*) FROM items GROUP BY kind").fetchall())
         last = self._db.execute("SELECT max(saved_at) FROM versions").fetchone()[0]
         last_backup = None
-        if self._db.execute("PRAGMA user_version").fetchone()[0] >= 3:  # read-only: may not be migrated yet
+        if self._db.execute("PRAGMA user_version").fetchone()[0] >= _BACKUPS_SINCE:  # read-only: may not be migrated yet
             last_backup = self._db.execute("SELECT max(at) FROM backups").fetchone()[0]
         return Status(
             posts=counts.get("post", 0), messages=counts.get("message", 0), last_saved=last, last_backup=last_backup
@@ -445,7 +449,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         db.executescript(_SCHEMA_1)
     if current < 2:
         db.executescript(_SCHEMA_2)
-    if current < 3:
+    if current < _BACKUPS_SINCE:
         db.executescript(_SCHEMA_3)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -454,7 +458,8 @@ def _migrate(db: sqlite3.Connection) -> None:
 def open(*, at: dt.datetime | None = None) -> Iterator[Archive]:  # noqa: A001 - archive.open() reads well at the call site
     """Open the archive (creating it the first time); changes are committed on a clean exit.
 
-    What is saved is saved as of ``at`` (default: now); a rescue copy is saved as of when it was taken.
+    What is saved (an item version, a backup) is saved as of ``at`` (default: now);
+    a rescue copy is saved as of when it was taken.
     """
     file = store.path("ARCHIVE_FILE")
     file.parent.mkdir(parents=True, exist_ok=True)

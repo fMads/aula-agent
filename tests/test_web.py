@@ -324,13 +324,13 @@ def test_archive_card_shows_the_last_backup_and_warns_when_it_is_missing_or_old(
     assert "ingen backup endnu" in card and 'class="bad"' in card
 
     taken = dt.datetime.now() - dt.timedelta(hours=49)
-    backup.take(google, now=taken)
+    backup.take(google, at=taken)
     with make_client() as c:
         card = archive_card(c)
     assert f"backup {taken:%d.%m. kl. %H:%M}" in card and "over 2 døgn gammel" in card and 'class="bad"' in card
 
     taken = dt.datetime.now() - dt.timedelta(hours=47)
-    backup.take(google, now=taken)
+    backup.take(google, at=taken)
     with make_client() as c:
         card = archive_card(c)
     assert f"backup {taken:%d.%m. kl. %H:%M}" in card and "over 2 døgn" not in card and 'class="bad"' not in card
