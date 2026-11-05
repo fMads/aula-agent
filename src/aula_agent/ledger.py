@@ -278,6 +278,10 @@ class Ledger:
         h = self._st["history"].get(key)
         return bool(self.entries(key)) or (h is not None and not h.get("cancelled"))
 
+    def in_history(self, key: str) -> bool:
+        """Whether an item ever created, updated or cancelled the event (it may be in no calendar now)."""
+        return key in self._st["history"]
+
     def _children(self, key: str) -> list[int]:
         return sorted({c for e in self.entries(key) for c in e.child_ids})
 

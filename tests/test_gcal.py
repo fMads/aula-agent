@@ -432,3 +432,34 @@ def test_old_entry_cancelled_after_upgrade_keeps_its_children(google, data_dir):
     gcal.sync({"events": [{"key": "k1", "cancelled": True}]}, google=google)
     (h,) = Ledger.load().events_by_item("post:1")
     assert (h.cancelled, h.child_ids, h.title) == (True, [1, 2], "Skovtur")
+
+
+def test_correction_of_an_event_the_user_removed_for_every_child_is_in_its_history(google):
+    setup_children((1, "Emma"), (2, "Oscar"))
+    gcal.sync({"events": [ev(source="post:1", child_ids=[1, 2])]}, google=google)
+    gcal.remove_event("k1", google=google)
+    result = gcal.sync({"events": [ev(source="message:7:a", child_ids=[1, 2], start="2099-11-13")]}, google=google)
+
+    assert result["created"] == result["updated"] == [] and len(result["skipped"]) == 2
+    assert history("message:7:a") == [("k1", [("post:1", "created"), ("message:7:a", "updated")])]
+    (h,) = Ledger.load().events_by_item("message:7:a")
+    assert h.start == "2099-11-13"
+
+
+def test_cancellation_of_an_event_the_user_removed_for_every_child_is_in_its_history(google):
+    setup_children((1, "Emma"), (2, "Oscar"))
+    gcal.sync({"events": [ev(source="post:1", child_ids=[1, 2])]}, google=google)
+    gcal.remove_event("k1", google=google)
+    gcal.sync({"events": [{"key": "k1", "cancelled": True, "source": "message:7:a"}]}, google=google)
+
+    (h,) = Ledger.load().events_by_item("message:7:a")
+    assert [(line.item, line.action) for line in h.lines] == [("post:1", "created"), ("message:7:a", "cancelled")]
+    assert (h.cancelled, h.title, h.child_ids) == (True, "Skovtur", [1, 2])
+
+
+def test_dry_run_of_a_correction_of_a_removed_event_adds_no_history(google):
+    setup_children((1, "Emma"))
+    gcal.sync({"events": [ev(source="post:1")]}, google=google)
+    gcal.remove_event("k1", google=google)
+    gcal.sync({"events": [ev(source="message:7:a", start="2099-11-13")]}, dry_run=True, google=google, echo=lambda _: None)
+    assert history("message:7:a") == []
