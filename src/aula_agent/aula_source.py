@@ -143,7 +143,12 @@ def _from_aula(client: AulaApiClient) -> Download:
 async def _archive_files(
     download: Download, arch: archive.Archive, item_key: str, attachments: list[Attachment], warnings: list[str]
 ) -> list[archive.File]:
-    """Every file and image of an item, in the archive (downloaded unless it already is)."""
+    """Every file and image of an item, in the archive (downloaded unless it already is).
+
+    Returns the item's attachments for the agent: a file Aula sent without a URL
+    (and that is not stored already) is only noted in the archive, and is not
+    something to download again either.
+    """
 
     async def guarded(att: Attachment) -> bytes | None:
         try:
@@ -152,7 +157,9 @@ async def _archive_files(
             warnings.append(f"Kunne ikke hente {att.name!r} fra {item_key}: {exc}")
             return None
 
-    return await arch.save_files(item_key, attachments, guarded)
+    files = await arch.save_files(item_key, attachments, guarded)
+    no_url = {archive.attachment_id(a) for a in attachments if a.file is not None and not a.file.url}
+    return [f for f in files if f.path or f.attachment_id not in no_url]
 
 
 def _inbox_attachments(files: list[archive.File]) -> list[dict[str, Any]]:
@@ -166,7 +173,7 @@ def _inbox_attachments(files: list[archive.File]) -> list[dict[str, Any]]:
         elif f.kind == "link":
             entry["url"] = f.detail
         elif f.kind == "image" and gallery:
-            entry["note"] = "Ikke vedlagt (billedgalleri)"
+            entry["note"] = "Ikke hentet (billedgalleri)"
         elif f.path:
             entry["path"] = f.path
         else:

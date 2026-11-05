@@ -293,11 +293,11 @@ class Archive:
         out: list[File] = []
         for att in attachments:
             if att.document is not None:
-                file = File(_attachment_id(att), "secure_document", att.name, att.document.document_type or None, None)
+                file = File(attachment_id(att), "secure_document", att.name, att.document.document_type or None, None)
             elif att.link is not None:
-                file = File(_attachment_id(att), "link", att.name, att.link.url, None)
+                file = File(attachment_id(att), "link", att.name, att.link.url, None)
             elif att.file is not None:
-                file = File(_attachment_id(att), "image" if att.media is not None else "file", att.name, None, None)
+                file = File(attachment_id(att), "image" if att.media is not None else "file", att.name, None, None)
                 target = folder / stored_name(att)
                 if not target.exists() and att.file.url:
                     data = await download(att)
@@ -417,17 +417,18 @@ def _without_signatures(text: str) -> str:
 
 
 def _version_hash(title: str | None, body: str, attachments: list[Attachment]) -> str:
-    ids = sorted(_attachment_id(a) for a in attachments)
+    ids = sorted(attachment_id(a) for a in attachments)
     content = [_without_signatures(title or ""), _without_signatures(body), ids]
     return hashlib.sha256(json.dumps(content, ensure_ascii=False).encode()).hexdigest()[:16]
 
 
 def stored_name(att: Attachment) -> str:
     """The name a file or image is stored under, in its item's folder (a rescue copy uses the same)."""
-    return f"{_attachment_id(att)}-{_safe(att.name)}"
+    return f"{attachment_id(att)}-{_safe(att.name)}"
 
 
-def _attachment_id(att: Attachment) -> str:
+def attachment_id(att: Attachment) -> str:
+    """The id the archive knows an attachment by (Aula's, not its URL)."""
     for candidate in (att.id, att.file and att.file.id, att.document and att.document.id):
         if candidate is not None:
             return str(candidate)

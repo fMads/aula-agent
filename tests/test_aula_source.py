@@ -219,8 +219,23 @@ def test_photo_gallery_is_archived_but_only_noted_in_the_inbox(aula):
 
     atts = Ledger.load().pending_item("post:10")["attachments"]
     images = [a for a in atts if a["kind"] == "image"]
-    assert len(images) == 5 and all("path" not in a and "billedgalleri" in a["note"] for a in images)
+    assert len(images) == 5 and all("path" not in a and a["note"] == "Ikke hentet (billedgalleri)" for a in images)
     assert {a["kind"] for a in atts} == {"image", "secure_document", "link"}
+
+
+def test_a_file_without_url_is_left_out_of_the_inbox_and_only_noted_in_the_archive(aula):
+    atts = [file_att(5, "plan.pdf"), file_att(6, "skjult.pdf", url=None)]
+    thread = {"id": 7, "subject": "Plan", "lastMessageDate": iso(1)}
+    client = FakeAula([child(1, "Emma")], [post(10, "Plan", 1, attachments=atts)], [thread], {"7": [message("a", attachments=atts)]})
+    aula["client"] = client
+
+    summary = run_fetch()
+
+    assert sorted(summary["new"]) == ["message:7:a", "post:10"] and summary["warnings"] == []
+    for key in ("post:10", "message:7:a"):
+        assert [a["name"] for a in Ledger.load().pending_item(key)["attachments"]] == ["plan.pdf"]
+        assert [(f.name, f.path is None) for f in archived(key).files] == [("plan.pdf", False), ("skjult.pdf", True)]
+    assert Ledger.load().threads_to_retry() == {}  # nothing to download again
 
 
 def test_expired_session_never_starts_mitid(monkeypatch, tmp_path):
