@@ -338,3 +338,97 @@ def test_state_from_the_old_workaround_keeps_its_one_child_without_duplicates(go
     assert result["updated"] == ["2099-11-12 Skovtur → Emma, Oscar"] and not result["created"] and not result["deleted"]
     assert list(google.events) == [(joint, "e-old")]
     assert [e.child_ids for e in Ledger.load().entries("k1")] == [[1, 2]]
+
+
+# ----------------------------------------------------------------------------- event history
+
+
+def history(item_key):
+    return [(h.key, [(line.item, line.action) for line in h.lines]) for h in Ledger.load().events_by_item(item_key)]
+
+
+def test_event_created_by_one_item_and_corrected_by_another_has_both_in_its_history(google):
+    setup_children((1, "Emma"), (2, "Oscar"))
+    add_pending("post:1", type="post", title="Skovtur")
+    gcal.sync({"processed": ["post:1"], "classifications": [{"item": "post:1", "category": "svar"}], "events": [ev("post:1#1", source="post:1", child_ids=[1, 2])]}, google=google)
+    add_pending("message:7:a", type="message", subject="Ny dato")
+    gcal.sync(
+        {"processed": ["message:7:a"], "classifications": [{"item": "message:7:a", "category": "svar"}],
+         "events": [ev("post:1#1", source="message:7:a", child_ids=[1, 2], start="2099-11-13")]},
+        google=google,
+    )
+
+    lines = [("post:1", "created"), ("message:7:a", "updated")]
+    assert history("post:1") == history("message:7:a") == [("post:1#1", lines)]
+    (h,) = Ledger.load().events_by_item("post:1")
+    assert (h.title, h.start, h.cancelled, h.child_ids) == ("Skovtur", "2099-11-13", False, [1, 2])
+    assert all(line.at for line in h.lines)
+
+
+def test_cancelled_event_stays_in_its_history_but_not_among_upcoming_events(google, data_dir):
+    from aula_agent import contract
+
+    setup_children((1, "Emma"), (2, "Oscar"))
+    gcal.sync({"events": [ev("post:1#1", source="post:1", child_ids=[1, 2])]}, google=google)
+    gcal.sync({"events": [{"key": "post:1#1", "cancelled": True, "source": "message:7:a"}]}, google=google)
+
+    assert google.events == {}
+    (h,) = Ledger.load().events_by_item("message:7:a")
+    assert (h.key, h.title, h.start, h.cancelled, h.child_ids) == ("post:1#1", "Skovtur", "2099-11-12", True, [1, 2])
+    assert [(line.item, line.action) for line in h.lines] == [("post:1", "created"), ("message:7:a", "cancelled")]
+    ledger = Ledger.load()
+    assert ledger.upcoming() == [] and ledger.synced_count() == 0
+    contract.write_inbox(ledger, store.load_config(), [], [])
+    assert store.read_json(data_dir / "inbox.json", {})["existing_events"] == []
+
+
+def test_cancelling_an_unknown_event_adds_no_history(google):
+    setup_children((1, "Emma"))
+    gcal.sync({"events": [{"key": "k1", "cancelled": True, "source": "post:1"}]}, google=google)
+    assert history("post:1") == []
+
+
+def test_dry_run_adds_no_history(google):
+    setup_children((1, "Emma"))
+    gcal.sync({"events": [ev(source="post:1")]}, dry_run=True, google=google, echo=lambda _: None)
+    assert history("post:1") == []
+
+
+def test_applying_the_same_correction_again_adds_no_line(google):
+    setup_children((1, "Emma"))
+    gcal.sync({"events": [ev(source="post:1")]}, google=google)
+    correction = {"events": [ev(source="message:7:a", start="2099-11-13")]}
+    gcal.sync(correction, google=google)
+    gcal.sync(correction, google=google)
+    assert history("post:1") == [("k1", [("post:1", "created"), ("message:7:a", "updated")])]
+
+
+def test_old_entry_corrected_after_upgrade_keeps_its_source_as_creator(google, data_dir):
+    setup_children((1, "Emma"))
+    gcal.sync({"events": [ev(source="post:1")]}, google=google)
+    state = store.read_json(data_dir / "state.json", {})
+    del state["history"]  # as written before event history
+    store.write_json(data_dir / "state.json", state)
+    gcal.sync({"events": [ev(source="message:7:a", start="2099-11-13")]}, google=google)
+    (h,) = Ledger.load().events_by_item("message:7:a")
+    assert [(line.item, line.action, bool(line.at)) for line in h.lines] == [("post:1", "created", False), ("message:7:a", "updated", True)]
+
+
+def test_correction_after_the_user_removed_the_event_is_an_update(google):
+    setup_children((1, "Emma"), (2, "Oscar"))
+    gcal.sync({"events": [ev(source="post:1")]}, google=google)
+    gcal.remove_event("k1", 1, google=google)
+    gcal.sync({"events": [ev(source="message:7:a", child_ids=[1, 2])]}, google=google)
+    assert history("message:7:a") == [("k1", [("post:1", "created"), ("message:7:a", "updated")])]
+    assert Ledger.load().events_by_item("post:1")[0].child_ids == [2]
+
+
+def test_old_entry_cancelled_after_upgrade_keeps_its_children(google, data_dir):
+    setup_children((1, "Emma"), (2, "Oscar"))
+    gcal.sync({"events": [ev(source="post:1", child_ids=[1, 2])]}, google=google)
+    state = store.read_json(data_dir / "state.json", {})
+    del state["history"]  # as written before event history
+    store.write_json(data_dir / "state.json", state)
+    gcal.sync({"events": [{"key": "k1", "cancelled": True}]}, google=google)
+    (h,) = Ledger.load().events_by_item("post:1")
+    assert (h.cancelled, h.child_ids, h.title) == (True, [1, 2], "Skovtur")
