@@ -32,6 +32,8 @@ Python-delen forstår ikke selv tekst. Den henter og gemmer data og taler med Au
 
 **Arkivet.** Aula sletter opslag og beskeder efter nogle måneder. Derfor gemmer `fetch` hvert opslag og hver beskedtråd, den ser, i et arkiv (`data/archive.sqlite`) med alle filer og billeder, også det der er for gammelt til agenten. En tråd gemmes hel, som Aula sendte den, også systembeskeder (fx modtagere tilføjet); beskeder fra en følsom tråd er markeret som følsomme. Retter skolen et opslag eller en besked, gemmes den nye version ved siden af den gamle. Arkivet rydder aldrig op. Det er en almindelig SQLite-fil, som du kan åbne med SQLite-værktøjer, DuckDB eller ClickHouse.
 
+**Backup.** Til sidst i hver `fetch` kopieres arkivet og dets filer til Drive-mappen **"Aula-arkiv"**, som aula-agent selv opretter. Den er privat: del den ikke (modsat mappen "Aula" med kalenderens vedhæftninger). Arkiv-filen erstattes hver gang, og hver fil lægges kun op én gang. Fejler backuppen, eller mangler Google-login, giver `fetch` en advarsel, men natkørslen fortsætter. Mappens navn kan ændres med `archive_folder_name` i `data/config.json`, før den første backup tages. `uv run aula-agent backup` tager en backup med det samme.
+
 ## Hvad er påkrævet, og hvad er valgfrit?
 
 | | | Hvorfor |
@@ -71,7 +73,7 @@ Scan QR-koden med MitID-appen. QR-koden består af to halvdele, der skifter, så
 
 ### 3. Forbind Google
 
-aula-agent opretter sine egne kalendere og sin egen Drive-mappe og kan **kun** se og ændre dem. Resten af din kalender og dit Drive kan den ikke se. Det tager cirka 10 minutter at sætte op første gang.
+aula-agent opretter sine egne kalendere og Drive-mapper ("Aula" og "Aula-arkiv") og kan **kun** se og ændre dem. Resten af din kalender og dit Drive kan den ikke se. Det tager cirka 10 minutter at sætte op første gang.
 
 1. Opret et projekt på https://console.cloud.google.com/projectcreate, f.eks. med navnet `aula-agent`.
 2. Slå begge API'er til ved at klikke **Enable** på disse to sider:
@@ -160,7 +162,7 @@ Den kører `deploy/nightly.sh` hver aften kl. 21:00, og loggen ligger i `data/lo
 Web-siden viser:
 - om Aula- og Google-login virker
 - de seneste kørsler
-- hvor mange opslag og beskeder arkivet har, og hvornår der sidst blev gemt noget
+- hvor mange opslag og beskeder arkivet har, hvornår der sidst blev gemt noget, og hvornår der sidst blev taget backup (med en advarsel, hvis det er mere end 2 døgn siden eller aldrig er sket)
 - de kommende begivenheder med en knap til at fjerne forkerte (de bliver så ikke oprettet igen). Gælder en begivenhed flere børn, er der en knap pr. barn
 
 Fra web-siden kan du også logge ind i Aula med MitID (QR-koden vises i browseren) og forbinde Google.
@@ -199,7 +201,7 @@ Se opsætningen med `uv run aula-agent web-setup`. Hvis du kører `--email` igen
 - **Forkert begivenhed:** Fjern den på web-siden. Hvis du sletter den direkte i Google Calendar, kan den dukke op igen, næste gang skolen skriver om det samme.
 - **Del med den anden forælder:**
   - I Google Calendar: Indstillinger → *Skole – …* → Delt med → tilføj vedkommende med *Se alle begivenhedsdetaljer*. Gør det ikke med redigeringsret, for rettelser fra skolen overskriver ændringer.
-  - Vedhæftede filer ligger i Drive-mappen **"Aula"**. Den skal også deles, hvis den anden forælder skal kunne åbne filerne.
+  - Vedhæftede filer ligger i Drive-mappen **"Aula"**. Den skal også deles, hvis den anden forælder skal kunne åbne filerne. Del **ikke** mappen "Aula-arkiv" (backuppen af arkivet).
 - **Flere børn:** Hvert barn får sin egen kalender. Et nyt barn bliver fundet automatisk ved næste `fetch`. Aula fortæller ikke, hvilket barn et opslag gælder, så agenten afgør det ud fra klasse og grupper og ud fra indholdet. Når det er uklart, lægger den begivenheden hos alle relevante børn.
 
 ## Kommandoer
@@ -207,7 +209,8 @@ Se opsætningen med `uv run aula-agent web-setup`. Hvis du kører `--email` igen
 | Kommando | Hvad den gør |
 |---|---|
 | `aula-agent status` | Viser logins, børn, kalendere og hvad der venter |
-| `aula-agent fetch` | Henter nye beskeder og opslag med filer til `data/inbox.json` og gemmer alle opslag og læste tråde i arkivet |
+| `aula-agent fetch` | Henter nye beskeder og opslag med filer til `data/inbox.json`, gemmer alle opslag og læste tråde i arkivet og tager backup |
+| `aula-agent backup` | Kopierer arkivet og nye filer til den private Drive-mappe "Aula-arkiv" nu |
 | `aula-agent apply FIL [--dry-run]` | Opretter, opdaterer og sletter begivenheder ud fra en events-fil |
 | `aula-agent google-login` | Forbinder Google fra en terminal |
 | `aula-agent web-setup [...]` | Viser eller ændrer web-sidens opsætning |
