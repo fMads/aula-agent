@@ -1,7 +1,10 @@
-"""Put events into Google Calendar: one calendar per child, attachments via Drive.
+"""Put events into Google Calendar, attachments via Drive.
+
+Every child belongs to one calendar, and children may share one (a joint
+calendar). An event gets one entry per calendar, for the event's children in it.
 
 ``sync`` first makes a plan (create / update / delete / skip per event and
-child) from the events document and the ledger, then carries it out through a
+calendar) from the events document and the ledger, then carries it out through a
 :class:`Google` adapter. Tests use an in-memory adapter with the same methods.
 """
 
@@ -10,7 +13,7 @@ from __future__ import annotations
 import datetime as dt
 import mimetypes
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -152,9 +155,11 @@ def build_event_body(ev: Event, source_item: dict[str, Any] | None = None, attac
 
 @dataclass(frozen=True)
 class Action:
+    """One step for one event in one calendar, for the children it concerns there."""
+
     kind: Literal["create", "update", "delete", "skip"]
     event: Event
-    child_id: str | None = None
+    child_ids: tuple[str, ...] = ()
     calendar_id: str | None = None  # None: the child's calendar does not exist yet
     event_id: str | None = None  # known from the ledger
     reason: str = ""
@@ -162,44 +167,74 @@ class Action:
     def label(self, cfg: dict[str, Any]) -> str:
         what = "aflyst" if self.event.cancelled else self.event.start_text
         text = f"{what} {self.event.title or self.event.key}"
-        if self.child_id:
-            text += f" → {(cfg['children'].get(self.child_id) or {}).get('name') or self.child_id}"
+        if self.child_ids:
+            text += " → " + ", ".join((cfg["children"].get(c) or {}).get("name") or c for c in self.child_ids)
         return f"{text} ({self.reason})" if self.reason else text
+
+
+def _by_calendar(child_ids: list[str], cfg: dict[str, Any]) -> dict[str, list[str]]:
+    """Children grouped by their calendar; a child without one yet gets its own group (``"new:<id>"``)."""
+    groups: dict[str, list[str]] = {}
+    for cid in child_ids:
+        groups.setdefault(cfg["children"][cid].get("calendar_id") or f"new:{cid}", []).append(cid)
+    return groups
+
+
+def _calendar(group: str) -> str | None:
+    return None if group.startswith("new:") else group
+
+
+def _ids(entry: SyncedEntry) -> tuple[str, ...]:
+    return tuple(map(str, entry.child_ids))
+
+
+def _cancel(ev: Event, synced: dict[str, SyncedEntry], ledger: Ledger, cfg: dict[str, Any]) -> list[Action]:
+    """Delete the event from every calendar that has it, also the listed children's
+    calendars when local state was lost (the entry is then found by its key)."""
+    actions = [Action("delete", ev, _ids(e), e.calendar_id, e.event_id) for e in synced.values()]
+    covered = {c for e in synced.values() for c in _ids(e)}
+    rest = [c for c in dict.fromkeys(map(str, ev.child_ids)) if c not in covered]
+    for group, cids in _by_calendar(rest, cfg).items():
+        calendar_id = _calendar(group)
+        if calendar_id in synced:
+            continue
+        wanted = tuple(c for c in cids if not ledger.is_removed(ev.key, c))
+        if calendar_id and wanted:
+            actions.append(Action("delete", ev, wanted, calendar_id))
+        else:
+            actions += [Action("skip", ev, (c,), reason="ikke i kalenderen") for c in cids]
+    return actions
 
 
 def plan(doc: EventsDoc, ledger: Ledger, cfg: dict[str, Any]) -> list[Action]:
     """What ``sync`` would do, decided from local knowledge only (no Google calls).
 
-    An event lists every child it is for, so a child whose calendar has it but
-    who is no longer listed loses it. A cancellation removes it for everyone.
+    Each calendar gets one entry per event with the event's children who belong
+    to it. An event lists every child it is for, so a calendar left with none
+    of them loses the entry. A cancellation removes it from every calendar.
     """
     actions: list[Action] = []
     for ev in doc.events:
-        synced = {str(e.child_id): e for e in ledger.entries(ev.key)}
+        synced = {e.calendar_id: e for e in ledger.entries(ev.key)}
         if ev.cancelled:
-            targets = list(dict.fromkeys([*synced, *map(str, ev.child_ids)]))
-            if not targets:
-                actions.append(Action("skip", ev, reason="ikke i kalenderen"))
-            for cid in targets:
-                known = synced.get(cid)
-                calendar_id = known.calendar_id if known else cfg["children"][cid].get("calendar_id")
-                if not calendar_id or (not known and ledger.is_removed(ev.key, cid)):
-                    actions.append(Action("skip", ev, cid, reason="ikke i kalenderen"))
-                else:
-                    actions.append(Action("delete", ev, cid, calendar_id, known.event_id if known else None))
+            actions += _cancel(ev, synced, ledger, cfg) or [Action("skip", ev, reason="ikke i kalenderen")]
             continue
         listed = list(dict.fromkeys(map(str, ev.child_ids)))
+        wanted = []
         for cid in listed:
             if ledger.is_removed(ev.key, cid):
-                actions.append(Action("skip", ev, cid, reason="fjernet af dig"))
-                continue
-            calendar_id = cfg["children"][cid].get("calendar_id")
-            known = ledger.synced(ev.key, calendar_id) if calendar_id else None
-            event_id = known.event_id if known else None
-            actions.append(Action("update" if known else "create", ev, cid, calendar_id, event_id))
-        for cid, known in synced.items():
-            if cid not in listed:
-                actions.append(Action("delete", ev, cid, known.calendar_id, known.event_id, reason="ikke længere med"))
+                actions.append(Action("skip", ev, (cid,), reason="fjernet af dig"))
+            else:
+                wanted.append(cid)
+        groups = _by_calendar(wanted, cfg)
+        for group, cids in groups.items():
+            known = synced.get(_calendar(group))
+            actions.append(
+                Action("update" if known else "create", ev, tuple(cids), _calendar(group), known.event_id if known else None)
+            )
+        for calendar_id, known in synced.items():
+            if calendar_id not in groups:
+                actions.append(Action("delete", ev, _ids(known), calendar_id, known.event_id, reason="ikke længere med"))
     return actions
 
 
@@ -245,7 +280,7 @@ def execute(actions: list[Action], doc: EventsDoc, google: Google, ledger: Ledge
         if a.kind == "skip":
             result["skipped"].append(label)
             continue
-        calendar_id = a.calendar_id or ensure_calendar(google, cfg, a.child_id)
+        calendar_id = a.calendar_id or ensure_calendar(google, cfg, a.child_ids[0])
         event_id = a.event_id or google.find_event(calendar_id, ev.key)  # local state may have been lost
 
         if a.kind == "delete":
@@ -272,7 +307,7 @@ def execute(actions: list[Action], doc: EventsDoc, google: Google, ledger: Ledge
             result["created"].append(label)
         ledger.record(
             SyncedEntry(
-                key=ev.key, child_id=int(a.child_id), calendar_id=calendar_id, event_id=event_id,
+                key=ev.key, child_ids=[int(c) for c in a.child_ids], calendar_id=calendar_id, event_id=event_id,
                 title=ev.title, start=ev.start_text, end=ev.end_text, source=ev.source,
                 source_item=source_item, link=link,
             )
@@ -310,21 +345,28 @@ def sync(
 
 
 def remove_event(key: str, child_id: int | None = None, *, google: Google | Callable[[], Google] | None = None) -> int:
-    """Delete an event from one child's calendar (``None``: every child's) and
-    never put it back there.
+    """Remove an event for one child (``None``: every child) and never put it
+    back for them.
 
-    Returns how many calendar entries were removed. Raises KeyError when there
-    is no such entry.
+    In a joint calendar the entry stays for the event's other children there;
+    it is deleted when none of them is left. Returns how many synced entries
+    were changed or deleted. Raises KeyError when the child has no such entry.
     """
     ledger = Ledger.load()
-    entries = [e for e in ledger.entries(key) if child_id is None or e.child_id == int(child_id)]
+    entries = [e for e in ledger.entries(key) if child_id is None or int(child_id) in e.child_ids]
     if not entries:
         raise KeyError(key)
     google = resolve(google)
     for e in entries:
-        google.delete_event(e.calendar_id, e.event_id)
-        ledger.forget(e.key, e.calendar_id)
-        ledger.mark_removed(key, e.child_id, title=e.title, start=e.start, end=e.end)
+        gone = e.child_ids if child_id is None else [int(child_id)]
+        left = [c for c in e.child_ids if c not in gone]
+        if left:
+            ledger.record(replace(e, child_ids=left))
+        else:
+            google.delete_event(e.calendar_id, e.event_id)
+            ledger.forget(e.key, e.calendar_id)
+        for c in gone:
+            ledger.mark_removed(key, c, title=e.title, start=e.start, end=e.end)
         ledger.save()
     return len(entries)
 

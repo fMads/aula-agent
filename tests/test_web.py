@@ -105,9 +105,9 @@ def test_home_shows_status_events_and_escapes_html(monkeypatch, tmp_path):
     cfg["children"]["1"] = {"name": "Emma Jensen", "institution": "Skolen", "calendar_id": "c1", "calendar_name": "Skole – Emma"}
     store.save_config(cfg)
     ledger = Ledger()
-    ledger.record(SyncedEntry("k1", 1, "c1", "e1", "<script>alert(1)</script>Juleklip", "2099-12-04", "2099-12-04",
+    ledger.record(SyncedEntry("k1", [1], "c1", "e1", "<script>alert(1)</script>Juleklip", "2099-12-04", "2099-12-04",
                               source_item={"title": "Opslag om jul"}, link="https://cal/e1"))
-    ledger.record(SyncedEntry("old", 1, "c1", "e0", "Gammel", "2001-01-01", "2001-01-01"))
+    ledger.record(SyncedEntry("old", [1], "c1", "e0", "Gammel", "2001-01-01", "2001-01-01"))
     ledger.save()
     runs.record("fetch", Outcome.OK, "2 nye/ændrede, 0 venter")
     with make_client() as c:
@@ -148,7 +148,7 @@ def synced_on_two_calendars(google):
     ledger = Ledger()
     for cid, cal in ((1, "c1"), (2, "c2")):
         google.events[(cal, f"e-{cal}")] = {"extendedProperties": {"private": {"aulaAgentKey": "k1"}}}
-        ledger.record(SyncedEntry("k1", cid, cal, f"e-{cal}", "Skovtur", "2099-01-01", "2099-01-01"))
+        ledger.record(SyncedEntry("k1", [cid], cal, f"e-{cal}", "Skovtur", "2099-01-01", "2099-01-01"))
     ledger.save()
 
 
@@ -334,3 +334,24 @@ def test_archive_card_shows_the_last_backup_and_warns_when_it_is_missing_or_old(
     with make_client() as c:
         card = archive_card(c)
     assert f"backup {taken:%d.%m. kl. %H:%M}" in card and "over 2 døgn" not in card and 'class="bad"' not in card
+
+
+def test_remove_for_one_child_in_a_joint_calendar_keeps_the_entry_until_no_child_is_left(google):
+    configure()
+    cfg = store.load_config()
+    cfg["children"].update({"1": {"name": "Emma Hansen", "calendar_id": "joint"}, "2": {"name": "Oscar Hansen", "calendar_id": "joint"}})
+    store.save_config(cfg)
+    google.events[("joint", "e1")] = {"extendedProperties": {"private": {"aulaAgentKey": "k1"}}}
+    ledger = Ledger()
+    ledger.record(SyncedEntry("k1", [1, 2], "joint", "e1", "Skovtur", "2099-01-01", "2099-01-01"))
+    ledger.save()
+    with make_client(google=lambda: google) as c:
+        html = c.get("/", headers=auth()).text
+        assert "Fjern for Emma" in html and "Fjern for Oscar" in html
+        c.post("/events/remove", data={"key": "k1", "child_id": "1"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
+        assert list(google.events) == [("joint", "e1")]
+        ledger = Ledger.load()
+        assert ledger.is_removed("k1", 1) and not ledger.is_removed("k1", 2)
+        assert [u.child_ids for u in ledger.upcoming()] == [[2]]
+        c.post("/events/remove", data={"key": "k1", "child_id": "2"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
+    assert google.events == {} and Ledger.load().upcoming() == []

@@ -7,7 +7,9 @@ calendar, the user removed an event); the on-disk shape stays in here:
 - ``threads``: Aula thread id -> ``lastMessageDate`` when it was last read completely
 - ``thread_retries``: Aula thread id -> thread to read again next run, and how often it was tried
 - ``pending``: item key -> inbox item the agent has not processed yet
-- ``events``: ``"<event key>|<calendar id>"`` -> one synced calendar entry
+- ``events``: ``"<event key>|<calendar id>"`` -> one synced entry: the event in one
+  calendar, with the event's children that belong to it (``child_ids``). Entries from
+  before joint calendars have ``child_id`` (one child) and are read as ``child_ids``.
 - ``ignored``: event key -> event the user removed from some children's calendars
   (``child_ids``; missing = every child, as before removal was per child)
 - ``uploads`` / ``drive_folder_id``: attachments already in Drive
@@ -55,10 +57,10 @@ def _now() -> str:
 
 @dataclass
 class SyncedEntry:
-    """One event on one child's calendar."""
+    """One event in one calendar, for the event's children who belong to that calendar."""
 
     key: str
-    child_id: int
+    child_ids: list[int]
     calendar_id: str
     event_id: str
     title: str
@@ -91,6 +93,9 @@ class Ledger:
             ("ignored", {}), ("runs", []), ("drive_folder_id", None), ("last_fetch", None),
         ):
             st.setdefault(name, default)
+        for raw in st["events"].values():  # from before joint calendars: one child per entry
+            if "child_ids" not in raw:
+                raw["child_ids"] = [int(raw.pop("child_id"))]
         self._st = st
 
     @classmethod
@@ -181,11 +186,13 @@ class Ledger:
         return self._entry(raw) if raw else None
 
     def entries(self, key: str) -> list[SyncedEntry]:
-        """Every calendar entry for one event key (one per child)."""
+        """Every synced entry for one event key (one per calendar)."""
         return [e for e in self._entries() if e.key == key]
 
     def record(self, entry: SyncedEntry) -> None:
-        self._st["events"][self._slot(entry.key, entry.calendar_id)] = asdict(entry)
+        raw = asdict(entry)
+        raw["child_ids"] = sorted(int(c) for c in entry.child_ids)
+        self._st["events"][self._slot(entry.key, entry.calendar_id)] = raw
 
     def forget(self, key: str, calendar_id: str) -> None:
         self._st["events"].pop(self._slot(key, calendar_id), None)
@@ -205,10 +212,10 @@ class Ledger:
             if not _not_over(e.start, e.end, today):
                 continue
             if e.key in by_key:
-                by_key[e.key].child_ids.append(e.child_id)
+                by_key[e.key].child_ids = sorted({*by_key[e.key].child_ids, *e.child_ids})
             else:
                 by_key[e.key] = UpcomingEvent(
-                    e.key, e.title, e.start, e.end, [e.child_id], e.source, e.source_item, e.link
+                    e.key, e.title, e.start, e.end, list(e.child_ids), e.source, e.source_item, e.link
                 )
         return sorted(by_key.values(), key=lambda u: u.start)
 

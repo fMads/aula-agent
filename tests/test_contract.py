@@ -106,8 +106,8 @@ def test_inbox_groups_existing_events_and_lists_removed_multi_day_events():
     cfg["children"] = {"1": {"name": "Emma", "institution": "Skolen"}, "2": {"name": "Oscar", "institution": "Skolen"}}
     ledger = Ledger()
     for cid, cal in ((1, "c1"), (2, "c2")):
-        ledger.record(SyncedEntry("k1", cid, cal, f"e{cid}", "Juleklip", "2099-12-04", "2099-12-04", "post:1"))
-    ledger.record(SyncedEntry("old", 1, "c1", "e0", "Gammel", "2001-01-01", "2001-01-01"))
+        ledger.record(SyncedEntry("k1", [cid], cal, f"e{cid}", "Juleklip", "2099-12-04", "2099-12-04", "post:1"))
+    ledger.record(SyncedEntry("old", [1], "c1", "e0", "Gammel", "2001-01-01", "2001-01-01"))
     yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
     ledger.mark_removed("trip", 2, title="Lejrskole", start=yesterday, end="2099-01-01")  # started, not over
     ledger._st["ignored"]["legacy"] = {"title": "Gammel fjernet", "start": "2099-02-01"}  # before removal was per child

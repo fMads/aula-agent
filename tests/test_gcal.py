@@ -233,3 +233,106 @@ def test_switching_between_all_day_and_timed_replaces_the_event(google):
     assert "dateTime" in body["start"] and "date" not in body["start"]
     assert [c[0] for c in google.calls][-2:] == ["delete", "insert"]
     assert Ledger.load().upcoming()[0].start == "2099-11-12T10:00"
+
+
+# ----------------------------------------------------------------------------- joint calendars
+
+
+def setup_joint(*children, calendar_id="joint@group.calendar.google.com"):
+    """Children who share one calendar (a joint calendar)."""
+    cfg = store.load_config()
+    for cid, name in children:
+        cfg["children"][str(cid)] = {"name": name, "institution": "Skolen", "calendar_id": calendar_id, "calendar_name": "Skole – fælles"}
+    store.save_config(cfg)
+    return calendar_id
+
+
+def test_event_for_two_children_in_a_joint_calendar_is_one_entry(google):
+    joint = setup_joint((1, "Emma Jensen"), (2, "Oscar Jensen"))
+    lines = []
+    gcal.sync({"events": [ev(child_ids=[1, 2], title="Juleklip")]}, dry_run=True, echo=lines.append)
+    assert lines[0] == "[prøvekørsel] Opret: 2099-11-12 Juleklip → Emma Jensen, Oscar Jensen"
+    assert len(lines) == 2  # and "Markeres som behandlet"
+
+    result = gcal.sync({"events": [ev(child_ids=[1, 2], title="Juleklip")]}, google=google)
+    assert len(result["created"]) == 1 and list(google.events) == [(joint, "ev1")]
+    ledger = Ledger.load()
+    (entry,) = ledger.entries("k1")
+    assert entry.calendar_id == joint and entry.child_ids == [1, 2]
+    assert [u.child_ids for u in ledger.upcoming()] == [[1, 2]]
+
+
+def test_correction_without_one_child_updates_the_joint_entry_for_the_other(google):
+    joint = setup_joint((1, "Emma"), (2, "Oscar"))
+    gcal.sync({"events": [ev(child_ids=[1, 2], title="Juleklip")]}, google=google)
+    lines = []
+    gcal.sync({"events": [ev(child_ids=[2], title="Juleklip")]}, dry_run=True, echo=lines.append)
+    assert lines == ["[prøvekørsel] Opdatér: 2099-11-12 Juleklip → Oscar", "[prøvekørsel] Markeres som behandlet: 0"]
+
+    result = gcal.sync({"events": [ev(child_ids=[2], title="Juleklip")]}, google=google)
+    assert len(result["updated"]) == 1 and not result["deleted"]
+    assert list(google.events) == [(joint, "ev1")]
+    assert [e.child_ids for e in Ledger.load().entries("k1")] == [[2]]
+
+
+def test_entry_in_a_joint_calendar_is_deleted_when_none_of_its_children_is_left(google):
+    setup_joint((1, "Emma"), (2, "Oscar"))
+    setup_children((3, "Freja"))
+    gcal.sync({"events": [ev(child_ids=[1, 2], title="Juleklip")]}, google=google)
+    result = gcal.sync({"events": [ev(child_ids=[3], title="Juleklip")]}, google=google)
+    assert result["deleted"] == ["2099-11-12 Juleklip → Emma, Oscar (ikke længere med)"]
+    assert len(result["created"]) == 1 and len(google.events) == 1
+    assert [e.child_ids for e in Ledger.load().entries("k1")] == [[3]]
+
+
+def test_cancellation_deletes_from_joint_and_own_calendars(google):
+    setup_joint((1, "Emma"), (2, "Oscar"))
+    setup_children((3, "Freja"))
+    gcal.sync({"events": [ev(child_ids=[1, 2, 3])]}, google=google)
+    assert len(google.events) == 2
+    result = gcal.sync({"events": [{"key": "k1", "cancelled": True}]}, google=google)
+    assert google.events == {} and len(result["deleted"]) == 2
+    assert Ledger.load().upcoming() == []
+
+
+def test_mixed_setup_gives_one_entry_per_calendar(google):
+    joint = setup_joint((1, "Emma"), (2, "Oscar"))
+    setup_children((3, "Freja"))
+    result = gcal.sync({"events": [ev(child_ids=[1, 2, 3], title="Juleklip")]}, google=google)
+    assert result["created"] == ["2099-11-12 Juleklip → Emma, Oscar", "2099-11-12 Juleklip → Freja"]
+    ida_cal = store.load_config()["children"]["3"]["calendar_id"]
+    assert sorted((e.calendar_id, e.child_ids) for e in Ledger.load().entries("k1")) == sorted([(joint, [1, 2]), (ida_cal, [3])])
+    assert [u.child_ids for u in Ledger.load().upcoming()] == [[1, 2, 3]]
+
+
+def test_removing_one_child_in_a_joint_calendar_keeps_the_entry_for_the_other(google):
+    joint = setup_joint((1, "Emma"), (2, "Oscar"))
+    gcal.sync({"events": [ev(child_ids=[1, 2])]}, google=google)
+    assert gcal.remove_event("k1", 1, google=google) == 1
+    assert list(google.events) == [(joint, "ev1")]
+    ledger = Ledger.load()
+    assert ledger.is_removed("k1", 1) and not ledger.is_removed("k1", 2)
+    assert [u.child_ids for u in ledger.upcoming()] == [[2]]
+
+    result = gcal.sync({"events": [ev(child_ids=[1, 2], title="Skovtur (rettet)")]}, google=google)
+    assert result["skipped"] == ["2099-11-12 Skovtur (rettet) → Emma (fjernet af dig)"]
+    assert result["updated"] == ["2099-11-12 Skovtur (rettet) → Oscar"]
+    assert [e.child_ids for e in Ledger.load().entries("k1")] == [[2]]
+
+    assert gcal.remove_event("k1", 2, google=google) == 1
+    assert google.events == {} and Ledger.load().entries("k1") == []
+
+
+def test_state_from_the_old_workaround_keeps_its_one_child_without_duplicates(google, data_dir):
+    joint = setup_joint((1, "Emma"), (2, "Oscar"))
+    google.events[(joint, "e-old")] = {"extendedProperties": {"private": {"aulaAgentKey": "k1"}}}
+    store.write_json(data_dir / "state.json", {"events": {f"k1|{joint}": {
+        "key": "k1", "child_id": 2, "calendar_id": joint, "event_id": "e-old", "title": "Skovtur",
+        "start": "2099-11-12", "end": "2099-11-12", "source": None, "source_item": {}, "link": None,
+    }}})
+    assert [u.child_ids for u in Ledger.load().upcoming()] == [[2]]  # only the child it knew, until corrected
+
+    result = gcal.sync({"events": [ev(child_ids=[1, 2])]}, google=google)
+    assert result["updated"] == ["2099-11-12 Skovtur → Emma, Oscar"] and not result["created"] and not result["deleted"]
+    assert list(google.events) == [(joint, "e-old")]
+    assert [e.child_ids for e in Ledger.load().entries("k1")] == [[1, 2]]
