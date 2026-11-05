@@ -7,7 +7,7 @@ TODAY = "2026-11-05"
 
 
 def entry(key, child_id, calendar_id, start, end=None, **kw):
-    return SyncedEntry(key, child_id, calendar_id, f"e-{key}-{child_id}", kw.pop("title", key), start, end or start, **kw)
+    return SyncedEntry(key, [child_id], calendar_id, f"e-{key}-{child_id}", kw.pop("title", key), start, end or start, **kw)
 
 
 def test_round_trips_through_state_json(data_dir):
@@ -106,3 +106,15 @@ def test_today_default_is_today():
     today = dt.date.today().isoformat()
     ledger.record(entry("k", 1, "c1", today))
     assert len(ledger.upcoming()) == 1
+
+
+def test_entries_from_before_joint_calendars_keep_their_one_child(data_dir):
+    store.write_json(data_dir / "state.json", {"events": {
+        "k|c1": {"key": "k", "child_id": 1, "calendar_id": "c1", "event_id": "e1", "title": "T", "start": "2099-01-01", "end": "2099-01-01"},
+        "k|c2": {"key": "k", "child_id": 2, "calendar_id": "c2", "event_id": "e2", "title": "T", "start": "2099-01-01", "end": "2099-01-01"},
+    }})
+    ledger = Ledger.load()
+    assert ledger.synced("k", "c1").child_ids == [1] and ledger.synced("k", "c2").child_ids == [2]
+    assert [u.child_ids for u in ledger.upcoming()] == [[1, 2]]
+    ledger.save()
+    assert Ledger.load().synced("k", "c2").child_ids == [2]

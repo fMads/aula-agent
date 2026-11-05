@@ -112,6 +112,7 @@ _Avoid_: Nickname, kælenavn (kun i brugertekst), kaldenavn
 
 **Synced entry**:
 Ét event i én kalender for de af eventets børn, der hører til den kalender. Et event for to børn giver to synced entries, når de har hver sin kalender, og én, når de deler.
+Ledger gemmer den pr. (event key, kalender) med `child_ids`, Google-eventets id, titel, tid og source. Fjernes et barn, bliver entry'en med de andre børn; den slettes, når ingen er tilbage.
 _Avoid_: Kalenderpost (kun i brugertekst)
 
 **Removed by user**:
