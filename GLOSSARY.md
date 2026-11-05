@@ -29,7 +29,7 @@ Aulas egen kalender for børnene. Står et arrangement allerede dér, laver agen
 _Avoid_: Kalender (uden præcisering)
 
 **Inbox**:
-Det, agenten får udleveret ved hver kørsel: ventende items, børnene, eksisterende og fjernede events og Aulas egen kalender.
+Det, agenten får udleveret ved hver kørsel: ventende items, unclassified items, topics, børnene, eksisterende og fjernede events og Aulas egen kalender.
 _Avoid_: Queue, feed
 
 **Pending item**:
@@ -56,7 +56,7 @@ _Avoid_: Backup (det er arkivets kopi i Drive), eksport
 ## Fra agenten
 
 **Events document**:
-Agentens svar på en inbox: de behandlede item-keys plus de events og cancellations, kalenderne skal opdateres med.
+Agentens svar på en inbox: de behandlede item-keys, de events og cancellations, kalenderne skal opdateres med, og en classification pr. item.
 _Avoid_: Events-fil (kun når selve filen menes), output
 
 **Event**:
@@ -77,6 +77,25 @@ Den stabile identitet for et event på tværs af kørsler (`<item-key>#<n>`). Sa
 **Agent contract**:
 Aftalen mellem kode og agent om, hvordan inbox og events document ser ud.
 
+**Classification**:
+Agentens fortolkning af én item version: hvad slags information det er, hvornår det gælder, emner og et resumé på én linje. Fakta som afsender, dato, barn og koblingen til events hører ikke til den. Dem ved koden selv.
+_Avoid_: Inddeling (kun i brugertekst), tagging, kategorisering
+
+**Category**:
+Den vigtigste slags information i en item version, én pr. version: arrangement, frist, periode, stående info, orientering eller svar. Svar er beskeder uden ny information ("Tak", "Ok").
+_Avoid_: Art (kun i brugertekst), kind (i koden er det opslag eller besked), type
+
+**Span**:
+Hvornår et item gælder: én dag eller fra–til. Agenten sætter den som en del af en classification. Den er ikke det samme som, hvornår item'et kom.
+_Avoid_: Periode (det er en category), gyldighed
+
+**Topic**:
+Et emne, der binder items om det samme sammen ("svømning", "lejrskole"), med en linjes beskrivelse af, hvad der hører under det. Et item har 1–3 topics. Agenten genbruger et eksisterende topic, når det passer, og opretter kun et nyt, når intet passer.
+_Avoid_: Emne (kun i brugertekst), tag, label
+
+**Unclassified item**:
+Et item i arkivet, hvis nyeste version mangler en classification, og som ikke er et pending item, fx fra backfill eller ældre end cutoff. Agenten får det i inbox for at klassificere det, ikke for at finde events i det.
+
 ## I kalenderen
 
 **Child's calendar**:
@@ -91,11 +110,25 @@ En synced entry, som en forælder har fjernet på web-siden. Eventet må aldrig 
 _Avoid_: Ignored, deleted
 
 **Ledger**:
-Alt det, aula-agent husker mellem kørsler: sete items, pending items, synced entries, hvad brugeren har fjernet, og run-loggen.
+Alt det, aula-agent husker mellem kørsler: sete items, pending items, synced entries, event history, hvad brugeren har fjernet, og run-loggen.
 _Avoid_: State, database
+
+**Event history**:
+De items, der har oprettet, rettet eller aflyst et event, hvert med hvad det gjorde og hvornår. Et aflyst event har stadig sin event history.
+_Avoid_: Log, source (et event har én source ad gangen; historikken har dem alle)
 
 **Plan**:
 Det, en synkronisering vil gøre for hvert event og barn: opret, opdatér, slet eller spring over. Den vises ved en prøvekørsel.
+
+## Overblikket
+
+**Past**:
+Et item, der ikke længere er aktuelt. Det gælder et arrangement, en frist eller en periode, hvis span er slut, og en orientering kort tid efter den kom. Stående info bliver aldrig past. Past items skjules ikke, de dæmpes kun.
+_Avoid_: Overstået (kun i brugertekst), udløbet (det er Aulas expireAt), arkiveret
+
+**Overview**:
+Web-siden, hvor arkivets items vises efter span og category, med fritekstsøgning og et item ad gangen i fuld længde.
+_Avoid_: Overblik (kun i brugertekst), dashboard, arkiv-side
 
 ## Kørsler
 
