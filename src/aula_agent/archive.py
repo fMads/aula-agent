@@ -166,8 +166,12 @@ class Status:
 
 
 class Archive:
-    def __init__(self, db: sqlite3.Connection):
+    def __init__(self, db: sqlite3.Connection, at: str | None = None):
         self._db = db
+        self._at = at
+
+    def _saved_at(self) -> str:
+        return self._at or _now()
 
     # -- write side (from fetching)
 
@@ -210,7 +214,7 @@ class Archive:
         self._db.execute(
             "INSERT INTO threads (id, saved_at, raw, messages) VALUES (?, ?, ?, ?)"
             " ON CONFLICT (id) DO UPDATE SET saved_at = excluded.saved_at, raw = excluded.raw, messages = excluded.messages",
-            (thread_id, _now(), _json(raw_thread), _json(raw_messages)),
+            (thread_id, self._saved_at(), _json(raw_thread), _json(raw_messages)),
         )
         sensitive = bool(raw_thread.get("sensitive"))
         new: dict[str, bool] = {}
@@ -252,7 +256,7 @@ class Archive:
         self._db.execute(
             "INSERT INTO versions (item_key, hash, saved_at, title, author, date, groups, child_ids, body, raw)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (key, version, _now(), title, author, date, json.dumps(groups, ensure_ascii=False),
+            (key, version, self._saved_at(), title, author, date, json.dumps(groups, ensure_ascii=False),
              json.dumps(child_ids), body, _json(raw)),
         )
         return True
@@ -276,7 +280,7 @@ class Archive:
                 file = File(_attachment_id(att), "link", att.name, att.link.url, None)
             elif att.file is not None:
                 file = File(_attachment_id(att), "image" if att.media is not None else "file", att.name, None, None)
-                target = folder / f"{file.attachment_id}-{_safe(att.name)}"
+                target = folder / stored_name(att)
                 if not target.exists() and att.file.url:
                     data = await download(att)
                     if data is not None:
@@ -384,6 +388,11 @@ def _version_hash(title: str | None, body: str, attachments: list[Attachment]) -
     return hashlib.sha256(json.dumps([title or "", body, ids], ensure_ascii=False).encode()).hexdigest()[:16]
 
 
+def stored_name(att: Attachment) -> str:
+    """The name a file or image is stored under, in its item's folder (a rescue copy uses the same)."""
+    return f"{_attachment_id(att)}-{_safe(att.name)}"
+
+
 def _attachment_id(att: Attachment) -> str:
     for candidate in (att.id, att.file and att.file.id, att.document and att.document.id):
         if candidate is not None:
@@ -407,8 +416,11 @@ def _migrate(db: sqlite3.Connection) -> None:
 
 
 @contextlib.contextmanager
-def open() -> Iterator[Archive]:  # noqa: A001 - archive.open() reads well at the call site
-    """Open the archive (creating it the first time); changes are committed on a clean exit."""
+def open(*, at: dt.datetime | None = None) -> Iterator[Archive]:  # noqa: A001 - archive.open() reads well at the call site
+    """Open the archive (creating it the first time); changes are committed on a clean exit.
+
+    What is saved is saved as of ``at`` (default: now); a rescue copy is saved as of when it was taken.
+    """
     file = store.path("ARCHIVE_FILE")
     file.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(file, timeout=30)
@@ -416,7 +428,7 @@ def open() -> Iterator[Archive]:  # noqa: A001 - archive.open() reads well at th
         with db:
             _migrate(db)
         with db:
-            yield Archive(db)
+            yield Archive(db, at.isoformat(timespec="seconds") if at else None)
     finally:
         db.close()
 

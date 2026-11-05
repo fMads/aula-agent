@@ -59,13 +59,18 @@ def fetch(first_run_days: int) -> None:
 
 
 @main.command()
-def backfill() -> None:
-    """Hent alt, hvad Aula stadig har, til arkivet (rører ikke inbox). Kan køres igen."""
+@click.argument("rescue", required=False, type=click.Path(exists=True, file_okay=False, path_type=Path))
+def backfill(rescue: Path | None) -> None:
+    """Hent alt, hvad Aula stadig har, til arkivet (rører ikke inbox). Kan køres igen.
+
+    Med RESCUE (en redningskopi, fx data/rescue-2026-11-05) læses kopien i stedet for Aula:
+    filerne kopieres ind, og versionerne får datoen i mappens navn.
+    """
     from .aula_source import backfill as do_backfill
 
     try:
         with run("backfill") as r:
-            result = asyncio.run(do_backfill())
+            result = asyncio.run(do_backfill(rescue))
             r.summary = (
                 f"{result.posts} opslag, {result.threads} tråde med {result.messages} beskeder,"
                 f" {result.new_versions} nye versioner"

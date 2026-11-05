@@ -3,7 +3,7 @@
 Finder arrangementer i Aula-opslag og -beskeder og lægger dem i Google Calendar,
 én kalender pr. barn ("Skole – <fornavn>"). Python 3.14 via `uv`. Brugervejledning: `README.md`.
 
-- `src/aula_agent/aula_source.py` – henter fra Aula (bibliotek: `aula` på PyPI) og bestemmer via `Intake`, hvilke items agenten får. `backfill()` læser alt til arkivet uden om intake (kilden er en `BackfillSource`). Starter aldrig MitID-login selv.
+- `src/aula_agent/aula_source.py` – henter fra Aula (bibliotek: `aula` på PyPI) og bestemmer via `Intake`, hvilke items agenten får. `backfill()` læser alt til arkivet uden om intake (kilden er en `BackfillSource`: Aula eller en redningskopi). Starter aldrig MitID-login selv.
 - `src/aula_agent/archive.py` – arkivet (`data/archive.sqlite`, ADR 0001): alt hvad `fetch` har set fra Aula (opslag og hele beskedtråde), med alle item versions og filer, uanset cutoff. Kun dette modul rører arkiv-filen; skemaets version styres med `user_version`.
 - `src/aula_agent/contract.py` – agent-kontrakten: skriver `inbox.json` og validerer events-filen (alle fejl på én gang → exit-kode 5).
 - `src/aula_agent/backup.py` – backup af arkivet til den private Drive-mappe `Aula-arkiv` (aldrig den delte "Aula"); `fetch` tager den til sidst, en fejl er kun en advarsel.
