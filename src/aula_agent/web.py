@@ -1,4 +1,4 @@
-"""Minimal web UI: status, MitID re-login, Google connect, upcoming events, the overview with its todos.
+"""Minimal web UI: status, MitID re-login, Google connect, upcoming events, the overview, one item and its files.
 
 Meant to sit behind a Cloudflare Tunnel with Cloudflare Access in front. The app
 does not trust the tunnel alone: every request must carry a valid Cloudflare
@@ -12,8 +12,10 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import html
+import mimetypes
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -22,11 +24,11 @@ from starlette.background import BackgroundTask
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from . import archive, credentials, runs, store
-from .ledger import Ledger
+from .ledger import EventHistory, Ledger
 from .runs import Outcome
 
 # ----------------------------------------------------------------------------- config
@@ -254,6 +256,10 @@ details>summary{cursor:pointer;margin:2rem 0 .6rem;font-weight:600}
 form.search{display:flex;flex-wrap:wrap;gap:.4rem;margin:0 0 1rem}form.search input[type=search]{flex:1 1 100%;font-size:1.05rem;padding:.55rem .7rem}
 li.past{opacity:.6}.tag{font-size:.8rem;border:1px solid var(--line);border-radius:6px;padding:0 .35rem;color:var(--mut)}
 mark{background:#fde68a;color:inherit;border-radius:2px}@media (prefers-color-scheme:dark){mark{background:#7a5c00}}
+.text{white-space:pre-wrap;overflow-wrap:anywhere}
+h3{font-size:1rem;margin:1.6rem 0 .5rem}details.version>summary{margin:.4rem 0;font-weight:400}
+ul.thread li.sel{border-left:3px solid var(--acc);padding-left:.6rem}
+.thumbs{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem}.thumb{width:7rem;height:7rem;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 """
 
 
@@ -261,9 +267,11 @@ def e(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
-def page(title: str, body: str, flash: str | None = None) -> HTMLResponse:
+def page(title: str, body: str, flash: str | None = None, *, status_code: int = 200) -> HTMLResponse:
     flash_html = f'<div class="flash">{e(flash)}</div>' if flash else ""
     return HTMLResponse(
+        status_code=status_code,
+        content=
         f"""<!doctype html><html lang="da"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)}</title>
 <meta name="robots" content="noindex"><style>{CSS}</style></head><body>
@@ -361,9 +369,12 @@ async def home(request: Request) -> Response:
                 f'<button class="small">{"Fjern for " + e(first_name(c)) if several else "Fjern"}</button></form>'
                 for c in ev.child_ids
             )
+            src = e(src_txt or "Aula")
+            if ev.source:
+                src = f'<a href="{e(item_url(ev.source))}">{src}</a>'
             items.append(
                 f'<li><span class="date">{e(fmt_date(ev.start))}</span><span class="grow">{e(ev.title)}{link}'
-                f'<br><span class="mut">{e(names)}{" · fra " + e(src_txt) if src_txt else ""}</span></span>'
+                f'<br><span class="mut">{e(names)}{" · fra " + src if src_txt or ev.source else ""}</span></span>'
                 f'<span class="acts">{buttons}</span></li>'
             )
         events_html = f'<ul class="list">{"".join(items)}</ul>'
@@ -421,14 +432,20 @@ TODO_ACTIONS: dict[str, tuple[str, Callable[[Ledger, str, int], None]]] = {
 }
 
 
-def todo_item(t: archive.ItemTodo, *, today: dt.date, checked: bool) -> str:
+def todo_button(t: archive.ItemTodo, *, checked: bool, back: str | None = None) -> str:
+    """ "Klaret" or "Fortryd"; ``back``: the detail page to return to (else the overview)."""
     action = "uncheck" if checked else "check"
-    button = (
+    back_field = f'<input type="hidden" name="back" value="{e(back)}">' if back else ""
+    return (
         f'<form class="inline" method="post" action="/todos/{action}">'
         f'<input type="hidden" name="item" value="{e(t.item.key)}">'
-        f'<input type="hidden" name="version" value="{t.version.id}">'
+        f'<input type="hidden" name="version" value="{t.version.id}">{back_field}'
         f'<button class="small">{TODO_ACTIONS[action][0]}</button></form>'
     )
+
+
+def todo_item(t: archive.ItemTodo, *, today: dt.date, checked: bool) -> str:
+    button = todo_button(t, checked=checked)
     sensitive = t.item.sensitive  # the page may stand open on a screen: not what to do, nor the subject
     overdue = not checked and t.due is not None and t.due < today
     meta = [m for m in (
@@ -464,7 +481,7 @@ def overview_item(item: archive.Item) -> str:
         if c.topics:
             meta.append(f"emner: {', '.join(c.topics)}")
     return (
-        f'<li><span class="grow">{e(title)}'
+        f'<li><span class="grow"><a href="{e(item_url(item.key))}">{e(title)}</a>'
         f'{"<br>" + e(summary) if summary else ""}'
         f'<br><span class="mut">{e(" · ".join(meta))}</span></span></li>'
     )
@@ -475,11 +492,6 @@ SOURCE_NAMES = {
     archive.Source.MESSAGE: "Besked",
     archive.Source.DOCUMENT: "Med dokument",
 }
-
-
-def item_url(key: str) -> str:
-    """The item's detail page."""
-    return f"/overblik/item/{quote(key, safe=':')}"
 
 
 def excerpt_html(parts: tuple[tuple[str, bool], ...]) -> str:
@@ -620,6 +632,8 @@ async def tick_todo(request: Request) -> Response:
     item = str(form.get("item") or "")
     raw_version = str(form.get("version") or "")
     version = int(raw_version) if raw_version.isdigit() else None
+    back = str(form.get("back") or "")
+    back = back if back.startswith("/overblik/item/") and "?" not in back else "/overblik"  # only back to this site
 
     def work() -> str | None:
         with archive.read() as a:
@@ -635,7 +649,252 @@ async def tick_todo(request: Request) -> Response:
         msg = await asyncio.to_thread(work)
     except store.Busy as exc:
         msg = f"{exc} Prøv igen om lidt."
-    return RedirectResponse("/overblik" + (f"?msg={quote(msg)}" if msg else ""), status_code=303)
+    return RedirectResponse(back + (f"?msg={quote(msg)}" if msg else ""), status_code=303)
+
+
+# ----------------------------------------------------------------------------- the detail of one item
+
+
+def item_url(key: str) -> str:
+    """Where one item's detail is: ``/overblik/item/<item-key>`` (bookmarks and calendar events link here)."""
+    return f"/overblik/item/{quote(key, safe=':')}"
+
+
+def child_names(child_ids: list[int], cfg: dict[str, Any]) -> str:
+    """The children's first names; no children means every child (Aula set none, nor did the agent)."""
+    if not child_ids:
+        return "alle børn"
+    return ", ".join(((cfg["children"].get(str(c)) or {}).get("name") or "?").split()[0] for c in child_ids)
+
+
+def item_text(body: str) -> str:
+    return f'<div class="text">{e(body)}</div>'
+
+
+def file_url(item_key: str, attachment_id: str) -> str:
+    """Where the file route hands out one of an item's files: by item key and attachment id, never a path."""
+    return f"{item_url(item_key)}/fil/{quote(attachment_id, safe=':')}"
+
+
+INLINE_SUFFIXES = (".pdf",)  # opened in the browser; images are too, other files are downloaded
+
+
+def files_html(item: archive.Item) -> str:
+    """The item's files: images as thumbnails, PDFs to open, other files to download, the rest as what they are."""
+    if not item.files:
+        return ""
+    thumbs, rows = [], []
+    for f in item.files:
+        url = file_url(item.key, f.attachment_id)
+        if f.kind == archive.Kind.IMAGE and f.path:
+            thumbs.append(
+                f'<a href="{e(url)}" target="_blank" rel="noopener">'
+                f'<img src="{e(url)}" alt="{e(f.name)}" loading="lazy" class="thumb"></a>'
+            )
+            continue
+        if f.kind == archive.Kind.SECURE_DOCUMENT:
+            what = f'{e(f.name)} <span class="mut">· sikkert dokument, kan kun ses i Aula</span>'
+        elif f.kind == archive.Kind.LINK:
+            ok = (f.detail or "").startswith(("https://", "http://"))
+            what = (f'<a href="{e(f.detail)}" target="_blank" rel="noopener">{e(f.name)}</a>' if ok else e(f.name))
+            what += ' <span class="mut">· link</span>'
+        elif not f.path:
+            what = f'{e(f.name)} <span class="mut">· ikke hentet</span>'
+        elif f.name.lower().endswith(INLINE_SUFFIXES):
+            what = f'<a href="{e(url)}" target="_blank" rel="noopener">{e(f.name)}</a>'
+        else:
+            what = f'<a href="{e(url)}" download>{e(f.name)}</a>'
+        rows.append(f'<li><span class="grow">{what}</span></li>')
+    gallery = f'<div class="thumbs">{"".join(thumbs)}</div>' if thumbs else ""
+    return f'<h3>Filer</h3>{gallery}<ul class="list">{"".join(rows)}</ul>'
+
+
+def versions_html(item: archive.Item) -> str:
+    """The earlier versions of an item edited in Aula, newest first, each folded with its date and whole text."""
+    if len(item.versions) < 2:
+        return ""
+    earlier = "".join(
+        f'<details class="version"><summary>{e(fmt_date(item.came_out(v)) or "ukendt dato")}'
+        f'{" · " + e(v.title) if v.title != item.latest.title else ""}</summary>{item_text(v.body)}</details>'
+        for v in reversed(item.versions[:-1])
+    )
+    return f'<h3>Rettet i Aula · {len(item.versions)} versioner</h3><p class="mut">Tidligere versioner:</p>{earlier}'
+
+
+HISTORY_ACTIONS = {"created": "oprettet", "updated": "rettet", "cancelled": "aflyst"}
+
+
+def item_title(item: archive.Item | None) -> str:
+    """What an item is called in a list: its title, but never a sensitive thread's subject."""
+    if item is None:
+        return "et item, der ikke er i arkivet"
+    return "🔒 Følsom tråd" if item.sensitive else item.latest.title or "(uden titel)"
+
+
+@dataclass
+class Detail:
+    """What the detail page shows about one item, read from the archive and Ledger."""
+
+    item: archive.Item
+    events: list[EventHistory]  # what it created, updated or cancelled in the calendar
+    others: dict[str, archive.Item | None]  # the other items in those events' history
+    ledger: Ledger
+    cfg: dict[str, Any]
+    today: dt.date
+    thread: list[archive.Item]  # a message's whole thread, oldest first (itself too); none for a post
+
+    @property
+    def this(self) -> str:
+        return "dette opslag" if self.item.kind == "post" else "denne besked"
+
+
+def detail_html(d: Detail, *, hide: bool) -> str:
+    """The item; ``hide`` (a sensitive thread before "Vis teksten"): only its date, source, category and span,
+    and its todo's status without its text."""
+    item, latest, c = d.item, d.item.latest, d.item.classification
+    meta = [
+        "opslag" if item.kind == "post" else "besked",
+        None if hide else latest.author,
+        fmt_date(latest.date),
+        child_names(item.child_ids, d.cfg),
+    ]
+    rows = [f'<p class="mut">{e(" · ".join(m for m in meta if m))}</p>']
+    if c:
+        what = [CATEGORY_NAMES[c.category]]
+        if span := c.span_text("%d.%m.%Y"):
+            what.append(f"gælder {span}")
+        if c.topics and not hide:
+            what.append(f"emner: {', '.join(c.topics)}")
+        rows.append(f'<p>{e(" · ".join(what))}</p>')
+        if c.summary and not hide:
+            rows.append(f"<p><b>{e(c.summary)}</b></p>")
+    else:
+        rows.append('<p class="mut">Endnu ikke inddelt.</p>')
+    rows.append(todo_detail(d, hide=hide))
+    if hide:
+        rows.append('<p><a href="?show=1" class="btn">Vis teksten</a></p>')
+        return f"<h2>{e(item_title(item))}</h2>{''.join(rows)}"
+    rows += [item_text(latest.body), files_html(item), versions_html(item), calendar_html(d), thread_html(d)]
+    return f"<h2>{e(latest.title or '(uden titel)')}</h2>{''.join(rows)}"
+
+
+def todo_detail(d: Detail, *, hide: bool) -> str:
+    """The item's todo with its status (open, overdue, ticked off and when) and its button."""
+    c = d.item.classification
+    if c is None or c.todo is None:
+        return ""
+    t = archive.ItemTodo(d.item, d.item.classified_version)
+    checked = d.ledger.todo_checked(t.item.key, t.version.id, by_default=not t.was_current)
+    if checked:
+        at = d.ledger.todo_checked_at(t.item.key, t.version.id)
+        status = '<span class="ok">klaret</span>' + (f" {e(fmt_when(at))}" if at else "")
+    elif t.due is not None and t.due < d.today:
+        status = '<b class="bad">overskredet</b>'
+    else:
+        status = "åben"
+    due = f" · senest {e(fmt_date(t.due.isoformat()))}" if t.due else ""
+    text = "Skal gøres" if hide else f'<span class="todo">{e(t.text)}</span>'
+    return (
+        f'<ul class="list"><li><span class="grow">✓ {text}<br><span class="mut">{status}{due}</span></span>'
+        f'<span class="acts">{todo_button(t, checked=checked, back=item_url(t.item.key))}</span></li></ul>'
+    )
+
+
+def calendar_html(d: Detail) -> str:
+    """ "Blev til i kalenderen": each event the item changed, with its whole history and whom the user removed it for."""
+    if not d.events:
+        return '<h3>Blev til i kalenderen</h3><p class="mut">Intet i kalenderen.</p>'
+    rows = []
+    for h in d.events:
+        when = fmt_date(h.start) + (f"–{fmt_date(h.end)}" if h.end and h.end != h.start else "")
+        flag = ' <b class="bad">aflyst</b>' if h.cancelled else ""
+        lines = []
+        for line in h.lines:
+            if line.item == d.item.key:
+                who = d.this
+            else:
+                other = d.others.get(line.item)
+                who = f'<a href="{e(item_url(line.item))}">{e(item_title(other))}</a>' if other else e(item_title(None))
+            lines.append(f"{HISTORY_ACTIONS[line.action]} af {who}" + (f" {e(fmt_when(line.at))}" if line.at else ""))
+        removed = [c for c in map(int, d.cfg["children"]) if d.ledger.is_removed(h.key, c)]
+        if removed:
+            lines.append(f"fjernet af dig for {e(child_names(removed, d.cfg))}")
+        rows.append(
+            f'<li><span class="date">{e(when)}</span><span class="grow">{e(h.title)}{flag}'
+            f'<br><span class="mut">{e(child_names(h.child_ids, d.cfg))}</span>'
+            f'<br><span class="mut">{"<br>".join(lines)}</span></span></li>'
+        )
+    return f'<h3>Blev til i kalenderen</h3><ul class="list">{"".join(rows)}</ul>'
+
+
+def thread_html(d: Detail) -> str:
+    """A message's whole thread, replies too, with this message marked."""
+    if len(d.thread) < 2:
+        return ""
+    rows = []
+    for m in d.thread:
+        v = m.latest
+        sel = m.key == d.item.key
+        who = " · ".join(x for x in (v.author, fmt_date(v.date)) if x)
+        head = e(who) if sel else f'<a href="{e(item_url(m.key))}">{e(who or "besked")}</a>'
+        rows.append(
+            f'<li{' class="sel" aria-current="true"' if sel else ""}><span class="grow">'
+            f'<span class="mut">{head}</span>{item_text(v.body)}</span></li>'
+        )
+    return f'<h3>Tråden · {len(d.thread)} beskeder</h3><ul class="list thread">{"".join(rows)}</ul>'
+
+
+async def item_detail(request: Request) -> Response:
+    """One item with everything the archive and Ledger know about it (``?show=1``: a sensitive thread's text too)."""
+    key = request.path_params["key"]
+    cfg, ledger = store.load_config(), Ledger.load()
+    events = ledger.events_by_item(key)
+    today = request.app.state.today()
+
+    def read() -> Detail | None:
+        with archive.read() as a:
+            item = a.item(key) if a is not None else None
+            if item is None:
+                return None
+            others = {line.item: a.item(line.item) for h in events for line in h.lines if line.item and line.item != key}
+            thread = [i for i in a.items() if item.thread_id and i.thread_id == item.thread_id]
+        thread.sort(key=lambda i: (i.latest.date or "", i.key))
+        return Detail(item, events, others, ledger, cfg, today, thread)
+
+    d = await asyncio.to_thread(read)
+    nav = '<p><a href="/">Status</a> · <a href="/overblik">Overblik</a></p>'
+    if d is None:
+        return page("Findes ikke", nav + '<p class="mut">Det findes ikke i arkivet.</p>', status_code=404)
+    hide = d.item.sensitive and request.query_params.get("show") != "1"
+    title = "Overblik" if hide else d.item.latest.title or "Overblik"
+    return page(title, nav + detail_html(d, hide=hide), request.query_params.get("msg"))
+
+
+async def item_file(request: Request) -> Response:
+    """One file the archive registered on the item, looked up by item key and attachment id.
+
+    Nothing from the URL is used as a path: an unknown id, another item's file, a secure
+    document, a link or a file that was never downloaded is not found.
+    """
+    key, attachment = request.path_params["key"], request.path_params["attachment"]
+
+    def find() -> archive.File | None:
+        with archive.read() as a:
+            item = a.item(key) if a is not None else None
+        return next((f for f in item.files if f.attachment_id == attachment), None) if item else None
+
+    file = await asyncio.to_thread(find)
+    if file is None or not file.downloadable or not file.path:
+        return PlainTextResponse("Findes ikke.", status_code=404)
+    data_dir = store.DATA_DIR.resolve()
+    path = (data_dir / file.path).resolve()
+    if not path.is_relative_to(data_dir) or not path.is_file():
+        return PlainTextResponse("Findes ikke.", status_code=404)
+    inline = file.kind == archive.Kind.IMAGE or file.name.lower().endswith(INLINE_SUFFIXES)
+    return FileResponse(
+        path, media_type=mimetypes.guess_type(file.name)[0] or "application/octet-stream", filename=file.name,
+        content_disposition_type="inline" if inline else "attachment", headers={"Cache-Control": "private, no-store"},
+    )
 
 
 async def remove_event(request: Request) -> Response:
@@ -797,6 +1056,8 @@ def create_app(
         routes=[
             Route("/", home),
             Route("/overblik", overview),
+            Route("/overblik/item/{key}", item_detail),
+            Route("/overblik/item/{key}/fil/{attachment:path}", item_file),
             Route("/events/remove", remove_event, methods=["POST"]),
             Route("/todos/{action}", tick_todo, methods=["POST"]),
             Route("/aula/login", aula_login_page),

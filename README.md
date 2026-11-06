@@ -165,6 +165,7 @@ Web-siden viser:
 - hvor mange opslag og beskeder arkivet har, hvornår der sidst blev gemt noget, og hvornår der sidst blev taget backup (med en advarsel, hvis det er mere end 2 døgn siden eller aldrig er sket)
 - de kommende begivenheder med en knap til at fjerne forkerte (de bliver så ikke oprettet igen). Gælder en begivenhed flere børn, er der en knap pr. barn
 - et overblik (`/overblik`) med et søgefelt øverst. Søgningen finder alt i arkivet på ordbegyndelser ("svøm" finder "svømning"), også tekst inde i vedhæftede PDF- og Word-filer (docx), og kan indsnævres efter barn, slags, emne og kilde (opslag, besked, med dokument). Overståede ting er dæmpede, og følsomme tråde vises uden emne og uddrag
+- hvert opslag og hver besked på sin egen side, `/overblik/item/<item-key>` (fx `/overblik/item/post:123` eller `/overblik/item/message:456:789`). Adressen ligger fast, så den kan bogmærkes og linkes til. Siden viser hele teksten, filerne (PDF åbnes i browseren, andre filer hentes ned), tidligere versioner, hvis det er rettet i Aula, hvad det blev til i kalenderen, en evt. opgave og for beskeder hele tråden. Følsomme tråde viser kun dato, kilde og art, indtil du trykker "Vis teksten". Filerne udleveres fra arkivet på `/overblik/item/<item-key>/fil/<vedhæftnings-id>`
 
 Fra web-siden kan du også logge ind i Aula med MitID (QR-koden vises i browseren) og forbinde Google.
 

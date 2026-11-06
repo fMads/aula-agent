@@ -308,6 +308,13 @@ class Item:
         """The newest classification there is."""
         return self.classified_version.classification if self.classified_version else None
 
+    def came_out(self, version: Version) -> str | None:
+        """When the item came out as this version: the first version when it was published or sent,
+        a later one (a correction) when it was edited in Aula, or else when the archive saw it."""
+        if version is self.versions[0]:
+            return version.date
+        return _iso(parse_api_datetime(version.raw.get("editedAt"))) or version.saved_at
+
     @property
     def child_ids(self) -> list[int]:
         """The children the item is for: Aula's when it set them, else the agent's, else none (= every child)."""
@@ -369,11 +376,8 @@ class ItemTodo:
 
     @property
     def came_out(self) -> str | None:
-        """When the item came out as this version: the first version when it was published or sent,
-        a later one (a correction) when it was edited in Aula, or else when the archive saw it."""
-        if self.version is self.item.versions[0]:
-            return self.version.date
-        return _iso(parse_api_datetime(self.version.raw.get("editedAt"))) or self.version.saved_at
+        """When the item came out as this version (:meth:`Item.came_out`)."""
+        return self.item.came_out(self.version)
 
 
 @dataclass
