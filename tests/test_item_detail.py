@@ -313,35 +313,13 @@ def test_a_post_has_no_thread(aula):
     assert "Tråden" not in get("/item/post:1").text
 
 
-def test_upcoming_events_on_the_status_page_and_the_overview_link_to_the_item(aula):
+def test_an_upcoming_event_on_the_front_page_links_to_the_item(aula):
     aula["client"] = FakeAula([child(1, "Emma")], [post(1, "Skovtur", 1)], [], {})
     run_fetch()
     apply({"processed": ["post:1"], "events": [{**trip_event("post:1"), "child_ids": [1]}], "new_topics": TOPICS,
            "classifications": [classify("post:1")]})
 
-    status = get("/settings").text
-    upcoming = status[status.index("<h2>Kommende begivenheder"):status.index("<h2>Børn")]
-    assert 'href="/item/post:1"' in upcoming
     assert '<a class="item-link" href="/item/post:1">Skovtur</a>' in get("/past").text  # no span: under Tidligere
-
-
-def test_an_upcoming_event_from_a_sensitive_thread_shows_its_source_only_as_sensitive_on_the_status_page(aula):
-    thread = {"id": 5, "subject": "Samtale om skoledagen", "lastMessageDate": iso(1), "sensitive": True}
-    aula["client"] = FakeAula([child(1, "Emma")], [], [thread], {"5": [message("a")]})
-    run_fetch()
-    apply({"processed": ["message:5:a"], "events": [{**trip_event("message:5:a"), "child_ids": [1]}],
-           "new_topics": TOPICS, "classifications": [{"item": "message:5:a", "category": "arrangement", "topics": ["tur"]}]})
-
-    def upcoming():
-        status = get("/settings").text
-        return status[status.index("<h2>Kommende begivenheder"):status.index("<h2>Børn")]
-
-    shown = upcoming()
-    assert '<a href="/item/message:5:a">🔒 Følsom tråd</a>' in shown
-    assert "Samtale om skoledagen" not in shown
-
-    store.path("ARCHIVE_FILE").unlink()  # no archive to look it up in: as before
-    assert '<a href="/item/message:5:a">Samtale om skoledagen</a>' in upcoming()
 
 
 # ------------------------------------------------------------------ "Fjern for <barn>" under "Blev til i kalenderen"

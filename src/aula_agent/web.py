@@ -1,4 +1,5 @@
-"""Minimal web UI: status, MitID re-login, Google connect, upcoming events, the overview, one item and its files.
+"""Minimal web UI: the overview (with a warning line when something needs doing), the settings, MitID re-login,
+Google connect, one item and its files.
 
 Meant to sit behind a Cloudflare Tunnel with Cloudflare Access in front. The app
 does not trust the tunnel alone: every request must carry a valid Cloudflare
@@ -256,6 +257,7 @@ input[type=text],input[type=search],select{font:inherit;padding:.35rem .5rem;bor
 .qr{width:min(20rem,80vw);aspect-ratio:1;margin:1rem 0}.qr svg{width:100%;height:100%}
 .otp{font-size:2rem;letter-spacing:.2em;font-weight:600}
 .flash{padding:.6rem .8rem;border-radius:8px;border:1px solid var(--line);margin-bottom:1rem}
+ul.warnings{list-style:none;padding:0;margin:0 0 1rem}ul.warnings li{padding:.5rem .8rem;border-radius:8px;border:1px solid var(--bad);margin-bottom:.4rem}
 form.inline{display:inline;margin:0}
 details>summary{cursor:pointer;margin:2rem 0 .6rem;font-weight:600}
 .acts{display:flex;flex-direction:column;gap:.3rem;align-items:flex-end}
@@ -281,7 +283,7 @@ ul.now{border:1px solid var(--line);border-radius:12px;padding:0 .9rem;backgroun
 .week.cur h3{border-color:var(--acc)}.ev{font-weight:500}
 .day{margin-top:1rem}.day h3{margin:0 0 .1rem}.day.today h3{color:var(--acc)}
 .week-line{margin:1.4rem 0 0;padding-bottom:.15rem;border-bottom:1px solid var(--line);font-size:.8rem;color:var(--mut)}.topic h3{margin:1rem 0 .2rem}
-#ikke-inddelt{margin-top:2.5rem}
+#ikke-inddelt{margin-top:.8rem}
 .thumbs{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem}.thumb{width:7rem;height:7rem;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 form.search select{flex:1 1 7rem;min-width:0;min-height:2.5rem}form.search button{min-height:2.5rem}
 details.filtre{flex:1 1 auto}details.filtre>summary{margin:0;display:inline-flex;align-items:center;min-height:2.5rem;font-weight:400;color:var(--mut)}
@@ -400,6 +402,72 @@ def archive_text(status: archive.Status) -> str:
     return f"{saved} · backup {fmt_when(status.last_backup)}{stale}"
 
 
+FETCH_STALE_AFTER = dt.timedelta(hours=24)
+LOGIN_OUTCOMES = (Outcome.AULA_LOGIN, Outcome.GOOGLE_LOGIN)  # a run that failed on these: the login's own warning
+
+
+def warnings(ledger: Ledger) -> list[str]:
+    """What needs doing before the nightly run works (each as HTML with a link to where it is done), from the
+    logins and the run log; nothing when all is well."""
+    out = []
+    aula = credentials.aula_status(ledger)
+    if not aula.ok:
+        what = "er udløbet" if credentials.aula_session_saved() else "mangler"
+        out.append(f'Aula-login {what}. <a href="/aula/login">Log ind</a>')
+    google = credentials.google_status()
+    google_login = ledger.last_run("apply", "google-login")
+    if not google.ok:
+        out.append('Google er ikke forbundet. <a href="/google">Forbind</a>')
+    elif google_login and google_login["outcome"] == Outcome.GOOGLE_LOGIN:
+        out.append('Google-login er udløbet. <a href="/google">Forbind</a>')
+    last = ledger.last_run("fetch", "apply")
+    if last and not last["ok"] and last["outcome"] not in LOGIN_OUTCOMES:
+        out.append(
+            f'Sidste kørsel ({e(last["command"])}) fejlede {e(fmt_when(last["at"]))}. <a href="/settings">Se Indstillinger</a>'
+        )
+    fetched = next((r for r in ledger.runs() if r["command"] == "fetch" and r["ok"]), None)
+    if fetched is None:
+        out.append('Der er ikke hentet fra Aula endnu. <a href="/settings">Se Indstillinger</a>')
+    elif dt.datetime.now().astimezone() - dt.datetime.fromisoformat(fetched["at"]).astimezone() > FETCH_STALE_AFTER:
+        out.append(
+            f'Der er ikke hentet fra Aula i over et døgn (sidst {e(fmt_when(fetched["at"]))}). '
+            '<a href="/settings">Se Indstillinger</a>'
+        )
+    return out
+
+
+def warnings_html(ledger: Ledger) -> str:
+    """The front page's warning line: one entry per problem, or nothing."""
+    found = warnings(ledger)
+    return f'<ul id="advarsler" class="warnings">{"".join(f"<li>{w}</li>" for w in found)}</ul>' if found else ""
+
+
+def archive_unclassified(pending: set[str]) -> str:
+    """How many items the agent has not put in a category yet (the pending ones it gets anyway left out)."""
+    with archive.read() as a:
+        if a is None:
+            return "Arkivet er ikke klar endnu."
+        return f"{len(a.unclassified(exclude=pending))} endnu ikke inddelt"
+
+
+def removed_html(ledger: Ledger, cfg: dict[str, Any], today: dt.date) -> str:
+    """ "Fjernet af dig": per child, the upcoming events the user removed from that child's calendar (only shown)."""
+    removed = ledger.removed_upcoming(today.isoformat())
+    every = [int(c) for c in cfg["children"]]
+    groups = []
+    for cid in every:
+        mine = sorted(
+            (r for r in removed if r["child_ids"] is None or cid in r["child_ids"]), key=lambda r: (r["start"] or "", r["title"] or "")
+        )
+        if mine:
+            rows = "".join(
+                f'<li><span class="date">{e(fmt_date(r["start"]))}</span><span class="grow">{e(r["title"])}</span></li>' for r in mine
+            )
+            groups.append(f'<h3>{e(child_first_name(cfg["children"][str(cid)]))}</h3><ul class="list">{rows}</ul>')
+    content = "".join(groups) or '<p class="mut">Intet fjernet.</p>'
+    return f'<section id="fjernet"><h2>Fjernet af dig</h2>{content}</section>'
+
+
 # ----------------------------------------------------------------------------- routes
 
 
@@ -428,41 +496,7 @@ async def home(request: Request) -> Response:
         ]
     )
 
-    def first_name(child_id: int) -> str:
-        return child_first_name(cfg["children"].get(str(child_id)))
-
-    events = ledger.upcoming()
-    sensitive = sensitive_items({ev.source for ev in events if ev.source})
-    if events:
-        items = []
-        for ev in events:
-            src_txt = ev.source_item.get("title") or ev.source_item.get("subject") or ""
-            if ev.source in sensitive:
-                src_txt = SENSITIVE
-            link = f' <a href="{e(ev.link)}" target="_blank" rel="noopener">åbn</a>' if ev.link else ""
-            names = ", ".join(first_name(c) for c in ev.child_ids)
-            several = len(ev.child_ids) > 1
-            buttons = "".join(
-                f'<form class="inline" method="post" action="/events/remove" '
-                f'data-title="{e(ev.title)}" data-who="{e(first_name(c))}" '
-                f'onsubmit="return confirm(\'Fjern »\'+this.dataset.title+\'« fra kalenderen for \'+this.dataset.who+\'? '
-                f'Den bliver ikke oprettet igen.\')">'
-                f'<input type="hidden" name="key" value="{e(ev.key)}"><input type="hidden" name="child_id" value="{c}">'
-                f'<button class="small">{"Fjern for " + e(first_name(c)) if several else "Fjern"}</button></form>'
-                for c in ev.child_ids
-            )
-            src = e(src_txt or "Aula")
-            if ev.source:
-                src = f'<a href="{e(store.item_path(ev.source))}">{src}</a>'
-            items.append(
-                f'<li><span class="date">{e(fmt_date(ev.start))}</span><span class="grow">{e(ev.title)}{link}'
-                f'<br><span class="mut">{e(names)}{" · fra " + src if src_txt or ev.source else ""}</span></span>'
-                f'<span class="acts">{buttons}</span></li>'
-            )
-        events_html = f'<ul class="list">{"".join(items)}</ul>'
-    else:
-        events_html = '<p class="mut">Ingen kommende begivenheder endnu.</p>'
-
+    unclassified = archive_unclassified(ledger.pending_keys())
     children_html = "".join(
         f'<li><span class="grow">{e(c.get("name"))} <span class="mut">· {e(c.get("institution"))}</span></span>'
         f'<span class="mut">{e(c.get("calendar_name") or "kalender oprettes ved første begivenhed")}</span></li>'
@@ -476,8 +510,9 @@ async def home(request: Request) -> Response:
     ) or '<li class="mut">Ingen kørsler endnu.</li>'
 
     body = f"""{tabs("settings")}<div class="cards">{cards}</div>
-<h2>Kommende begivenheder</h2>{events_html}
+<p class="mut" id="ikke-inddelt">{e(unclassified)}</p>
 <h2>Børn og kalendere</h2><ul class="list">{children_html}</ul>
+{removed_html(ledger, cfg, request.app.state.today())}
 <h2>Seneste kørsler</h2><ul class="list">{runs_html}</ul>
 <p class="mut" style="margin-top:2rem">Logget ind som {e(getattr(request.state, "email", ""))}</p>"""
     return page(None, body, request.query_params.get("msg"))
@@ -494,14 +529,6 @@ def child_first_name(child: dict[str, Any] | None) -> str:
 def kind_name(item: archive.Item) -> str:
     """What an item is, as the pages say it."""
     return "opslag" if item.kind == "post" else "besked"
-
-
-def sensitive_items(keys: set[str]) -> set[str]:
-    """Which of these items are sensitive threads, by the archive (none, when it is missing or not migrated yet)."""
-    with archive.read() as a:
-        if a is None:
-            return set()
-        return {k for k in keys if (item := a.item(k)) is not None and item.sensitive}
 
 
 CATEGORY_NAMES = {
@@ -942,28 +969,28 @@ async def overview_page(request: Request, params: QueryParams) -> Response:
     if path != list_path(params, path):
         return RedirectResponse(overview_url(params, page=path), status_code=302)
     ledger = Ledger.load()
-    pending = ledger.pending_keys()
     today = request.app.state.today()
 
     child = child_param(params)
     events = [ev for ev in ledger.upcoming(today.isoformat()) if child is None or child in ev.child_ids]
 
-    def read() -> tuple[list[archive.Item], int, list[archive.ItemTodo], dict[str, archive.Item]] | None:
+    def read() -> tuple[list[archive.Item], list[archive.ItemTodo], dict[str, archive.Item]] | None:
         with archive.read() as a:
             if a is None:
                 return None
             sources = {k: item for k in {ev.source for ev in events if ev.source} if (item := a.item(k))}
-            return a.items(), len(a.unclassified(exclude=pending)), a.todos(), sources
+            return a.items(), a.todos(), sources
 
     nav = tabs(OVERVIEW_PAGES[path])
     search = await asyncio.to_thread(search_part, params, today, path)
     if search and search.results is not None:
         return page("Søgning", nav + search.form + overview_main(search.results), enhanced=True)
     got = await asyncio.to_thread(read)
+    warned = warnings_html(ledger) if path == "/" else ""
     if got is None or search is None:
         body = overview_main('<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>')
-        return page(None, nav + body, enhanced=True)
-    items, unclassified, todos, sources = got
+        return page(None, nav + warned + body, enhanced=True)
+    items, todos, sources = got
     todos = [t for t in todos if for_child(t.item.child_ids, child)]
     shown = [
         i for i in items
@@ -987,9 +1014,8 @@ async def overview_page(request: Request, params: QueryParams) -> Response:
 <section id="skal-goeres">{todos_html(open_, checked, ledger, today, back)}</section>
 {near_html(coming, today, back)}
 <section id="gaelder-nu"><h2>Gælder nu</h2><ul class="list now">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>
-{upcoming_html(coming, today, back)}
-<p class="mut" id="ikke-inddelt">{unclassified} endnu ikke inddelt</p>"""
-    return page(None, nav + search.form + overview_main(body), msg, enhanced=True)
+{upcoming_html(coming, today, back)}"""
+    return page(None, nav + search.form + warned + overview_main(body), msg, enhanced=True)
 
 
 async def tick_todo(request: Request) -> Response:
@@ -1455,7 +1481,7 @@ async def aula_login_state(request: Request) -> Response:
 
 
 def go_home(msg: str) -> RedirectResponse:
-    """Back to the settings (the logins, the events) with ``msg``."""
+    """Back to the settings (the logins) with ``msg``."""
     return RedirectResponse(f"/settings?msg={quote(msg)}", status_code=303)
 
 

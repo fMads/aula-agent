@@ -98,23 +98,18 @@ def test_post_needs_same_origin():
 # ------------------------------------------------------------------ pages
 
 
-def test_home_shows_status_events_and_escapes_html(monkeypatch, tmp_path):
+def test_home_shows_status_children_and_runs_and_escapes_html(monkeypatch, tmp_path):
     monkeypatch.setattr("aula.config.DEFAULT_TOKEN_FILE", tmp_path / "no-tokens.json")
     configure()
     cfg = store.load_config()
-    cfg["children"]["1"] = {"name": "Emma Jensen", "institution": "Skolen", "calendar_id": "c1", "calendar_name": "Skole – Emma"}
+    cfg["children"]["1"] = {"name": "Emma Jensen", "institution": "<script>alert(1)</script>Skolen",
+                            "calendar_id": "c1", "calendar_name": "Aula – Emma"}
     store.save_config(cfg)
-    ledger = Ledger()
-    ledger.record(SyncedEntry("k1", [1], "c1", "e1", "<script>alert(1)</script>Juleklip", "2099-12-04", "2099-12-04",
-                              source_item={"title": "Opslag om jul"}, link="https://cal/e1"))
-    ledger.record(SyncedEntry("old", [1], "c1", "e0", "Gammel", "2001-01-01", "2001-01-01"))
-    ledger.save()
     runs.record("fetch", Outcome.OK, "2 nye/ændrede, 0 venter")
     with make_client() as c:
         r = c.get("/settings", headers=auth())
     assert "&lt;script&gt;" in r.text and "<script>alert" not in r.text
-    assert "04.12.2099" in r.text and "Emma" in r.text and "Opslag om jul" in r.text
-    assert "Gammel" not in r.text
+    assert "Emma Jensen" in r.text and "Aula – Emma" in r.text
     assert "2 nye/ændrede" in r.text
     assert "Ikke logget ind" in r.text  # no Aula session in the test environment
 
@@ -150,15 +145,6 @@ def synced_on_two_calendars(google):
         google.events[(cal, f"e-{cal}")] = {"extendedProperties": {"private": {"aulaAgentKey": "k1"}}}
         ledger.record(SyncedEntry("k1", [cid], cal, f"e-{cal}", "Skovtur", "2099-01-01", "2099-01-01"))
     ledger.save()
-
-
-def test_home_has_a_remove_button_per_child(google):
-    configure()
-    synced_on_two_calendars(google)
-    with make_client(google=lambda: google) as c:
-        html = c.get("/settings", headers=auth()).text
-    assert "Fjern for Emma" in html and "Fjern for Oscar" in html
-    assert 'name="child_id" value="1"' in html and 'name="child_id" value="2"' in html
 
 
 def test_remove_event_for_one_child_is_remembered(google):
@@ -347,8 +333,6 @@ def test_remove_for_one_child_in_a_joint_calendar_keeps_the_entry_until_no_child
     ledger.record(SyncedEntry("k1", [1, 2], "joint", "e1", "Skovtur", "2099-01-01", "2099-01-01"))
     ledger.save()
     with make_client(google=lambda: google) as c:
-        html = c.get("/settings", headers=auth()).text
-        assert "Fjern for Emma" in html and "Fjern for Oscar" in html
         c.post("/events/remove", data={"key": "k1", "child_id": "1"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
         assert list(google.events) == [("joint", "e1")]
         ledger = Ledger.load()
