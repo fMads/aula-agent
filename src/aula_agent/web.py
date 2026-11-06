@@ -23,6 +23,7 @@ from urllib.parse import quote, urlencode, urlparse, urlsplit
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
 from starlette.middleware import Middleware
+from starlette.datastructures import QueryParams
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
@@ -781,6 +782,40 @@ def child_param(params) -> int | None:
     return int(raw) if raw.isdigit() else None
 
 
+CHILD_COOKIE = "child"  # the child chosen in the child filter, remembered on the device for pages without ?child=
+ALL_CHILDREN = "all"  # ?child= of "Alle børn": every child, and the device forgets the chosen one
+CHILD_COOKIE_AGE = 365 * 24 * 3600  # a year
+
+
+def known_child(raw: str | None) -> bool:
+    """Whether ``raw`` is a child in the config (one no longer there is ignored)."""
+    return bool(raw) and raw.isdigit() and raw in store.load_config()["children"]
+
+
+def view_params(request: Request) -> QueryParams:
+    """What the overview's page is asked for: the URL, with the child remembered on the device (:data:`CHILD_COOKIE`)
+    when the URL has none (``child`` in the URL wins)."""
+    params = request.query_params
+    remembered = request.cookies.get(CHILD_COOKIE)
+    if "child" in params or not known_child(remembered):
+        return params
+    return QueryParams([*params.multi_items(), ("child", remembered)])
+
+
+def remember_child(request: Request, response: Response) -> Response:
+    """Remember the child chosen in the URL on the device for a year, forget it for "Alle børn" (or when it is no
+    longer in the config). ``Secure`` when the site is on https, as it is behind Access (the demo is not)."""
+    chosen, remembered = request.query_params.get("child"), request.cookies.get(CHILD_COOKIE)
+    secure = web_config()["public_url"].startswith("https://")
+    if known_child(chosen):
+        response.set_cookie(
+            CHILD_COOKIE, chosen, max_age=CHILD_COOKIE_AGE, httponly=True, samesite="lax", secure=secure
+        )
+    elif remembered is not None and (chosen == ALL_CHILDREN or not known_child(remembered)):
+        response.delete_cookie(CHILD_COOKIE, httponly=True, samesite="lax", secure=secure)
+    return response
+
+
 def for_child(child_ids: list[int], child: int | None) -> bool:
     """Whether something for these children is shown for ``child``; for no child in particular is for every child."""
     return child is None or not child_ids or child in child_ids
@@ -805,7 +840,7 @@ def child_filter(params, children: dict[str, Any], page: str = "/") -> str:
     def chip(cid: int | None, name: str) -> str:
         on = " on" if cid == chosen else ""
         current = ' aria-current="true"' if cid == chosen else ""
-        href = overview_url(params, page=page, drop=("child",), add=[("child", str(cid))] if cid is not None else [])
+        href = overview_url(params, page=page, drop=("child",), add=[("child", str(cid) if cid is not None else ALL_CHILDREN)])
         return f'<a class="chip{on}" href="{e(href)}"{current}>{e(name)}</a>'
 
     chips = [chip(None, "Alle børn")] + [chip(int(cid), child_first_name(c)) for cid, c in children.items() if cid.isdigit()]
@@ -897,15 +932,20 @@ OVERVIEW_PAGES = {"/": "forside", "/info": "info", "/past": "past", "/search": "
 async def overview(request: Request) -> Response:
     """The overview's pages, each under the tabs and the search field: the front page (Skal gøres, I dag og i
     morgen, Gælder nu, Kommende day by day), Stående info on /info, Tidligere on /past, and the search results on
-    /search (each sends on to the one :func:`list_path` has for what it is asked for)."""
+    /search (each sends on to the one :func:`list_path` has for what it is asked for), for the child in the URL or
+    else the one remembered on the device (:func:`view_params`, :func:`remember_child`)."""
+    return remember_child(request, await overview_page(request, view_params(request)))
+
+
+async def overview_page(request: Request, params: QueryParams) -> Response:
     path = request.url.path
-    if path != list_path(request.query_params, path):
-        return RedirectResponse(overview_url(request.query_params, page=path), status_code=302)
+    if path != list_path(params, path):
+        return RedirectResponse(overview_url(params, page=path), status_code=302)
     ledger = Ledger.load()
     pending = ledger.pending_keys()
     today = request.app.state.today()
 
-    child = child_param(request.query_params)
+    child = child_param(params)
     events = [ev for ev in ledger.upcoming(today.isoformat()) if child is None or child in ev.child_ids]
 
     def read() -> tuple[list[archive.Item], int, list[archive.ItemTodo], dict[str, archive.Item]] | None:
@@ -916,7 +956,7 @@ async def overview(request: Request) -> Response:
             return a.items(), len(a.unclassified(exclude=pending)), a.todos(), sources
 
     nav = tabs(OVERVIEW_PAGES[path])
-    search = await asyncio.to_thread(search_part, request.query_params, today, path)
+    search = await asyncio.to_thread(search_part, params, today, path)
     if search and search.results is not None:
         return page("Søgning", nav + search.form + overview_main(search.results), enhanced=True)
     got = await asyncio.to_thread(read)
@@ -929,7 +969,7 @@ async def overview(request: Request) -> Response:
         i for i in items
         if i.classification and i.classification.category != archive.Category.SVAR and for_child(i.child_ids, child)
     ]
-    params, msg = request.query_params, request.query_params.get("msg")
+    msg = params.get("msg")
     if path == "/info":
         info = standing_html([i for i in shown if i.classification.category == archive.Category.INFO])
         return page("Info", nav + search.form + overview_main(info), msg, enhanced=True)

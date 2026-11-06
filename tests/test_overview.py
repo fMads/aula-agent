@@ -414,7 +414,7 @@ def test_vis_aeldre_keeps_the_child_and_the_child_filter_on_an_earlier_page_keep
 
     html = past(child="1", before="2026-09-07")
     chips = html.split('id="barn-filter"', 1)[1].split("</nav>", 1)[0]
-    assert 'href="/past?before=2026-09-07&amp;child=2"' in chips and 'href="/past?before=2026-09-07"' in chips
+    assert 'href="/past?before=2026-09-07&amp;child=2"' in chips and 'href="/past?before=2026-09-07&amp;child=all"' in chips
     assert titles(section(html, "tidligere")) == ["Skolestart"]
 
 
@@ -475,5 +475,67 @@ def test_the_child_filter_on_info_stays_on_info():
     html = info(child="2")
 
     chips = html.split('id="barn-filter"', 1)[1].split("</nav>", 1)[0]
-    assert 'href="/info"' in chips and 'href="/info?child=1"' in chips
+    assert 'href="/info?child=all"' in chips and 'href="/info?child=1"' in chips
     assert titles(section(html, "staaende-info")) == ["Skema for Oscar"]
+
+
+def two_childrens_trips():
+    with archive.open() as a:
+        a.save_post(post(1, "Tur for Emma", publish="2026-11-02T08:00:00"), child_ids=[1])
+        a.save_post(post(2, "Tur for Oscar", publish="2026-11-02T08:00:00"), child_ids=[2])
+        classify(a, "post:1", "arrangement", start="2026-11-10")
+        classify(a, "post:2", "arrangement", start="2026-11-11")
+    two_children()
+    configure()
+
+
+def test_a_chosen_child_is_remembered_on_the_device_for_the_next_page_without_child():
+    two_childrens_trips()
+    with make_client(today=lambda: TODAY) as c:
+        r = c.get("/", params={"child": "2"}, headers=auth())
+        cookie = r.headers["set-cookie"]
+        assert cookie.startswith("child=2;")
+        assert "HttpOnly" in cookie and "SameSite=lax" in cookie and "Secure" in cookie
+        assert "Max-Age=31536000" in cookie  # a year
+
+        for path, name in [("/", "kommende"), ("/past", None), ("/info", None)]:
+            html = c.get(path, headers=auth()).text
+            assert '<a class="chip on" href="' in html and 'aria-current="true">Oscar</a>' in html
+        assert titles(section(c.get("/", headers=auth()).text, "kommende")) == ["Tur for Oscar"]
+        assert '<input type="hidden" name="child" value="2">' in c.get("/", headers=auth()).text  # search keeps it
+
+
+def test_alle_forgets_the_child_and_the_url_wins_over_the_remembered_one():
+    two_childrens_trips()
+    with make_client(today=lambda: TODAY) as c:
+        c.get("/", params={"child": "2"}, headers=auth())
+
+        assert titles(section(c.get("/", params={"child": "1"}, headers=auth()).text, "kommende")) == ["Tur for Emma"]
+
+        alle = c.get("/info", params={"child": "all"}, headers=auth())
+        assert alle.headers["set-cookie"].startswith('child="";') and "Max-Age=0" in alle.headers["set-cookie"]
+        assert '<a class="chip on" href="/info?child=all" aria-current="true">Alle børn</a>' in alle.text
+        html = c.get("/", headers=auth()).text
+        assert titles(section(html, "kommende")) == ["Tur for Emma", "Tur for Oscar"]
+
+
+def test_a_remembered_child_no_longer_in_the_config_is_ignored_and_forgotten():
+    two_childrens_trips()
+    with make_client(today=lambda: TODAY) as c:
+        c.cookies.set("child", "7")
+        r = c.get("/", headers=auth())
+        assert titles(section(r.text, "kommende")) == ["Tur for Emma", "Tur for Oscar"]
+        assert 'chip on" href="/?child=all"' in r.text and "Max-Age=0" in r.headers["set-cookie"]
+
+        c.cookies.clear()
+        r = c.get("/", params={"child": "7"}, headers=auth())  # nor is one in the URL remembered
+        assert "set-cookie" not in r.headers
+
+
+def test_one_child_has_no_chips_and_the_cookie_is_not_secure_without_https():
+    configure(public_url="http://127.0.0.1:8790")
+    with make_client(today=lambda: TODAY) as c:
+        assert 'id="barn-filter"' not in c.get("/", headers=auth()).text
+        two_children()
+        cookie = c.get("/past", params={"child": "1"}, headers=auth()).headers["set-cookie"]
+        assert cookie.startswith("child=1;") and "Secure" not in cookie
