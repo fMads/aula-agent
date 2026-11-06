@@ -62,3 +62,20 @@ def test_the_pages_and_the_script_agree_on_the_ids_the_script_swaps_and_listens_
                          ("form", "search"), ("input", "q")):
         assert re.search(rf'<{element}\b[^>]*\sid="{id_}"', html), id_
         assert f'"{id_}"' in script or f"#{id_}" in script, id_
+
+
+def search_form(html):
+    return html.split('<form id="search"', 1)[1].split("</form>", 1)[0]
+
+
+def test_the_filters_are_folded_under_filtre_open_when_one_is_chosen_and_the_button_is_only_without_script():
+    archive_with_a_post()
+
+    form = search_form(get("/overblik").text)
+    filters = re.search(r'<details class="filtre">\s*<summary>Filtre</summary>(.*?)</details>', form, re.S)
+    assert filters and filters[1].count("<select") == 3
+    assert re.search(r"<noscript><button>Søg</button></noscript>", form)
+    assert form.index('id="q"') < form.index("<details")  # the search field is not folded
+
+    chosen = search_form(get("/overblik", category="arrangement").text)
+    assert '<details class="filtre" open>' in chosen and "Filtre (1)" in chosen

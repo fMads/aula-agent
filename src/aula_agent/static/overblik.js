@@ -1,7 +1,7 @@
 // Overblik: et lag ovenpå siderne (#32). Uden JS virker alt; dette gør dem bare hurtigere at bruge:
 // - søgning mens man skriver (og filtre og barn-filter uden genindlæsning), URL'en følger med,
 // - detaljen i en skuffe på brede skærme (tilbage-knappen og Esc lukker den), fuld side på mobil,
-// - "/" fokuserer søgefeltet,
+// - "/" fokuserer søgefeltet (på detaljen som fuld side: går til overblikket med fokus i det),
 // - "Klaret"/"Fortryd" uden at miste pladsen på siden.
 // Siderne hentes som almindelig HTML, og kun <main id="overblik-main"> (og toppen) skiftes ud.
 // Går noget galt (fx Cloudflare Access vil have et nyt login), så navigeres der helt almindeligt.
@@ -11,6 +11,7 @@
   const MAIN = "overblik-main";
   const WIDE = window.matchMedia("(min-width: 64rem)");
   const DEBOUNCE_MS = 250;
+  const PAUSE_MS = 1500; // så længe uden at skrive, og næste søgning er en ny post i historikken
   const parser = new DOMParser();
   const top = () => document.getElementById("overblik-top");
   const main = () => document.getElementById(MAIN);
@@ -41,10 +42,18 @@
     window.location.assign(url);
   }
 
-  // Beskeden fra siden (fx "Prøv igen om lidt"), øverst i det der skiftes ud.
-  function withFlash(doc, content) {
+  // Det der skiftes ud fra en hentet side: dens <main>, med sidens besked (fx "Prøv igen om lidt") øverst.
+  function mainOf(doc) {
+    const content = doc.getElementById(MAIN);
     const flash = doc.querySelector("body > .flash");
     if (flash) content.prepend(flash);
+    return content;
+  }
+
+  // Links og formularer på en side vist et andet sted (skuffen) er skrevet til sidens egen adresse (fx "?show=1").
+  function rebase(content, url) {
+    content.querySelectorAll("a[href]").forEach((a) => (a.href = new URL(a.getAttribute("href"), url).href));
+    content.querySelectorAll("form[action]").forEach((f) => (f.action = new URL(f.getAttribute("action"), url).href));
     return content;
   }
 
@@ -60,6 +69,7 @@
   let listUrl = location.href;
 
   // Skifter listen ud med siden på ``url``; ``whole``: også søgefeltet og filtrene (ikke mens man skriver).
+  // ``history``: "push", "replace" eller "search" (en søgning: push første gang, siden replace, se newSearch).
   async function showList(url, { whole = true, history = null, keepScroll = false } = {}) {
     let got;
     try {
@@ -71,15 +81,24 @@
     const y = window.scrollY;
     document.querySelectorAll("body > .flash").forEach((el) => el.remove());
     if (whole && top() && doc.getElementById("overblik-top")) {
-      top().replaceWith(doc.getElementById("overblik-top"));
+      const fresh = doc.getElementById("overblik-top");
+      const was = top().querySelector("details.filtre"), now = fresh.querySelector("details.filtre");
+      if (was && now) now.open = was.open; // "Filtre" bliver, som brugeren lod den
+      top().replaceWith(fresh);
     } else if (top()) {
       const chips = doc.getElementById("barn-filter");
       const mine = document.getElementById("barn-filter");
       if (chips && mine) mine.replaceWith(chips);
     }
-    main().replaceWith(withFlash(doc, doc.getElementById(MAIN)));
+    main().replaceWith(mainOf(doc));
     document.title = doc.title;
     listUrl = url;
+    if (history === "search") {
+      history = typing ? "replace" : "push";
+      typing = true;
+      clearTimeout(pause);
+      pause = setTimeout(newSearch, PAUSE_MS);
+    }
     if (history === "push") window.history.pushState({ list: url }, "", url);
     if (history === "replace") window.history.replaceState({ list: url }, "", url);
     window.scrollTo(0, keepScroll ? y : 0);
@@ -93,16 +112,22 @@
     return form.getAttribute("action") + (q ? "?" + q : "");
   }
 
+  // Én søgning = én post i historikken: det første resultat lægger sig dér, resten (mens man skriver) erstatter
+  // det. En ny søgning begynder efter en pause, når søgefeltet mister fokus, og et filter-skift er sin egen post.
   let timer = null;
-  let typing = false; // første tegn i en ny søgning lægger sig i historikken, resten erstatter den
+  let pause = null;
+  let typing = false; // den søgning, man er i gang med, har sin post i historikken
 
-  function search(form, now = false) {
+  function newSearch() {
+    clearTimeout(pause);
+    typing = false;
+  }
+
+  function search(form, now = false, history = "search") {
     clearTimeout(timer);
     const go = () => {
       const url = searchUrl(form);
-      if (sameList(url, listUrl)) return;
-      showList(url, { whole: false, history: typing ? "replace" : "push" });
-      typing = true;
+      if (!sameList(url, listUrl)) showList(url, { whole: false, history });
     };
     if (now) go();
     else timer = setTimeout(go, DEBOUNCE_MS);
@@ -114,7 +139,12 @@
   });
   document.addEventListener("change", (ev) => {
     const form = ev.target.closest && ev.target.closest("form#search");
-    if (form && ev.target.matches("select")) search(form, true);
+    if (!form || !ev.target.matches("select")) return;
+    newSearch();
+    search(form, true, "push");
+  });
+  document.addEventListener("focusout", (ev) => {
+    if (ev.target.id === "q") newSearch();
   });
 
   // ------------------------------------------------------------------ skuffen (detaljen på brede skærme)
@@ -148,11 +178,7 @@
     }
     drawer = drawer || makeDrawer();
     if (opener) drawer.opener = opener;
-    const content = withFlash(got.doc, got.doc.getElementById(MAIN));
-    // Links på detaljen er skrevet til dens egen adresse (fx "?show=1").
-    content.querySelectorAll("a[href]").forEach((a) => (a.href = new URL(a.getAttribute("href"), url).href));
-    content.querySelectorAll("form[action]").forEach((f) => (f.action = new URL(f.getAttribute("action"), url).href));
-    drawer.body.replaceChildren(content);
+    drawer.body.replaceChildren(rebase(mainOf(got.doc), url));
     drawer.body.dataset.url = url;
     drawer.full.href = url;
     drawer.el.hidden = false;
@@ -218,7 +244,7 @@
     }
     if (isList(a) && top() && !inDrawer) {
       ev.preventDefault();
-      typing = false;
+      newSearch();
       if (isOpen()) hideDrawer();
       showList(a.href, { history: "push" });
     }
@@ -253,14 +279,11 @@
       return form.submit();
     }
     if (inDrawer) {
-      const content = withFlash(got.doc, got.doc.getElementById(MAIN));
-      const url = drawer.body.dataset.url;
-      content.querySelectorAll("a[href]").forEach((a) => (a.href = new URL(a.getAttribute("href"), url).href));
-      drawer.body.replaceChildren(content);
+      drawer.body.replaceChildren(rebase(mainOf(got.doc), drawer.body.dataset.url));
       showList(listUrl, { keepScroll: true });
     } else {
       document.querySelectorAll("body > .flash").forEach((el) => el.remove());
-      main().replaceWith(withFlash(got.doc, got.doc.getElementById(MAIN)));
+      main().replaceWith(mainOf(got.doc));
       markChosen(isOpen() ? drawer.body.dataset.url : null);
     }
   }
@@ -269,7 +292,7 @@
 
   window.addEventListener("popstate", (ev) => {
     const state = ev.state || {};
-    typing = false;
+    newSearch();
     if (state.drawer && top()) {
       if (state.list && !sameList(state.list, listUrl)) showList(state.list, { keepScroll: true });
       showDrawer(state.drawer, { focus: false });
@@ -291,17 +314,25 @@
     const t = ev.target;
     const editing = t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
     if (ev.key === "/" && !editing) {
+      ev.preventDefault();
       const q = document.getElementById("q");
-      if (q) {
-        ev.preventDefault();
-        q.focus();
-        q.select();
-      }
+      if (q) focusSearch(q);
+      else window.location.assign("/overblik#q"); // detaljen som fuld side: søgefeltet er på overblikket
     } else if (ev.key === "Escape" && isOpen()) {
       ev.preventDefault();
       closeDrawer();
     }
   });
 
-  window.history.replaceState({ ...(window.history.state || {}), list: listUrl }, "", location.href);
+  function focusSearch(q) {
+    q.focus();
+    q.select();
+  }
+
+  // Kom man hertil med "/" fra detaljen (/overblik#q): fokus i søgefeltet, og adressen uden #q.
+  if (location.hash === "#q" && document.getElementById("q")) {
+    focusSearch(document.getElementById("q"));
+    listUrl = location.href.split("#")[0];
+  }
+  window.history.replaceState({ ...(window.history.state || {}), list: listUrl }, "", listUrl);
 })();

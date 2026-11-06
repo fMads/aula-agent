@@ -45,7 +45,7 @@ def to_do(html):
 
 def done(html):
     """The todo texts under the folded "Klaret", in order."""
-    return re.findall(r'<span class="todo">(.*?)</span>', _between(html, "<details", "</details>"))
+    return re.findall(r'<span class="todo">(.*?)</span>', _between(html, "<summary>Klaret", "</details>"))
 
 
 def _between(html, start, end):
