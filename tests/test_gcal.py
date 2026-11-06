@@ -74,6 +74,32 @@ def test_sync_creates_calendar_per_child_uploads_once_and_marks_processed(google
     assert [u.child_ids for u in ledger.upcoming()] == [[1, 2]]
 
 
+def set_public_url(url):
+    cfg = store.load_config()
+    cfg["web"] = {"public_url": url}
+    store.save_config(cfg)
+
+
+def test_description_links_to_the_items_detail_page_when_the_web_page_has_an_address(google):
+    setup_children((1, "Emma"))
+    set_public_url("https://aula.example.dk")
+    add_pending("message:4:7", type="message", subject="Skovtur")
+    gcal.sync({"processed": ["message:4:7"], "classifications": [{"item": "message:4:7", "category": "svar"}], "events": [ev("message:4:7#1", source="message:4:7", description="Madpakke")]}, google=google)
+
+    (body,) = google.bodies()
+    assert "https://aula.example.dk/overblik/item/message:4:7" in body["description"]
+    assert body["description"].startswith("Madpakke\n\nFra Aula: besked »Skovtur«")
+
+
+def test_description_has_no_link_without_a_web_address(google):
+    setup_children((1, "Emma"))
+    add_pending("post:9", type="post", title="Juleklip")
+    gcal.sync({"processed": ["post:9"], "classifications": [{"item": "post:9", "category": "svar"}], "events": [ev("post:9#1", source="post:9")]}, google=google)
+
+    (body,) = google.bodies()
+    assert "http" not in body["description"] and "/overblik" not in body["description"]
+
+
 def test_same_key_updates_and_clears_removed_fields(google, data_dir):
     setup_children((1, "Emma"))
     (data_dir / "attachments").mkdir()

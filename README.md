@@ -197,6 +197,8 @@ Det kræver et domæne på Cloudflare. Zero Trust er gratis til få brugere.
 
 Se opsætningen med `uv run aula-agent web-setup`. Hvis du kører `--email` igen, erstatter det hele listen.
 
+Når adressen (`--url`) er sat, får begivenhederne i Google Calendar et link til item'ets detalje-side på web-siden (`/overblik/item/<item-key>`). Begivenheder, der allerede ligger i kalenderen, får linket, næste gang de bliver opdateret.
+
 ## I hverdagen
 
 - **Login udløbet:** Natkørslen stopper og siger det. Så logger du ind igen med `uv run aula login` eller på web-siden. Det, der ikke er nået at blive behandlet, venter bare til næste kørsel.
