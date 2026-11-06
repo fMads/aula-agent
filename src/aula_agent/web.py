@@ -474,20 +474,20 @@ def fmt_when(value: str | None) -> str:
 BACKUP_STALE_AFTER = dt.timedelta(days=2)
 
 
-def backup_ok(status: archive.Status) -> bool:
+def backup_ok(status: archive.Status, now: dt.datetime) -> bool:
     if not status.last_backup:
         return False
-    return dt.datetime.now().astimezone() - dt.datetime.fromisoformat(status.last_backup) <= BACKUP_STALE_AFTER
+    return now - dt.datetime.fromisoformat(status.last_backup) <= BACKUP_STALE_AFTER
 
 
-def archive_text(status: archive.Status) -> str:
+def archive_text(status: archive.Status, now: dt.datetime) -> str:
     saved = "intet gemt endnu"
     if status.last_saved:
         messages = f"{status.messages} {'besked' if status.messages == 1 else 'beskeder'}"
         saved = f"{status.posts} opslag · {messages} · sidst gemt {fmt_when(status.last_saved)}"
     if not status.last_backup:
         return f"{saved} · ingen backup endnu"
-    stale = "" if backup_ok(status) else " – over 2 døgn gammel"
+    stale = "" if backup_ok(status, now) else " – over 2 døgn gammel"
     return f"{saved} · backup {fmt_when(status.last_backup)}{stale}"
 
 
@@ -495,9 +495,9 @@ FETCH_STALE_AFTER = dt.timedelta(hours=24)
 LOGIN_OUTCOMES = (Outcome.AULA_LOGIN, Outcome.GOOGLE_LOGIN)  # a run that failed on these: the login's own warning
 
 
-def warnings(ledger: Ledger) -> list[str]:
+def warnings(ledger: Ledger, now: dt.datetime) -> list[str]:
     """What needs doing before the nightly run works (each as HTML with a link to where it is done), from the
-    logins and the run log; nothing when all is well."""
+    logins and the run log as of ``now``; nothing when all is well."""
     out = []
     aula = credentials.aula_status(ledger)
     if not aula.ok:
@@ -517,7 +517,7 @@ def warnings(ledger: Ledger) -> list[str]:
     fetched = next((r for r in ledger.runs() if r["command"] == "fetch" and r["ok"]), None)
     if fetched is None:
         out.append('Der er ikke hentet fra Aula endnu. <a href="/settings">Se Indstillinger</a>')
-    elif dt.datetime.now().astimezone() - dt.datetime.fromisoformat(fetched["at"]).astimezone() > FETCH_STALE_AFTER:
+    elif now - dt.datetime.fromisoformat(fetched["at"]).astimezone() > FETCH_STALE_AFTER:
         out.append(
             f'Der er ikke hentet fra Aula i over et døgn (sidst {e(fmt_when(fetched["at"]))}). '
             '<a href="/settings">Se Indstillinger</a>'
@@ -525,9 +525,9 @@ def warnings(ledger: Ledger) -> list[str]:
     return out
 
 
-def warnings_html(ledger: Ledger) -> str:
+def warnings_html(ledger: Ledger, now: dt.datetime) -> str:
     """The front page's warning line: one entry per problem, or nothing."""
-    found = warnings(ledger)
+    found = warnings(ledger, now)
     return f'<ul id="advarsler" class="warnings">{"".join(f"<li>{w}</li>" for w in found)}</ul>' if found else ""
 
 
@@ -565,7 +565,7 @@ async def home(request: Request) -> Response:
     aula, google = credentials.aula_status(ledger), credentials.google_status()
     last_runs = ledger.runs(8)
     last_run = ledger.last_run("fetch", "apply")
-    archive_status = archive.status()
+    archive_status, now = archive.status(), request.app.state.now()
 
     def card(label: str, ok: bool | None, text: str, action: str = "") -> str:
         cls = "" if ok is None else ("ok" if ok else "bad")
@@ -581,7 +581,7 @@ async def home(request: Request) -> Response:
                 fmt_when(last_run["at"]) if last_run else "aldrig",
             ),
             card("Venter", None, f"{len(ledger.pending_keys())} beskeder/opslag"),
-            card("Arkiv", None if backup_ok(archive_status) else False, archive_text(archive_status)),
+            card("Arkiv", None if backup_ok(archive_status, now) else False, archive_text(archive_status, now)),
         ]
     )
 
@@ -1156,7 +1156,7 @@ async def overview_page(request: Request, params: QueryParams) -> Response:
     if search and search.results is not None:
         return page("Søgning", search.form + overview_main(search.results), enhanced=True, nav=nav)
     got = await asyncio.to_thread(read)
-    warned = warnings_html(ledger) if path == "/" else ""
+    warned = warnings_html(ledger, request.app.state.now()) if path == "/" else ""
     if got is None or search is None:
         body = overview_main(warned + '<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>')
         return page(None, body, enhanced=True, nav=nav)
@@ -1739,10 +1739,12 @@ async def google_callback(request: Request) -> Response:
 
 def create_app(
     *, verifier_factory=default_verifier_factory, mitid: MitIDLogin | None = None, google=None,
-    today: Callable[[], dt.date] = dt.date.today,
+    now: Callable[[], dt.datetime] = lambda: dt.datetime.now().astimezone(),
+    today: Callable[[], dt.date] | None = None,
 ) -> Starlette:
-    """``google`` makes the Calendar/Drive adapter (default: connect with the saved token);
-    ``today`` says which day it is (when a todo is overdue)."""
+    """``google`` makes the Calendar/Drive adapter (default: connect with the saved token); ``now`` says what time
+    it is (when a backup or the last fetch is too old), and ``today`` which day it is (default: ``now``'s; what
+    stands where on the timeline, when a todo is overdue)."""
     from . import gcal
 
     app = Starlette(
@@ -1776,5 +1778,6 @@ def create_app(
     app.state.mitid = mitid or MitIDLogin()
     app.state.oauth_pending = {}
     app.state.google = google or gcal.Google.connect
-    app.state.today = today
+    app.state.now = now
+    app.state.today = today or (lambda: now().date())
     return app

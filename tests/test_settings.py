@@ -10,12 +10,13 @@ from aula_agent.ledger import Ledger, SyncedEntry
 from aula_agent.runs import Outcome
 from test_web import auth, classify, configure, make_client, post
 
-TODAY = dt.date(2026, 11, 6)
+NOW = dt.datetime(2026, 11, 6, 12, 0, tzinfo=dt.timezone(dt.timedelta(hours=1)))  # the app's "now", not the wall clock
+TODAY = NOW.date()
 
 
 def get(path):
     configure()
-    with make_client(today=lambda: TODAY) as c:
+    with make_client(now=lambda: NOW) as c:
         return c.get(path, headers=auth()).text
 
 
@@ -46,7 +47,7 @@ def google_connected():
 
 def ran(command, outcome=Outcome.OK, *, hours_ago=1.0):
     """A run in the run log, ``hours_ago`` hours ago."""
-    at = dt.datetime.now().astimezone() - dt.timedelta(hours=hours_ago)
+    at = NOW - dt.timedelta(hours=hours_ago)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(ledger_module, "_now", lambda: at.isoformat(timespec="seconds"))
         runs.record(command, outcome, "opdigtet")
