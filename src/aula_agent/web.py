@@ -239,14 +239,29 @@ class MitIDLogin:
 
 # ----------------------------------------------------------------------------- HTML
 
+THEME_COLOR = "#2156c9"  # the accent colour; the browser's bar on a phone and the background of static/icon.svg
+ACCENT_DARK = "#8ab0ff"  # the accent colour in the dark theme
+THEME_COLOR_DARK = "#121214"  # the browser's bar in the dark theme: the page's background
+# The children's colours (light theme, dark theme), in turn by each child's place in the config (Children.colour).
+KID_PALETTE = (("#0b7a6c", "#3cc9b4"), ("#b85300", "#ff9a4d"), ("#6a4bc4", "#a993ff"), ("#b02a5e", "#ff7aa8"))
+KID_COLOURS = len(KID_PALETTE)
+
+
+def palette_css() -> str:
+    """The accent (``--acc``) and the children's colours (``--kid-<n>`` and the classes ``kid-<n>``) in both themes,
+    and the dark theme's background, from the constants above (the browser's bar and the manifest use them too)."""
+    light = f"--acc:{THEME_COLOR};" + "".join(f"--kid-{n}:{c};" for n, (c, _) in enumerate(KID_PALETTE))
+    dark = f"--bg:{THEME_COLOR_DARK};--acc:{ACCENT_DARK};" + "".join(f"--kid-{n}:{c};" for n, (_, c) in enumerate(KID_PALETTE))
+    classes = "".join(f".kid-{n}{{--k:var(--kid-{n})}}" for n in range(KID_COLOURS))
+    return f":root{{{light}}}\n@media (prefers-color-scheme:dark){{:root{{{dark}}}}}\n{classes}\n"
+
+
 CSS = """
 :root{color-scheme:light dark;--fg:#1c1c1e;--mut:#6b6b70;--line:#e4e4e8;--bg:#f7f7f5;--card:#fff;--soft:#f0f0ee;
---acc:#2156c9;--on-acc:#fff;--near:#edf2fd;--ok:#1a7f37;--bad:#b3261e;--bad-soft:#fdecea;--mark:#fde68a;
---kid-0:#0b7a6c;--kid-1:#b85300;--kid-2:#6a4bc4;--kid-3:#b02a5e;--tabs-h:3.6rem}
-@media (prefers-color-scheme:dark){:root{--fg:#ececef;--mut:#a0a0a6;--line:#2e2e33;--bg:#121214;--card:#1b1b1e;--soft:#232327;
---acc:#8ab0ff;--on-acc:#0d1b3d;--near:#18213a;--ok:#4cc26a;--bad:#ff8a80;--bad-soft:#3a1d1b;--mark:#6b5200;
---kid-0:#3cc9b4;--kid-1:#ff9a4d;--kid-2:#a993ff;--kid-3:#ff7aa8}}
-*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+--on-acc:#fff;--near:#edf2fd;--ok:#1a7f37;--bad:#b3261e;--bad-soft:#fdecea;--mark:#fde68a;--tabs-h:3.6rem}
+@media (prefers-color-scheme:dark){:root{--fg:#ececef;--mut:#a0a0a6;--line:#2e2e33;--card:#1b1b1e;--soft:#232327;
+--on-acc:#0d1b3d;--near:#18213a;--ok:#4cc26a;--bad:#ff8a80;--bad-soft:#3a1d1b;--mark:#6b5200}}
+""" + palette_css() + """*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0 auto;max-width:46rem;padding:0 1.25rem 3rem;font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 color:var(--fg);background:var(--bg)}
 body.wide{max-width:76rem}
@@ -299,8 +314,7 @@ details.filtre::details-content{content-visibility:visible;block-size:auto}}}
 .chip{display:inline-flex;align-items:center;gap:.4rem;flex:none;min-height:2.3rem;padding:0 .95rem;border:1px solid var(--line);
 border-radius:999px;background:var(--card);color:var(--fg);text-decoration:none;font-size:.92rem}
 .chip.on{background:var(--fg);border-color:var(--fg);color:var(--bg)}
-/* a child's colour (kid-<n>, by its place in the config) by its first name, in the lists and on the chips */
-.kid-0{--k:var(--kid-0)}.kid-1{--k:var(--kid-1)}.kid-2{--k:var(--kid-2)}.kid-3{--k:var(--kid-3)}
+/* a child's colour (kid-<n>, by its place in the config: palette_css) by its first name, in the lists and on the chips */
 .who{display:inline-flex;align-items:center;gap:.3rem;margin-right:.6rem;font-size:.8rem;font-weight:650;color:var(--k,var(--mut));
 white-space:nowrap}.who.all{font-weight:500}
 .who::before,.chip[class*=kid-]::before{content:"";width:.55rem;height:.55rem;border-radius:50%;background:var(--k,var(--mut))}
@@ -386,8 +400,6 @@ OVERVIEW_CSP = (
     "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 )
 OVERVIEW_SCRIPT = '<script src="/static/overblik.js" defer></script>'
-THEME_COLOR = "#2156c9"  # the browser's bar on a phone and the background of static/icon.svg; the accent colour
-THEME_COLOR_DARK = "#121214"  # the browser's bar in the dark theme: the page's background
 
 
 def page(
@@ -618,9 +630,6 @@ SENSITIVE = "🔒 Følsom tråd"  # what a sensitive thread is called on a page 
 def child_first_name(child: dict[str, Any] | None) -> str:
     """A child's first name, as the pages show it ("?" when the config does not know the child or its name)."""
     return (((child or {}).get("name") or "").split() or ["?"])[0]
-
-
-KID_COLOURS = 4  # the palette in CSS (.kid-0 … .kid-3): the children's colours, in turn
 
 
 @dataclass(frozen=True)
