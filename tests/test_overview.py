@@ -1,4 +1,4 @@
-"""The overview's timeline on /overblik (trin 2): Gælder nu, Kommende week by week, Stående info, Tidligere."""
+"""The overview's timeline on the front page (trin 2): Gælder nu, Kommende week by week, Stående info, Tidligere."""
 
 import datetime as dt
 import re
@@ -13,7 +13,7 @@ TODAY = dt.date(2026, 11, 6)  # a Friday in week 45 (Monday 2 November)
 def overview(**params):
     configure()
     with make_client(today=lambda: TODAY) as c:
-        r = c.get("/overblik", params=params, headers=auth())
+        r = c.get("/", params=params, headers=auth())
     assert r.status_code == 200
     return r.text
 
@@ -25,7 +25,7 @@ def section(html, name):
 
 def titles(html):
     """The items' titles as linked, in order."""
-    return re.findall(r'<a class="item-link" href="/overblik/item/[^"]+">(.*?)</a>', html)
+    return re.findall(r'<a class="item-link" href="/item/[^"]+">(.*?)</a>', html)
 
 
 def message(thread, mid, sent, subject, *, sensitive=False):
@@ -86,7 +86,7 @@ def test_upcoming_is_week_by_week_with_a_deadline_in_its_own_week_and_events_lin
     assert list(upcoming) == ["2026-11-09", "2026-11-16", "2026-11-30"]
     assert titles(upcoming["2026-11-09"]) == ["Trivselsundersøgelse"]
     deadline = upcoming["2026-11-16"]
-    assert "Frist: tilmelding juleklip" in deadline and 'href="/overblik/item/post:3"' in deadline
+    assert "Frist: tilmelding juleklip" in deadline and 'href="/item/post:3"' in deadline
     assert "Uge 47" in deadline
     december = upcoming["2026-11-30"]
     assert titles(december) == ["Juleklip"] and december.count("Juleklip") == 1  # the event on the span's day: once
@@ -136,7 +136,7 @@ def test_earlier_weeks_are_newest_first_for_eight_weeks_and_then_vis_aeldre():
     assert list(weeks(earlier)) == ["2026-10-26", "2026-10-05", "2026-09-07"]
     assert titles(earlier) == ["Lus i klassen", "Motionsdag", "Forældremøde"]
     assert 'class="row past"' not in earlier  # shown as usual, not dimmed
-    assert 'href="/overblik?before=2026-09-07"' in earlier
+    assert 'href="/?before=2026-09-07"' in earlier
 
     older = section(overview(before="2026-09-07"), "tidligere")
     assert list(weeks(older)) == ["2026-08-10"] and titles(older) == ["Skolestart"]
@@ -188,7 +188,7 @@ def test_the_child_filter_shows_the_childs_items_and_those_without_a_child_and_o
     two_children()
     html = overview()
     chips = section(html.replace('<nav id="barn-filter"', '<section id="barn-filter"', 1), "barn-filter")
-    assert 'href="/overblik?child=1"' in chips and ">Oscar</a>" in chips and ">Alle børn</a>" in chips
+    assert 'href="/?child=1"' in chips and ">Oscar</a>" in chips and ">Alle børn</a>" in chips
     assert titles(section(html, "kommende")) == ["Tur for Emma", "Tur for Oscar", "Skolefoto for alle"]
 
     emma = section(overview(child="1"), "kommende")
@@ -309,7 +309,7 @@ def test_an_upcoming_event_links_to_its_item_whenever_the_archive_has_it():
 
     upcoming = section(overview(child="1"), "kommende")
 
-    sources = dict(re.findall(r'class="item-link event-src" href="/overblik/item/([^"]+)">(.*?)</a>', upcoming))
+    sources = dict(re.findall(r'class="item-link event-src" href="/item/([^"]+)">(.*?)</a>', upcoming))
     assert sources == {
         "message:7:m1": "Svar om turen", "post:5": "Endnu ikke inddelt", "message:9:m1": "🔒 Følsom tråd",
         "post:6": "Tur for Oscar",
@@ -344,9 +344,9 @@ def test_vis_aeldre_keeps_the_child_and_the_child_filter_on_an_earlier_page_keep
     two_children()
 
     earlier = section(overview(child="1"), "tidligere")
-    assert 'href="/overblik?child=1&amp;before=2026-09-07"' in earlier
+    assert 'href="/?child=1&amp;before=2026-09-07"' in earlier
 
     html = overview(child="1", before="2026-09-07")
     chips = html.split('id="barn-filter"', 1)[1].split("</nav>", 1)[0]
-    assert 'href="/overblik?before=2026-09-07&amp;child=2"' in chips and 'href="/overblik?before=2026-09-07"' in chips
+    assert 'href="/?before=2026-09-07&amp;child=2"' in chips and 'href="/?before=2026-09-07"' in chips
     assert titles(section(html, "tidligere")) == ["Skolestart"]

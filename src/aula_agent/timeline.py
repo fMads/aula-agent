@@ -1,4 +1,4 @@
-"""The overview's timeline (#29): what stands where on /overblik, week by week. It returns data; web.py renders it.
+"""The overview's timeline (#29): what stands where on the front page, week by week. It returns data; web.py renders it.
 
 Gælder nu is what :meth:`archive.Item.current` says is current. Kommende and Tidligere are weeks (Monday first),
 each with its lines: an item on its day (:func:`placed_on`), an event in the calendar or an open todo with due.

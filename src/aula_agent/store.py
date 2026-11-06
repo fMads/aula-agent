@@ -123,8 +123,9 @@ def save_config(cfg: dict[str, Any]) -> None:
 
 
 def item_path(key: str) -> str:
-    """Where one item's detail is on the web page: ``/overblik/item/<item-key>`` (bookmarks and calendar events link here)."""
-    return f"/overblik/item/{quote(key, safe=':')}"
+    """Where one item's detail is on the web page: ``/item/<item-key>`` (bookmarks and calendar events link here; the
+    events from before #50 link to ``/overblik/item/<item-key>``, which sends on to this)."""
+    return f"/item/{quote(key, safe=':')}"
 
 
 def web_url(suffix: str = "") -> str | None:

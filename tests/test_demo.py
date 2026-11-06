@@ -12,7 +12,7 @@ from aula_agent import demo
 def test_the_demo_fills_its_directory_with_two_children_todos_and_events_and_lets_the_page_in(data_dir):
     demo.fill(dt.date(2026, 11, 6), 8000)
     with TestClient(demo.demo_app(), base_url="http://127.0.0.1:8000") as c:
-        html = c.get("/overblik").text
+        html = c.get("/").text
         assert 'id="barn-filter"' in html and "Emma" in html and "Oscar" in html
         assert 'class="row todo-row"' in html and 'class="row event"' in html
         assert c.get("/aula/login").status_code == 403 and c.get("/google").status_code == 403

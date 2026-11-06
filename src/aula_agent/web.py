@@ -330,11 +330,11 @@ def overview_main(content: str) -> str:
     return f'<main id="overblik-main">{content}</main>'
 
 
-TABS = {"status": ("/", "Status"), "overblik": ("/overblik", "Overblik")}
+TABS = {"forside": ("/", "Forside"), "settings": ("/settings", "Indstillinger")}
 
 
 def tabs(active: str | None) -> str:
-    """The tabs shared by the status page and the overview (``active``: the page it is on; None: a link to each)."""
+    """The tabs shared by the pages (``active``: the page it is on; None: a link to each)."""
     links = "".join(
         f'<b aria-current="page">{e(label)}</b>' if name == active else f'<a href="{href}">{e(label)}</a>'
         for name, (href, label) in TABS.items()
@@ -458,7 +458,7 @@ async def home(request: Request) -> Response:
         for r in last_runs
     ) or '<li class="mut">Ingen kørsler endnu.</li>'
 
-    body = f"""{tabs("status")}<div class="cards">{cards}</div>
+    body = f"""{tabs("settings")}<div class="cards">{cards}</div>
 <h2>Kommende begivenheder</h2>{events_html}
 <h2>Børn og kalendere</h2><ul class="list">{children_html}</ul>
 <h2>Seneste kørsler</h2><ul class="list">{runs_html}</ul>
@@ -658,7 +658,7 @@ def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date, par
     """Tidligere (:func:`timeline.earlier`), shown as usual (past or not), and "Vis ældre" when there is more
     (filtered as the overview is, by ``params``)."""
     got = timeline.earlier(items, before, today)
-    weeks = weeks_html(got.weeks, today, "/overblik")
+    weeks = weeks_html(got.weeks, today, "/")
     older = ""
     if got.older:
         href = overview_url(params, drop=("before",), add=[("before", got.older.isoformat())])
@@ -740,9 +740,10 @@ def for_child(child_ids: list[int], child: int | None) -> bool:
 
 
 def overview_url(params, *, drop: tuple[str, ...] = (), add: list[tuple[str, str]] = ()) -> str:
-    """The overview as ``params`` filter it, without the message (``msg``) and the ``drop`` ones, with ``add``."""
+    """The overview as ``params`` filter it, without the message (``msg``) and the ``drop`` ones, with ``add``
+    (on the front page, or on /search when that asks for search results)."""
     keep = [(k, v) for k, v in params.multi_items() if k not in ("msg", *drop) and v] + list(add)
-    return "/overblik" + (f"?{urlencode(keep)}" if keep else "")
+    return list_path(dict(keep)) + (f"?{urlencode(keep)}" if keep else "")
 
 
 def child_filter(params, children: dict[str, Any]) -> str:
@@ -763,7 +764,7 @@ def child_filter(params, children: dict[str, Any]) -> str:
 
 
 def search_form(params, topics: list[archive.Topic]) -> str:
-    """The search field with its filters folded under "Filtre" (open when one is chosen), a GET form on /overblik,
+    """The search field with its filters folded under "Filtre" (open when one is chosen), a GET form on /search,
     and the child filter under it, sticky at the top. Its button is only there without script (Enter sends it)."""
     def select(name: str, label: str, options: list[tuple[str, str]]) -> str:
         chosen = params.get(name) or ""
@@ -787,7 +788,7 @@ def search_form(params, topics: list[archive.Topic]) -> str:
         f'<div class="filtre-felter">{"".join(selects)}</div></details>'
     )
     return (
-        f'<div id="overblik-top" class="sticky"><form id="search" class="search" method="get" action="/overblik">'
+        f'<div id="overblik-top" class="sticky"><form id="search" class="search" method="get" action="/search">'
         f'<input type="search" id="q" name="q" value="{e(params.get("q"))}"'
         f' placeholder="Søg i alt fra Aula" aria-label="Søg">{hidden}{filters}'
         f'<noscript><button>Søg</button></noscript></form>{child_filter(params, children)}</div>'
@@ -797,6 +798,11 @@ def search_form(params, topics: list[archive.Topic]) -> str:
 def searching(params) -> bool:
     """Whether the overview is asked for search results (a query, or a filter other than the child)."""
     return any((params.get(name) or "").strip() for name in ("q", "category", "topic", "kind"))
+
+
+def list_path(params) -> str:
+    """Where the overview as ``params`` ask for it is: the search results on /search, the rest on the front page."""
+    return "/search" if searching(params) else "/"
 
 
 class SearchPart(NamedTuple):
@@ -830,8 +836,11 @@ def search_part(params, today: dt.date) -> SearchPart | None:
 
 
 async def overview(request: Request) -> Response:
-    """The timeline (Skal gøres, Gælder nu, Kommende week by week, Stående info, Tidligere) under the search field;
-    the search results instead of it when the search field asks for them."""
+    """The front page: the timeline (Skal gøres, Gælder nu, Kommende week by week, Stående info, Tidligere) under the
+    search field; on /search the search results instead of it (either sends on to the other when it is asked for
+    what the other shows)."""
+    if request.url.path != list_path(request.query_params):
+        return RedirectResponse(overview_url(request.query_params), status_code=302)
     ledger = Ledger.load()
     pending = ledger.pending_keys()
     today = request.app.state.today()
@@ -846,7 +855,7 @@ async def overview(request: Request) -> Response:
             sources = {k: item for k in {ev.source for ev in events if ev.source} if (item := a.item(k))}
             return a.items(), len(a.unclassified(exclude=pending)), a.todos(), sources
 
-    nav = tabs("overblik")
+    nav = tabs("forside")
     search = await asyncio.to_thread(search_part, request.query_params, today)
     if search and search.results is not None:
         return page("Søgning", nav + search.form + overview_main(search.results), enhanced=True)
@@ -913,16 +922,19 @@ async def tick_todo(request: Request) -> Response:
 ITEM_KEY = re.compile(r"(?!\.+$)[A-Za-z0-9_.~:-]+")
 
 
+LIST_PATHS = ("/", "/search")  # the overview's pages a button may return to (besides an item's detail)
+
+
 def safe_back(back: str) -> str:
-    """Where a button may return to: the overview or an item's detail, as a path on this site (no scheme, no host,
-    nothing unprintable anywhere), with any query; anything else is the overview."""
+    """Where a button may return to: one of :data:`LIST_PATHS` or an item's detail, as a path on this site (no
+    scheme, no host, nothing unprintable anywhere), with any query; anything else is the front page."""
     parts = urlsplit(back)
-    key = parts.path.removeprefix("/overblik/item/")
+    key = parts.path.removeprefix("/item/")
     on_site = (
         back.isprintable() and not parts.scheme and not parts.netloc and not parts.fragment
-        and (parts.path == "/overblik" or (key != parts.path and ITEM_KEY.fullmatch(key) is not None))
+        and (parts.path in LIST_PATHS or (key != parts.path and ITEM_KEY.fullmatch(key) is not None))
     )
-    return back if on_site else "/overblik"
+    return back if on_site else "/"
 
 
 # ----------------------------------------------------------------------------- the detail of one item
@@ -941,7 +953,7 @@ def item_text(body: str) -> str:
 
 def file_url(item_key: str, attachment_id: str) -> str:
     """Where the file route hands out one of an item's files: by item key and attachment id, never a path."""
-    return f"{store.item_path(item_key)}/fil/{quote(attachment_id, safe=':')}"
+    return f"{store.item_path(item_key)}/file/{quote(attachment_id, safe=':')}"
 
 
 # What the browser may show itself, by the file name's suffix (never by the kind Aula gave it): an SVG or HTML
@@ -1228,7 +1240,7 @@ async function poll(){
   const texts={starting:'Starter MitID…',scan:'Scan koden med MitID-appen. Hold telefonen stille – koden består af to halvdele, der skifter.',
     approve:'Koden er læst. Godkend login i MitID-appen.',done:s.message,error:s.message};
   st.textContent=texts[s.status]||''; st.className=s.status==='error'?'bad':(s.status==='done'?'ok':'');
-  if(s.status==='done'){setTimeout(()=>location.href='/?msg='+encodeURIComponent(s.message),1500);return}
+  if(s.status==='done'){setTimeout(()=>location.href='/settings?msg='+encodeURIComponent(s.message),1500);return}
   if(s.status!=='error' && s.status!=='idle') setTimeout(poll,1000);
 }
 poll();
@@ -1241,7 +1253,7 @@ async def aula_login_page(request: Request) -> Response:
     login: MitIDLogin = request.app.state.mitid
     if login.running or (login.status in ("done", "error") and request.query_params.get("watch")):
         body = """<p id="status"></p><div class="qr" id="qr"></div><p class="mut" id="part"></p>
-<p class="otp" id="otp"></p><p><a href="/">Tilbage</a></p>""" + LOGIN_JS
+<p class="otp" id="otp"></p><p><a href="/settings">Tilbage</a></p>""" + LOGIN_JS
         return page("MitID-login", body)
     username = load_aula_config().get("mitid_username") or ""
     body = f"""<p>Log ind i Aula med MitID-appen. Åbn siden på en computer eller tablet,
@@ -1260,7 +1272,7 @@ async def aula_login_start(request: Request) -> Response:
     try:
         request.app.state.mitid.start(username)
     except RuntimeError as exc:
-        return page("MitID-login", f'<p class="bad">{e(exc)}</p><p><a href="/">Tilbage</a></p>')
+        return page("MitID-login", f'<p class="bad">{e(exc)}</p><p><a href="/settings">Tilbage</a></p>')
     return RedirectResponse("/aula/login?watch=1", status_code=303)
 
 
@@ -1269,7 +1281,26 @@ async def aula_login_state(request: Request) -> Response:
 
 
 def go_home(msg: str) -> RedirectResponse:
-    return RedirectResponse(f"/?msg={quote(msg)}", status_code=303)
+    """Back to the settings (the logins, the events) with ``msg``."""
+    return RedirectResponse(f"/settings?msg={quote(msg)}", status_code=303)
+
+
+def moved(request: Request, path: str) -> RedirectResponse:
+    """An old address (before #50) sent on for good to ``path``, with its query."""
+    query = request.url.query
+    return RedirectResponse(path + (f"?{query}" if query else ""), status_code=301)
+
+
+async def old_overview(request: Request) -> Response:
+    return moved(request, list_path(request.query_params))
+
+
+async def old_item(request: Request) -> Response:
+    return moved(request, store.item_path(request.path_params["key"]))
+
+
+async def old_file(request: Request) -> Response:
+    return moved(request, file_url(request.path_params["key"], request.path_params["attachment"]))
 
 
 def redirect_uri() -> str:
@@ -1293,7 +1324,7 @@ async def google_page(request: Request) -> Response:
 <p><a class="btn primary" href="/google/connect">{'Forbind igen' if ok else 'Forbind Google'}</a></p>
 <p class="mut">aula-agent får kun adgang til de kalendere og filer, den selv opretter.</p>
 <details><summary class="mut">Udskift OAuth-nøgle</summary>{upload}</details>"""
-    return page("Google", body + '<p><a href="/">Tilbage</a></p>')
+    return page("Google", body + '<p><a href="/settings">Tilbage</a></p>')
 
 
 async def google_client_secret(request: Request) -> Response:
@@ -1345,10 +1376,15 @@ def create_app(
 
     app = Starlette(
         routes=[
-            Route("/", home),
-            Route("/overblik", overview),
-            Route("/overblik/item/{key}", item_detail),
-            Route("/overblik/item/{key}/fil/{attachment:path}", item_file),
+            Route("/", overview),
+            Route("/search", overview),
+            Route("/settings", home),
+            Route("/item/{key}", item_detail),
+            Route("/item/{key}/file/{attachment:path}", item_file),
+            # Calendar events from before #50 link to /overblik/item/…, and their descriptions stay: keep these.
+            Route("/overblik", old_overview),
+            Route("/overblik/item/{key}", old_item),
+            Route("/overblik/item/{key}/fil/{attachment:path}", old_file),
             Route("/static/{name}", static_file),
             Route("/events/remove", remove_event, methods=["POST"]),
             Route("/todos/{action}", tick_todo, methods=["POST"]),

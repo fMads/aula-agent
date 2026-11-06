@@ -159,14 +159,15 @@ Den kører `deploy/nightly.sh` hver aften kl. 21:00, og loggen ligger i `data/lo
 
 ### 6. Valgfrit: web-side med Cloudflare
 
-Web-siden viser:
+Web-siden viser (status og logins under fanen Indstillinger, `/settings`):
 - om Aula- og Google-login virker
 - de seneste kørsler
 - hvor mange opslag og beskeder arkivet har, hvornår der sidst blev gemt noget, og hvornår der sidst blev taget backup (med en advarsel, hvis det er mere end 2 døgn siden eller aldrig er sket)
 - de kommende begivenheder med en knap til at fjerne forkerte (de bliver så ikke oprettet igen). Gælder en begivenhed flere børn, er der en knap pr. barn
-- et overblik (`/overblik`) som en tidslinje: øverst "Skal gøres" (opgaver med en "Klaret"-knap, overskredne først), så "Gælder nu" (perioder, der kører, opslag Aula har markeret som vigtige, og nye orienteringer), "Kommende" uge for uge (opslag og beskeder efter hvornår de gælder, begivenhederne i kalenderen med link til det, de kom fra, og opgaver med en frist), "Stående info" efter emne og "Tidligere" uge for uge med nyeste først ("Vis ældre" går længere tilbage). Svar som "Tak" og "Ok" vises ikke på tidslinjen, kun i søgningen. Har du flere børn, kan du vælge ét barn. Så ser du det, der gælder det barn, og det, der ikke er knyttet til et bestemt barn. Nederst står, hvor mange items agenten endnu ikke har inddelt
-- et søgefelt øverst i overblikket. En søgning viser resultaterne i stedet for tidslinjen. Søgningen finder alt i arkivet på ordbegyndelser ("svøm" finder "svømning"), også tekst inde i vedhæftede PDF- og Word-filer (docx), og kan indsnævres efter barn, slags, emne og kilde (opslag, besked, med dokument). Overståede ting er dæmpede, og følsomme tråde vises uden emne og uddrag
-- hvert opslag og hver besked på sin egen side, `/overblik/item/<item-key>` (fx `/overblik/item/post:123` eller `/overblik/item/message:456:789`). Adressen ligger fast, så den kan bogmærkes og linkes til. Siden viser hele teksten, filerne (PDF åbnes i browseren, andre filer hentes ned), tidligere versioner, hvis det er rettet i Aula, hvad det blev til i kalenderen, en evt. opgave og for beskeder hele tråden. Følsomme tråde viser kun dato, kilde og art, indtil du trykker "Vis teksten". Filerne udleveres fra arkivet på `/overblik/item/<item-key>/fil/<vedhæftnings-id>`
+- et overblik på forsiden (`/`) som en tidslinje: øverst "Skal gøres" (opgaver med en "Klaret"-knap, overskredne først), så "Gælder nu" (perioder, der kører, opslag Aula har markeret som vigtige, og nye orienteringer), "Kommende" uge for uge (opslag og beskeder efter hvornår de gælder, begivenhederne i kalenderen med link til det, de kom fra, og opgaver med en frist), "Stående info" efter emne og "Tidligere" uge for uge med nyeste først ("Vis ældre" går længere tilbage). Svar som "Tak" og "Ok" vises ikke på tidslinjen, kun i søgningen. Har du flere børn, kan du vælge ét barn. Så ser du det, der gælder det barn, og det, der ikke er knyttet til et bestemt barn. Nederst står, hvor mange items agenten endnu ikke har inddelt
+- et søgefelt øverst i overblikket. En søgning viser resultaterne på sin egen adresse, `/search` (fx `/search?q=svøm`). Søgningen finder alt i arkivet på ordbegyndelser ("svøm" finder "svømning"), også tekst inde i vedhæftede PDF- og Word-filer (docx), og kan indsnævres efter barn, slags, emne og kilde (opslag, besked, med dokument). Overståede ting er dæmpede, og følsomme tråde vises uden emne og uddrag
+- hvert opslag og hver besked på sin egen side, `/item/<item-key>` (fx `/item/post:123` eller `/item/message:456:789`). Adressen ligger fast, så den kan bogmærkes og linkes til. Siden viser hele teksten, filerne (PDF åbnes i browseren, andre filer hentes ned), tidligere versioner, hvis det er rettet i Aula, hvad det blev til i kalenderen, en evt. opgave og for beskeder hele tråden. Følsomme tråde viser kun dato, kilde og art, indtil du trykker "Vis teksten". Filerne udleveres fra arkivet på `/item/<item-key>/file/<vedhæftnings-id>`
+- de gamle adresser (`/overblik…`) sender permanent videre til de nye, så links i begivenheder, der allerede ligger i kalenderen, stadig virker
 
 Fra web-siden kan du også logge ind i Aula med MitID (QR-koden vises i browseren) og forbinde Google.
 
@@ -198,7 +199,7 @@ Det kræver et domæne på Cloudflare. Zero Trust er gratis til få brugere.
 
 Se opsætningen med `uv run aula-agent web-setup`. Hvis du kører `--email` igen, erstatter det hele listen.
 
-Når adressen (`--url`) er sat, får begivenhederne i Google Calendar et link til item'ets detalje-side på web-siden (`/overblik/item/<item-key>`). Begivenheder, der allerede ligger i kalenderen, får linket, næste gang de bliver opdateret.
+Når adressen (`--url`) er sat, får begivenhederne i Google Calendar et link til item'ets detalje-side på web-siden (`/item/<item-key>`). Begivenheder, der allerede ligger i kalenderen, får linket, næste gang de bliver opdateret.
 
 ## I hverdagen
 

@@ -82,7 +82,7 @@ def test_both_parents_get_in_and_cookie_works():
     with make_client() as c:
         assert c.get("/", headers=auth(token("parent.two@example.com"))).status_code == 200
         c.cookies.set("CF_Authorization", token("Parent.One@example.com"))
-        r = c.get("/")
+        r = c.get("/settings")
         assert r.status_code == 200 and "parent.one@example.com" in r.text
 
 
@@ -111,7 +111,7 @@ def test_home_shows_status_events_and_escapes_html(monkeypatch, tmp_path):
     ledger.save()
     runs.record("fetch", Outcome.OK, "2 nye/ændrede, 0 venter")
     with make_client() as c:
-        r = c.get("/", headers=auth())
+        r = c.get("/settings", headers=auth())
     assert "&lt;script&gt;" in r.text and "<script>alert" not in r.text
     assert "04.12.2099" in r.text and "Emma" in r.text and "Opslag om jul" in r.text
     assert "Gammel" not in r.text
@@ -122,7 +122,7 @@ def test_home_shows_status_events_and_escapes_html(monkeypatch, tmp_path):
 def test_home_shows_how_much_the_archive_holds():
     configure()
     with make_client() as c:
-        assert "Arkiv" in c.get("/", headers=auth()).text and "intet gemt endnu" in c.get("/", headers=auth()).text
+        assert "Arkiv" in c.get("/settings", headers=auth()).text and "intet gemt endnu" in c.get("/settings", headers=auth()).text
     assert not store.ARCHIVE_FILE.exists()  # the web page only reads the archive
 
     before = dt.datetime.now()
@@ -136,7 +136,7 @@ def test_home_shows_how_much_the_archive_holds():
             thread={"id": 7, "subject": "Tur"},
         )
     with make_client() as c:
-        r = c.get("/", headers=auth())
+        r = c.get("/settings", headers=auth())
     assert "2 opslag · 1 besked · sidst gemt" in r.text
     assert any(f"sidst gemt {t:%d.%m. kl. %H:%M}" in r.text for t in (before, dt.datetime.now()))
 
@@ -156,7 +156,7 @@ def test_home_has_a_remove_button_per_child(google):
     configure()
     synced_on_two_calendars(google)
     with make_client(google=lambda: google) as c:
-        html = c.get("/", headers=auth()).text
+        html = c.get("/settings", headers=auth()).text
     assert "Fjern for Emma" in html and "Fjern for Oscar" in html
     assert 'name="child_id" value="1"' in html and 'name="child_id" value="2"' in html
 
@@ -166,7 +166,8 @@ def test_remove_event_for_one_child_is_remembered(google):
     synced_on_two_calendars(google)
     with make_client(google=lambda: google) as c:
         r = c.post("/events/remove", data={"key": "k1", "child_id": "2"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
-    assert r.status_code == 303 and "fjernet" in r.headers["location"].replace("%20", " ")
+    assert r.status_code == 303 and r.headers["location"].startswith("/settings?msg=")  # where the button was
+    assert "fjernet" in r.headers["location"].replace("%20", " ")
     assert list(google.events) == [("c1", "e-c1")]
     ledger = Ledger.load()
     assert [u.child_ids for u in ledger.upcoming()] == [[1]]
@@ -199,13 +200,13 @@ def test_home_says_login_expired_after_fetch_needed_login(monkeypatch, tmp_path)
     monkeypatch.setattr("aula.config.load_config", lambda: {"mitid_username": "u"})
     configure()
     with make_client() as c:
-        assert "Logget ind" in c.get("/", headers=auth()).text
+        assert "Logget ind" in c.get("/settings", headers=auth()).text
         runs.record("fetch", Outcome.AULA_LOGIN, "Session udløbet")
-        assert "Login udløbet" in c.get("/", headers=auth()).text
+        assert "Login udløbet" in c.get("/settings", headers=auth()).text
         runs.record("aula-login", Outcome.ERROR, "Login tog for lang tid")  # a failed attempt changes nothing
-        assert "Login udløbet" in c.get("/", headers=auth()).text
+        assert "Login udløbet" in c.get("/settings", headers=auth()).text
         runs.record("aula-login", Outcome.OK, "Logget ind")
-        assert "Login udløbet" not in c.get("/", headers=auth()).text
+        assert "Login udløbet" not in c.get("/settings", headers=auth()).text
 
 
 def test_home_says_login_expired_after_backfill_needed_login(monkeypatch, tmp_path):
@@ -216,11 +217,11 @@ def test_home_says_login_expired_after_backfill_needed_login(monkeypatch, tmp_pa
     configure()
     with make_client() as c:
         runs.record("backfill", Outcome.AULA_LOGIN, "Session udløbet")
-        assert "Login udløbet" in c.get("/", headers=auth()).text
+        assert "Login udløbet" in c.get("/settings", headers=auth()).text
         runs.record("backfill-rescue", Outcome.OK, "2 opslag")  # a rescue copy says nothing about the session
-        assert "Login udløbet" in c.get("/", headers=auth()).text
+        assert "Login udløbet" in c.get("/settings", headers=auth()).text
         runs.record("backfill", Outcome.OK, "2 opslag")
-        assert "Login udløbet" not in c.get("/", headers=auth()).text
+        assert "Login udløbet" not in c.get("/settings", headers=auth()).text
 
 
 # ------------------------------------------------------------------ MitID login
@@ -313,7 +314,7 @@ def test_google_callback_rejects_unknown_state():
 
 
 def archive_card(c):
-    text = c.get("/", headers=auth()).text
+    text = c.get("/settings", headers=auth()).text
     return text[text.index("<b>Arkiv</b>"):].split("</div>")[0]
 
 
@@ -346,7 +347,7 @@ def test_remove_for_one_child_in_a_joint_calendar_keeps_the_entry_until_no_child
     ledger.record(SyncedEntry("k1", [1, 2], "joint", "e1", "Skovtur", "2099-01-01", "2099-01-01"))
     ledger.save()
     with make_client(google=lambda: google) as c:
-        html = c.get("/", headers=auth()).text
+        html = c.get("/settings", headers=auth()).text
         assert "Fjern for Emma" in html and "Fjern for Oscar" in html
         c.post("/events/remove", data={"key": "k1", "child_id": "1"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
         assert list(google.events) == [("joint", "e1")]
@@ -377,7 +378,7 @@ def test_overview_without_an_archive_or_with_one_not_migrated_yet_says_so_and_ch
 
     configure()
     with make_client() as c:
-        r = c.get("/overblik", headers=auth())
+        r = c.get("/", headers=auth())
     assert r.status_code == 200 and "ikke klar" in r.text
     assert not store.ARCHIVE_FILE.exists()
 
@@ -388,15 +389,15 @@ def test_overview_without_an_archive_or_with_one_not_migrated_yet_says_so_and_ch
     db.commit()
     db.close()
     with make_client() as c:
-        r = c.get("/overblik", headers=auth())
+        r = c.get("/", headers=auth())
     assert r.status_code == 200 and "ikke klar" in r.text
     db = sqlite3.connect(store.ARCHIVE_FILE)
     assert db.execute("PRAGMA user_version").fetchone()[0] == 3
     db.close()
 
 
-def test_status_and_overview_link_to_each_other():
+def test_the_front_page_and_the_settings_link_to_each_other():
     configure()
     with make_client() as c:
-        assert 'href="/overblik"' in c.get("/", headers=auth()).text
-        assert 'href="/"' in c.get("/overblik", headers=auth()).text and "Status" in c.get("/overblik", headers=auth()).text
+        assert 'href="/"' in c.get("/settings", headers=auth()).text
+        assert 'href="/settings"' in c.get("/", headers=auth()).text

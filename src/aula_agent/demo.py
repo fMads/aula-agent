@@ -215,7 +215,7 @@ def main(argv: list[str] | None = None) -> None:
 
     credentials.aula_username = lambda: None  # the status page does not look at the real Aula login
 
-    print(f"Demo: http://{HOST}:{port}/overblik  (opdigtede data i {target}; Ctrl-C stopper)", flush=True)
+    print(f"Demo: http://{HOST}:{port}/  (opdigtede data i {target}; Ctrl-C stopper)", flush=True)
     uvicorn.run(demo_app(), host=HOST, port=port, log_level="warning")
 
 

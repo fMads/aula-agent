@@ -1,7 +1,7 @@
 // Overblik: et lag ovenpå siderne (#32). Uden JS virker alt; dette gør dem bare hurtigere at bruge:
 // - søgning mens man skriver (og filtre og barn-filter uden genindlæsning), URL'en følger med,
 // - detaljen i en skuffe på brede skærme (tilbage-knappen og Esc lukker den), fuld side på mobil,
-// - "/" fokuserer søgefeltet (på detaljen som fuld side: går til overblikket med fokus i det),
+// - "/" fokuserer søgefeltet (på detaljen som fuld side: går til forsiden med fokus i det),
 // - "Klaret"/"Fortryd" uden at miste pladsen på siden.
 // Siderne hentes som almindelig HTML, og kun <main id="overblik-main"> (og toppen) skiftes ud.
 // Går noget galt (fx Cloudflare Access vil have et nyt login), så navigeres der helt almindeligt.
@@ -64,7 +64,7 @@
     return u.pathname + u.search === v.pathname + v.search;
   }
 
-  // ------------------------------------------------------------------ listen (overblik og søgning)
+  // ------------------------------------------------------------------ listen (forsiden og søgning)
 
   let listUrl = location.href;
 
@@ -78,6 +78,7 @@
       return fallback(url, err);
     }
     const { doc } = got;
+    url = got.url || url; // fx en tom søgning på /search, som sender videre til forsiden
     const y = window.scrollY;
     document.querySelectorAll("body > .flash").forEach((el) => el.remove());
     if (whole && top() && doc.getElementById("overblik-top")) {
@@ -221,12 +222,12 @@
 
   function isDetail(a) {
     const u = new URL(a.href, location.href);
-    return u.origin === location.origin && u.pathname.startsWith("/overblik/item/") && !u.pathname.includes("/fil/");
+    return u.origin === location.origin && u.pathname.startsWith("/item/") && !u.pathname.includes("/file/");
   }
 
   function isList(a) {
     const u = new URL(a.href, location.href);
-    return u.origin === location.origin && u.pathname === "/overblik";
+    return u.origin === location.origin && (u.pathname === "/" || u.pathname === "/search");
   }
 
   // ------------------------------------------------------------------ klik og formularer
@@ -317,7 +318,7 @@
       ev.preventDefault();
       const q = document.getElementById("q");
       if (q) focusSearch(q);
-      else window.location.assign("/overblik#q"); // detaljen som fuld side: søgefeltet er på overblikket
+      else window.location.assign("/#q"); // detaljen som fuld side: søgefeltet er på forsiden
     } else if (ev.key === "Escape" && isOpen()) {
       ev.preventDefault();
       closeDrawer();
@@ -329,7 +330,7 @@
     q.select();
   }
 
-  // Kom man hertil med "/" fra detaljen (/overblik#q): fokus i søgefeltet, og adressen uden #q.
+  // Kom man hertil med "/" fra detaljen (/#q): fokus i søgefeltet, og adressen uden #q.
   if (location.hash === "#q" && document.getElementById("q")) {
     focusSearch(document.getElementById("q"));
     listUrl = location.href.split("#")[0];
