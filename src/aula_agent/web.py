@@ -633,10 +633,11 @@ def weeks_html(weeks: list[timeline.Week], today: dt.date, back: str) -> str:
 
 
 def upcoming_html(
-    items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date, back: str
+    items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date, back: str,
+    sources: dict[str, archive.Item],
 ) -> str:
     """Kommende (:func:`timeline.upcoming`)."""
-    weeks = weeks_html(timeline.upcoming(items, events, todos, today), today, back)
+    weeks = weeks_html(timeline.upcoming(items, events, todos, today, sources), today, back)
     return f'<section id="kommende"><h2>Kommende</h2>{weeks or "<p class=\"mut\">Intet kommende.</p>"}</section>'
 
 
@@ -803,11 +804,15 @@ async def overview(request: Request) -> Response:
     pending = ledger.pending_keys()
     today = request.app.state.today()
 
-    def read() -> tuple[list[archive.Item], int, list[archive.ItemTodo]] | None:
+    child = child_param(request.query_params)
+    events = [ev for ev in ledger.upcoming(today.isoformat()) if child is None or child in ev.child_ids]
+
+    def read() -> tuple[list[archive.Item], int, list[archive.ItemTodo], dict[str, archive.Item]] | None:
         with archive.read() as a:
             if a is None:
                 return None
-            return a.items(), len(a.unclassified(exclude=pending)), a.todos()
+            sources = {k: item for k in {ev.source for ev in events if ev.source} if (item := a.item(k))}
+            return a.items(), len(a.unclassified(exclude=pending)), a.todos(), sources
 
     nav = tabs("overblik")
     search = await asyncio.to_thread(search_part, request.query_params, today)
@@ -817,9 +822,7 @@ async def overview(request: Request) -> Response:
     if got is None or search is None:
         body = main('<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>')
         return page("Overblik", nav + body, enhanced=True)
-    items, unclassified, todos = got
-    child = child_param(request.query_params)
-    events = [ev for ev in ledger.upcoming(today.isoformat()) if child is None or child in ev.child_ids]
+    items, unclassified, todos, sources = got
     todos = [t for t in todos if for_child(t.item.child_ids, child)]
     shown = [
         i for i in items
@@ -837,7 +840,7 @@ async def overview(request: Request) -> Response:
     body = f"""
 <section id="skal-goeres">{todos_html(todos, ledger, today, back)}</section>
 <section id="gaelder-nu"><h2>Gælder nu</h2><ul class="list now">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>
-{upcoming_html(shown, events, todo_lists(todos, ledger)[0], today, back)}
+{upcoming_html(shown, events, todo_lists(todos, ledger)[0], today, back, sources)}
 {standing_html([i for i in shown if i.classification.category == archive.Category.INFO])}
 {earlier_html(shown, today, today)}
 <p class="mut" id="ikke-inddelt">{unclassified} endnu ikke inddelt</p>"""

@@ -289,3 +289,29 @@ def test_aulas_important_mark_with_a_from_but_no_to_holds_for_fourteen_days_from
         classify(a, "post:2", "info", topics=["skole"])
 
     assert titles(section(overview(), "gaelder-nu")) == ["Vigtigt om skolevejen"]  # from 25/10: until 8/11
+
+
+def test_an_upcoming_event_links_to_its_item_whenever_the_archive_has_it():
+    with archive.open() as a:
+        save_message(a, message("7", "m1", "2026-11-02T09:00:00", "Svar om turen"))
+        save_message(a, message("9", "m1", "2026-11-02T09:00:00", "Samtale om skoledagen", sensitive=True))
+        a.save_post(post(5, "Endnu ikke inddelt", publish="2026-11-02T08:00:00"))
+        a.save_post(post(6, "Tur for Oscar", publish="2026-11-02T08:00:00"), child_ids=[2])
+        classify(a, "message:7:m1", "svar")
+        classify(a, "message:9:m1", "orientering")
+        classify(a, "post:6", "arrangement", start="2026-11-24")
+    synced("message:7:m1#1", "Frist: betal turen", "2026-11-20", source="message:7:m1")
+    synced("post:5#1", "Skolefoto", "2026-11-21", source="post:5")
+    synced("message:9:m1#1", "Samtale", "2026-11-22", source="message:9:m1")
+    synced("post:6#1", "Madpakke til turen", "2026-11-23", source="post:6", child_ids=(1,))
+    synced("post:7#1", "Uden kilde i arkivet", "2026-11-25", source="post:7")
+    two_children()
+
+    upcoming = section(overview(child="1"), "kommende")
+
+    sources = dict(re.findall(r'class="item-link event-src" href="/overblik/item/([^"]+)">(.*?)</a>', upcoming))
+    assert sources == {
+        "message:7:m1": "Svar om turen", "post:5": "Endnu ikke inddelt", "message:9:m1": "🔒 Følsom tråd",
+        "post:6": "Tur for Oscar",
+    }
+    assert "Samtale om skoledagen" not in upcoming and "Uden kilde i arkivet" in upcoming

@@ -87,21 +87,20 @@ def is_upcoming(item: archive.Item, today: dt.date) -> bool:
 
 
 def upcoming(
-    items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date
+    items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date,
+    sources: dict[str, archive.Item],
 ) -> list[Week]:
-    """Kommende, week by week from today: the items :func:`is_upcoming`, the events (an event that is its item,
-    on the day the item's span begins or while it stands in Gælder nu, is shown once: as the item) and the
-    open ``todos`` due today or later."""
+    """Kommende, week by week from today: the items :func:`is_upcoming`, the events (an event on the day its
+    item's span begins is that item, shown once: in Kommende or Gælder nu) and the
+    open ``todos`` due today or later. ``sources``: the events' items in the archive (shown or not), by key."""
     by_key = {i.key: i for i in items}
     lines: list[Line] = [ItemLine(i.classification.span_start, i) for i in items if is_upcoming(i, today)]
     for ev in events:
         start = dt.date.fromisoformat(ev.start[:10])
         source = by_key.get(ev.source or "")
-        if source is not None and (
-            source.current(today) is not None or (is_upcoming(source, today) and source.classification.span_start == start)
-        ):
+        if source is not None and source.classification.span_start == start:
             continue
-        lines.append(EventLine(max(start, today), ev, source))
+        lines.append(EventLine(max(start, today), ev, sources.get(ev.source or "")))
     lines += [TodoLine(t.due, t) for t in todos if t.due is not None and t.due >= today]
     return weeks(lines)
 
