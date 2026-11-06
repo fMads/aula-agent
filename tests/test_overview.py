@@ -333,3 +333,20 @@ def test_a_todo_due_on_the_day_its_item_stands_in_upcoming_is_on_the_items_line_
     assert "todo-row" in lines[0] and "Bestil billeder" in lines[0]
     assert 'data-key="post:1"' in lines[1] and "Medbring saks" in lines[1] and 'action="/todos/check"' in lines[1]
     assert "Medbring saks" not in lines[0] + lines[2]
+
+
+def test_vis_aeldre_keeps_the_child_and_the_child_filter_on_an_earlier_page_keeps_before():
+    with archive.open() as a:
+        a.save_post(post(1, "Skolestart", publish="2026-08-01T08:00:00"), child_ids=[1])
+        a.save_post(post(2, "Motionsdag", publish="2026-10-01T08:00:00"), child_ids=[1])
+        classify(a, "post:1", "arrangement", start="2026-08-12")
+        classify(a, "post:2", "arrangement", start="2026-10-09")
+    two_children()
+
+    earlier = section(overview(child="1"), "tidligere")
+    assert 'href="/overblik?child=1&amp;before=2026-09-07"' in earlier
+
+    html = overview(child="1", before="2026-09-07")
+    chips = html.split('id="barn-filter"', 1)[1].split("</nav>", 1)[0]
+    assert 'href="/overblik?before=2026-09-07&amp;child=2"' in chips and 'href="/overblik?before=2026-09-07"' in chips
+    assert titles(section(html, "tidligere")) == ["Skolestart"]

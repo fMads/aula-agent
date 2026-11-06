@@ -646,13 +646,15 @@ def upcoming_html(
     return f'<section id="kommende"><h2>Kommende</h2>{weeks or "<p class=\"mut\">Intet kommende.</p>"}</section>'
 
 
-def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date) -> str:
-    """Tidligere (:func:`timeline.earlier`), shown as usual (past or not), and "Vis ældre" when there is more."""
+def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date, params) -> str:
+    """Tidligere (:func:`timeline.earlier`), shown as usual (past or not), and "Vis ældre" when there is more
+    (filtered as the overview is, by ``params``)."""
     got = timeline.earlier(items, before, today)
     weeks = weeks_html(got.weeks, today, "/overblik")
     older = ""
     if got.older:
-        older = f'<p><a class="btn older" href="/overblik?before={got.older.isoformat()}">Vis ældre</a></p>'
+        href = overview_url(params, drop=("before",), add=[("before", got.older.isoformat())])
+        older = f'<p><a class="btn older" href="{e(href)}">Vis ældre</a></p>'
     return f'<section id="tidligere"><h2>Tidligere</h2>{weeks or "<p class=\"mut\">Intet.</p>"}{older}</section>'
 
 
@@ -729,18 +731,23 @@ def for_child(child_ids: list[int], child: int | None) -> bool:
     return child is None or not child_ids or child in child_ids
 
 
+def overview_url(params, *, drop: tuple[str, ...] = (), add: list[tuple[str, str]] = ()) -> str:
+    """The overview as ``params`` filter it, without the message (``msg``) and the ``drop`` ones, with ``add``."""
+    keep = [(k, v) for k, v in params.multi_items() if k not in ("msg", *drop) and v] + list(add)
+    return "/overblik" + (f"?{urlencode(keep)}" if keep else "")
+
+
 def child_filter(params, children: dict[str, Any]) -> str:
-    """The child filter: one link per child and one for every child, keeping the search (only with more than one child)."""
+    """The child filter: one link per child and one for every child, keeping the search and the rest of the view
+    (only with more than one child)."""
     if len(children) < 2:
         return ""
-    keep = [(k, v) for k, v in params.multi_items() if k not in ("child", "msg", "before") and v]
     chosen = child_param(params)
 
     def chip(cid: int | None, name: str) -> str:
-        query = urlencode(keep + ([("child", str(cid))] if cid is not None else []))
         on = " on" if cid == chosen else ""
         current = ' aria-current="true"' if cid == chosen else ""
-        href = "/overblik" + (f"?{query}" if query else "")
+        href = overview_url(params, drop=("child",), add=[("child", str(cid))] if cid is not None else [])
         return f'<a class="chip{on}" href="{e(href)}"{current}>{e(name)}</a>'
 
     chips = [chip(None, "Alle børn")] + [chip(int(cid), child_first_name(c)) for cid, c in children.items() if cid.isdigit()]
@@ -833,11 +840,11 @@ async def overview(request: Request) -> Response:
         i for i in items
         if i.classification and i.classification.category != archive.Category.SVAR and for_child(i.child_ids, child)
     ]
-    if before := day_param(request.query_params.get("before")):
-        back = '<p><a href="/overblik">Til overblikket</a></p>'
-        return page("Tidligere", nav + search[0] + main(earlier_html(shown, before, today) + back), enhanced=True)
-    keep = [(k, v) for k, v in request.query_params.multi_items() if k != "msg" and v]
-    back = "/overblik" + (f"?{urlencode(keep)}" if keep else "")  # where "Klaret" returns to: this view
+    params = request.query_params
+    if before := day_param(params.get("before")):
+        back = f'<p><a href="{e(overview_url(params, drop=("before",)))}">Til overblikket</a></p>'
+        return page("Tidligere", nav + search[0] + main(earlier_html(shown, before, today, params) + back), enhanced=True)
+    back = overview_url(params)  # where "Klaret" returns to: this view
     now_html = "".join(
         item_row(i, f'<span class="mut meta">{e(why)}</span>' if (why := why_current(i, reason)) else "")
         for i, reason in timeline.now(shown, today)
@@ -847,7 +854,7 @@ async def overview(request: Request) -> Response:
 <section id="gaelder-nu"><h2>Gælder nu</h2><ul class="list now">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>
 {upcoming_html(shown, events, todo_lists(todos, ledger)[0], today, back, sources)}
 {standing_html([i for i in shown if i.classification.category == archive.Category.INFO])}
-{earlier_html(shown, today, today)}
+{earlier_html(shown, today, today, params)}
 <p class="mut" id="ikke-inddelt">{unclassified} endnu ikke inddelt</p>"""
     return page("Overblik", nav + search[0] + main(body), request.query_params.get("msg"), enhanced=True)
 
