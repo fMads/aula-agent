@@ -501,10 +501,10 @@ def overview_item(item: archive.Item) -> str:
     )
 
 
-SOURCE_NAMES = {
-    archive.Source.POST: "Opslag",
-    archive.Source.MESSAGE: "Besked",
-    archive.Source.DOCUMENT: "Med dokument",
+KIND_FILTER_NAMES = {
+    archive.KindFilter.POST: "Opslag",
+    archive.KindFilter.MESSAGE: "Besked",
+    archive.KindFilter.DOCUMENT: "Med dokument",
 }
 
 
@@ -555,7 +555,7 @@ def search_form(params, topics: list[archive.Topic]) -> str:
         if len(children) > 1 else "",
         select("category", "Alle slags", [(str(c), name) for c, name in CATEGORY_NAMES.items()]),
         select("topic", "Alle emner", [(t.name, t.name) for t in topics]),
-        select("source", "Alle kilder", [(str(s), name) for s, name in SOURCE_NAMES.items()]),
+        select("kind", "Alle kilder", [(str(k), name) for k, name in KIND_FILTER_NAMES.items()]),
     ]
     return (
         f'<form class="search" method="get" action="/overblik"><input type="search" name="q" value="{e(params.get("q"))}"'
@@ -565,7 +565,7 @@ def search_form(params, topics: list[archive.Topic]) -> str:
 
 def searching(params) -> bool:
     """Whether the overview is asked for search results (a query, or a filter other than the child)."""
-    return any((params.get(name) or "").strip() for name in ("q", "category", "topic", "source"))
+    return any((params.get(name) or "").strip() for name in ("q", "category", "topic", "kind"))
 
 
 def search_part(params, today: dt.date) -> tuple[str, bool] | None:
@@ -585,7 +585,7 @@ def search_part(params, today: dt.date) -> tuple[str, bool] | None:
             return form, False
         hits = a.search(
             params.get("q") or "", child=choice("child", int), category=choice("category", archive.Category),
-            topic=params.get("topic") or None, source=choice("source", archive.Source),
+            topic=params.get("topic") or None, kind=choice("kind", archive.KindFilter),
         )
     found = "".join(search_hit(h, today) for h in hits) or '<li class="mut">Intet fundet.</li>'
     return form + f'<h2>Søgning <span class="mut">({len(hits)})</span></h2><ul class="list">{found}</ul>', True

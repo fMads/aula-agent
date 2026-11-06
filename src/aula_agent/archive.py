@@ -399,8 +399,8 @@ class Hit:
     files: tuple[File, ...] = ()  # the item's files whose name or text matched
 
 
-class Source(StrEnum):
-    """Where an item came from, for a search filter."""
+class KindFilter(StrEnum):
+    """A search filter on what an item is: a post, a message, or an item with a document."""
 
     POST = "opslag"
     MESSAGE = "besked"
@@ -738,7 +738,7 @@ class Archive:
 
     def search(
         self, query: str = "", *, child: int | None = None, category: Category | None = None,
-        topic: str | None = None, source: Source | None = None,
+        topic: str | None = None, kind: KindFilter | None = None,
     ) -> list[Hit]:
         """The items that match ``query`` (every word as the beginning of a word), newest first.
 
@@ -746,7 +746,7 @@ class Archive:
         files (the name or the text in it), not necessarily the same place; without a query every item
         matches. A hit shows the files that have a word the item itself does not have, or every word.
         The filters narrow it: the items for ``child`` (an item for no child in particular is for every
-        child), of ``category``, with ``topic`` (both by the newest classification), and from ``source``.
+        child), of ``category``, with ``topic`` (both by the newest classification), and of ``kind``.
         """
         words = re.findall(r"\w+", query)
         if query.strip() and not words:  # only quotes, stars and the like
@@ -790,7 +790,7 @@ class Archive:
         out = []
         for key in keys:
             item = self.item(key)
-            if item is None or not item.versions or not _wanted(item, child, category, topic, source):
+            if item is None or not item.versions or not _wanted(item, child, category, topic, kind):
                 continue
             files = tuple(f for f in item.files if f.attachment_id in shown.get(key, ()))
             in_shown = (file_excerpts.get(key, {}).get(f.attachment_id) for f in files)
@@ -900,7 +900,7 @@ def _parts(snippet: str) -> tuple[tuple[str, bool], ...]:
     return tuple(parts)
 
 
-def _wanted(item: Item, child: int | None, category: Category | None, topic: str | None, source: Source | None) -> bool:
+def _wanted(item: Item, child: int | None, category: Category | None, topic: str | None, kind: KindFilter | None) -> bool:
     c = item.classification
     if child is not None and item.child_ids and child not in item.child_ids:
         return False
@@ -908,11 +908,11 @@ def _wanted(item: Item, child: int | None, category: Category | None, topic: str
         return False
     if topic is not None and (c is None or topic not in c.topics):
         return False
-    if source == Source.POST:
+    if kind == KindFilter.POST:
         return item.kind == "post"
-    if source == Source.MESSAGE:
+    if kind == KindFilter.MESSAGE:
         return item.kind == "message"
-    if source == Source.DOCUMENT:
+    if kind == KindFilter.DOCUMENT:
         return any(f.kind in (Kind.FILE, Kind.SECURE_DOCUMENT) for f in item.files)
     return True
 

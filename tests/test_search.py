@@ -156,9 +156,9 @@ def test_the_filters_narrow_the_search_and_the_newest_comes_first():
     assert hits(search(q="skov")) == ["Skovtur", "Skoven og naturen", "Plan for skoven", "Tur til skoven"]  # svar too
     assert hits(search(q="skov", category="arrangement")) == ["Plan for skoven", "Tur til skoven"]
     assert hits(search(q="skov", topic="natur")) == ["Skoven og naturen"]
-    assert hits(search(q="skov", source="besked")) == ["Skovtur"]
-    assert hits(search(q="skov", source="opslag")) == ["Skoven og naturen", "Plan for skoven", "Tur til skoven"]
-    assert hits(search(q="skov", source="dokument")) == ["Plan for skoven"]
+    assert hits(search(q="skov", kind="besked")) == ["Skovtur"]
+    assert hits(search(q="skov", kind="opslag")) == ["Skoven og naturen", "Plan for skoven", "Tur til skoven"]
+    assert hits(search(q="skov", kind="dokument")) == ["Plan for skoven"]
     # an item for no child in particular is for every child
     assert hits(search(q="skov", child="1")) == ["Skovtur", "Plan for skoven", "Tur til skoven"]
     assert hits(search(category="info")) == ["Skoven og naturen"]  # a filter alone searches too
@@ -268,7 +268,7 @@ def test_the_search_field_is_at_the_top_of_the_overview_and_the_child_filter_onl
         a.save_post(post(1, "Juleklip"))
     html = search()
     assert html.index('name="q"') < html.index("<h2>Skal gøres") and '<h2>Søgning' not in html
-    assert 'name="child"' not in html and 'name="category"' in html and 'name="source"' in html
+    assert 'name="child"' not in html and 'name="category"' in html and 'name="kind"' in html
 
     configure_children()
     html = search(q="jul", child="2")
