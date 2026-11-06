@@ -12,10 +12,10 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import html
-import mimetypes
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -676,7 +676,14 @@ def file_url(item_key: str, attachment_id: str) -> str:
     return f"{item_url(item_key)}/fil/{quote(attachment_id, safe=':')}"
 
 
-INLINE_SUFFIXES = (".pdf",)  # opened in the browser; images are too, other files are downloaded
+# What the browser may show itself, by the file name's suffix (never by the kind Aula gave it): an SVG or HTML
+# file shown inline would run script on this site's own address. Everything else is downloaded.
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
+INLINE_TYPES = {".pdf": "application/pdf", **IMAGE_TYPES}
+
+
+def suffix(name: str) -> str:
+    return PurePosixPath(name.lower()).suffix
 
 
 def files_html(item: archive.Item) -> str:
@@ -686,7 +693,7 @@ def files_html(item: archive.Item) -> str:
     thumbs, rows = [], []
     for f in item.files:
         url = file_url(item.key, f.attachment_id)
-        if f.kind == archive.Kind.IMAGE and f.path:
+        if f.kind == archive.Kind.IMAGE and f.path and suffix(f.name) in IMAGE_TYPES:
             thumbs.append(
                 f'<a href="{e(url)}" target="_blank" rel="noopener">'
                 f'<img src="{e(url)}" alt="{e(f.name)}" loading="lazy" class="thumb"></a>'
@@ -700,7 +707,7 @@ def files_html(item: archive.Item) -> str:
             what += ' <span class="mut">· link</span>'
         elif not f.path:
             what = f'{e(f.name)} <span class="mut">· ikke hentet</span>'
-        elif f.name.lower().endswith(INLINE_SUFFIXES):
+        elif suffix(f.name) in INLINE_TYPES:
             what = f'<a href="{e(url)}" target="_blank" rel="noopener">{e(f.name)}</a>'
         else:
             what = f'<a href="{e(url)}" download>{e(f.name)}</a>'
@@ -890,10 +897,12 @@ async def item_file(request: Request) -> Response:
     path = (data_dir / file.path).resolve()
     if not path.is_relative_to(data_dir) or not path.is_file():
         return PlainTextResponse("Findes ikke.", status_code=404)
-    inline = file.kind == archive.Kind.IMAGE or file.name.lower().endswith(INLINE_SUFFIXES)
+    media_type = INLINE_TYPES.get(suffix(file.name))
     return FileResponse(
-        path, media_type=mimetypes.guess_type(file.name)[0] or "application/octet-stream", filename=file.name,
-        content_disposition_type="inline" if inline else "attachment", headers={"Cache-Control": "private, no-store"},
+        path, media_type=media_type or "application/octet-stream", filename=file.name,
+        content_disposition_type="inline" if media_type else "attachment",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+                 "Content-Security-Policy": "sandbox"},
     )
 
 
