@@ -141,7 +141,7 @@ Et item, der ikke længere er aktuelt. Det gælder et arrangement, en frist elle
 _Avoid_: Overstået (kun i brugertekst), udløbet (det er Aulas expireAt), arkiveret
 
 **Overview**:
-Web-siden, hvor arkivets items, events og todos vises efter, hvornår de gælder, med fritekstsøgning og et item ad gangen i fuld længde. Forsiden har Skal gøres (de åbne todos), I dag og i morgen (events, items og todos på de to dage), Gælder nu (perioder og arrangementer over flere dage, der er i gang, orienteringer, der ikke er past, og opslag med Aulas vigtig-markering) og Kommende (dag for dag fra i dag: items, hvis span begynder, events og todos med frist). Stående info (efter topic) og Tidligere (til og med i går, bagud) har hver deres side. Kørsler, logins og kalendere hører ikke til overblikket.
+Web-siden, hvor arkivets items, events og todos vises efter, hvornår de gælder, med fritekstsøgning og et item ad gangen i fuld længde. Forsiden har Skal gøres (de åbne todos), I dag og i morgen (events, items og todos på de to dage), Gælder nu (perioder og arrangementer over flere dage, der er i gang, orienteringer, der ikke er past, og opslag med Aulas vigtig-markering) og Kommende (dag for dag fra i dag: items, hvis span begynder, events og todos med frist). Stående info (efter topic) og Tidligere (til og med i går, bagud) har hver deres side. Kørsler, logins og kalendere hører ikke til overblikket, men står på Indstillinger; forsiden viser kun en advarselslinje, når noget af det kræver handling.
 _Avoid_: Overblik (kun i brugertekst), dashboard, arkiv-side
 
 **Aulas vigtig-markering**:

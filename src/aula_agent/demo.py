@@ -150,11 +150,13 @@ def fill(today: dt.date, port: int) -> None:
                                       start.isoformat(), source, {}, f"https://calendar.google.com/demo/{key}"))
         ledger.add_history(key, "created", source, title=title, start=start.isoformat(), end=start.isoformat())
     ledger.mark_removed("post:2#1", OSCAR, title="Juleklip", start=day(28).isoformat(), end=day(28).isoformat())
+    ledger.log_run("fetch", "ok", "3 nye/ændrede, 0 venter")  # a night that went well: no warning about it
+    ledger.log_run("apply", "ok", "5 oprettet")
     ledger.save()
 
 
 class DemoGoogle:
-    """Google as the demo has it: "Fjern" on the status page removes from the demo's own calendar (none)."""
+    """Google as the demo has it: "Fjern" on the detail removes from the demo's own calendar (none)."""
 
     def delete_event(self, calendar_id: str, event_id: str) -> bool:
         return True
@@ -213,7 +215,7 @@ def main(argv: list[str] | None = None) -> None:
 
     from . import credentials
 
-    credentials.aula_username = lambda: None  # the status page does not look at the real Aula login
+    credentials.aula_username = lambda: None  # the settings and the warnings do not look at the real Aula login
 
     print(f"Demo: http://{HOST}:{port}/  (opdigtede data i {target}; Ctrl-C stopper)", flush=True)
     uvicorn.run(demo_app(), host=HOST, port=port, log_level="warning")

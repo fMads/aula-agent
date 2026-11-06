@@ -16,6 +16,7 @@ def test_the_demo_fills_its_directory_with_two_children_todos_and_events_and_let
         assert 'id="barn-filter"' in html and "Emma" in html and "Oscar" in html
         assert 'class="row todo-row"' in html and 'class="row event"' in html
         assert c.get("/aula/login").status_code == 403 and c.get("/google").status_code == 403
+        assert "ikke hentet fra Aula" not in html  # the demo has had a good night
 
 
 @pytest.mark.parametrize("target", ["data", "data/sub", "."])

@@ -197,7 +197,7 @@ def test_the_child_filter_shows_the_childs_items_and_those_without_a_child_and_o
     assert titles(oscar) == ["Tur for Oscar", "Skolefoto for alle"] and "Frist: seddel" in oscar
 
 
-def test_a_sensitive_thread_shows_only_its_date_source_and_category_and_the_unclassified_are_counted_at_the_bottom():
+def test_a_sensitive_thread_shows_only_its_date_source_and_category():
     with archive.open() as a:
         spec = message("9", "m1", "2026-11-03T08:00:00+01:00", "Samtale om skoledagen", sensitive=True)
         spec["messages"][0]["sender"] = {"fullName": "Lærer Hansen"}
@@ -218,8 +218,7 @@ def test_a_sensitive_thread_shows_only_its_date_source_and_category_and_the_uncl
     for hidden in ("Samtale om skoledagen", "Aftale om hentning", "Et resumé der ikke må ses", "trivselssamtale",
                    "Lærer Hansen"):
         assert hidden not in html.split("</form>", 1)[1]  # the search field's list of topics has them all
-    assert "Endnu ikke læst" not in html
-    assert html.rindex("2 endnu ikke inddelt") > html.index('<section id="tidligere"')
+    assert "Endnu ikke læst" not in html  # not classified yet: counted on the settings (test_settings.py)
 
 
 def test_an_open_todo_with_due_stands_in_its_week_under_upcoming_too():
