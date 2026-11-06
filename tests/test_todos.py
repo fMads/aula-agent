@@ -6,7 +6,7 @@ import re
 
 from click.testing import CliRunner
 
-from aula_agent import cli, store
+from aula_agent import archive, cli, store
 from aula_agent.ledger import Ledger
 from test_aula_source import FakeAula, aula, child, iso, message, post, run_fetch  # noqa: F401  (aula is a fixture)
 from test_web import ORIGIN, auth, configure, make_client
@@ -140,15 +140,51 @@ def test_a_new_version_of_the_item_gives_an_open_todo_again(aula):
     assert Ledger.load().todo_checked(*version_of(html, "Betal 60 kr. til turen")) is False
 
 
-def test_a_todo_from_a_sensitive_thread_shows_only_that_it_is_sensitive_and_the_button(aula):
+def test_a_correction_of_an_old_item_gives_an_open_todo_without_due(aula):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(1, "Skovtur", 20), post(2, "Svømning", 20)], [], {})
+    run_fetch()
+    classify(trip("post:1", {"text": "Betal turen"}), trip("post:2", {"text": "Medbring badetøj"}))
+    assert to_do(overview()) == []  # 20 days old when they were classified
+
+    aula["client"].posts = [
+        post(1, "Skovtur (rettet)", 20, html="<p>Ny pris</p>", edited=iso(1)),  # Aula says when it was edited
+        post(2, "Svømning (rettet)", 20, html="<p>Nyt sted</p>"),  # it does not: when the archive saw it
+    ]
+    run_fetch()
+    classify(trip("post:1", {"text": "Betal 60 kr. til turen"}), trip("post:2", {"text": "Medbring håndklæde"}))
+
+    assert to_do(overview()) == ["Betal 60 kr. til turen", "Medbring håndklæde"]
+
+
+def test_classifying_the_same_version_again_later_keeps_an_open_todo_open(aula, monkeypatch):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(1, "Skovtur", 1), post(2, "Svømning", 1)], [], {})
+    run_fetch()
+    due = (dt.date.today() + dt.timedelta(days=5)).isoformat()
+    todos = [trip("post:1", {"text": "Betal turen", "due": due}), trip("post:2", {"text": "Medbring badetøj"})]
+    classify(*todos)
+
+    later = dt.datetime.now().astimezone() + dt.timedelta(days=30)  # past the due, and the items are old
+    monkeypatch.setattr(archive.Archive, "_now", lambda self: later)
+    assert CliRunner().invoke(cli.main, ["reclassify"]).exit_code == 0
+    run_fetch()  # now in to_classify
+    classify(*todos, processed=[])
+
+    html = overview(today=later.date())
+    assert to_do(html) == ["Betal turen", "Medbring badetøj"]
+    assert "overskredet" in next(li for li in html.split("<li") if "Betal turen" in li)
+
+
+def test_a_todo_from_a_sensitive_thread_shows_that_it_is_sensitive_its_due_and_the_button(aula):
     threads = [{"id": 5, "subject": "Samtale om skoledagen", "lastMessageDate": iso(1), "sensitive": True}]
     aula["client"] = FakeAula([child(1, "Emma")], [], threads, {"5": [message("a")]})
     run_fetch()
-    classify(trip("message:5:a", {"text": "Ring til skolen om samtalen"}, summary=None))
+    classify(trip("message:5:a", {"text": "Ring til skolen om samtalen", "due": "2099-01-10"}, summary=None))
 
     part = _between(overview(), "<h2>Skal gøres", "<details")
-    assert "🔒 Følsom tråd" in part and "Klaret" in part
+    assert "🔒 Følsom tråd" in part and "senest 10.01.2099" in part and "Klaret" in part
+    assert "overskredet" not in part
     assert "Ring til skolen" not in part and "Samtale om skoledagen" not in part
+    assert "overskredet" in _between(overview(today=dt.date(2099, 2, 1)), "<h2>Skal gøres", "<details")
 
 
 def test_klaret_needs_same_origin_and_an_existing_todo(aula):

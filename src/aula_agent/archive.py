@@ -41,13 +41,15 @@ from typing import Any
 from aula.models.attachment import Attachment
 from aula.models.message import Message
 from aula.models.post import Post
+from aula.utils.dates import parse_api_datetime
 
 from . import store
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _BACKUPS_SINCE = 3  # the schema version that added the backup tables
 _CLASSIFICATIONS_SINCE = 4  # the schema version that added classifications and topics
 _TODOS_SINCE = 5  # the schema version that added a todo to classifications
+_FIRST_CLASSIFIED_SINCE = 6  # the schema version that remembers when a version was first classified
 
 # Message types that are items; the rest (RecipientsAdded, SystemReply, AutoReply,
 # MessageDeleted, ...) are system messages and are only kept in the raw thread.
@@ -135,6 +137,13 @@ ALTER TABLE classifications ADD COLUMN todo_text TEXT;  -- empty when there is n
 ALTER TABLE classifications ADD COLUMN todo_due TEXT;   -- YYYY-MM-DD, empty without a due date
 """
 
+# when a version got its first classification: neither a new one nor ``reclassify`` changes it,
+# so whether its todo was current stays as it was
+_SCHEMA_6 = """
+ALTER TABLE versions ADD COLUMN first_classified_at TEXT;
+UPDATE versions SET first_classified_at = (SELECT saved_at FROM classifications WHERE version_id = versions.id);
+"""
+
 
 def _stamp(at: dt.datetime) -> str:
     return at.astimezone().isoformat(timespec="seconds") if at.tzinfo is None else at.isoformat(timespec="seconds")
@@ -170,6 +179,7 @@ class Version:
     raw: dict[str, Any]
     id: int | None = None  # the archive's handle on this version (an inbox item's ``archive_version``)
     classification: Classification | None = None
+    first_classified_at: str | None = None  # kept when it is classified again, also after ``reclassify``
 
 
 class Kind(StrEnum):
@@ -303,7 +313,8 @@ class ItemTodo:
 
     @property
     def classified_at(self) -> str:
-        return self.version.classification.saved_at
+        """When the version was first classified (a new classification of it does not change that)."""
+        return self.version.first_classified_at or self.version.classification.saved_at
 
     @property
     def was_current(self) -> bool:
@@ -313,8 +324,16 @@ class ItemTodo:
         on = dt.date.fromisoformat(self.classified_at[:10])
         if self.due is not None:
             return self.due >= on
-        sent = self.version.date
-        return bool(sent) and on - dt.date.fromisoformat(sent[:10]) <= TODO_FRESH_FOR
+        came = self.came_out
+        return bool(came) and on - dt.date.fromisoformat(came[:10]) <= TODO_FRESH_FOR
+
+    @property
+    def came_out(self) -> str | None:
+        """When the item came out as this version: the first version when it was published or sent,
+        a later one (a correction) when it was edited in Aula, or else when the archive saw it."""
+        if self.version is self.item.versions[0]:
+            return self.version.date
+        return _iso(parse_api_datetime(self.version.raw.get("editedAt"))) or self.version.saved_at
 
 
 @dataclass
@@ -508,6 +527,10 @@ class Archive:
              c.summary, json.dumps(list(c.child_ids)), self._saved_at(),
              c.todo and c.todo.text, c.todo and c.todo.due and c.todo.due.isoformat()),
         )
+        self._db.execute(
+            "UPDATE versions SET first_classified_at = coalesce(first_classified_at, ?) WHERE id = ?",
+            (self._saved_at(), version),
+        )
         self._db.execute("DELETE FROM classification_topics WHERE version_id = ?", (version,))
         self._db.executemany(
             "INSERT INTO classification_topics (version_id, topic, position) VALUES (?, ?, ?)",
@@ -578,14 +601,14 @@ class Archive:
         if row is None:
             return None
         item = Item(row[0], row[1], row[2], bool(row[3]))
-        for vid, saved_at, title, author, date, groups, child_ids, body, raw in self._db.execute(
-            "SELECT id, saved_at, title, author, date, groups, child_ids, body, raw FROM versions"
+        for vid, saved_at, title, author, date, groups, child_ids, body, raw, first_classified_at in self._db.execute(
+            "SELECT id, saved_at, title, author, date, groups, child_ids, body, raw, first_classified_at FROM versions"
             " WHERE item_key = ? ORDER BY id",
             (key,),
         ):
             item.versions.append(
                 Version(saved_at, title, author, date, json.loads(groups), json.loads(child_ids), body, json.loads(raw),
-                        vid, self._classification(vid))
+                        vid, self._classification(vid), first_classified_at)
             )
         item.versions.sort(key=lambda v: _when(v.saved_at))  # stable: equal times keep the order they were saved in
         item.files = [
@@ -732,6 +755,8 @@ def _migrate(db: sqlite3.Connection) -> None:
         db.executescript(_SCHEMA_4)
     if current < _TODOS_SINCE:
         db.executescript(_SCHEMA_5)
+    if current < _FIRST_CLASSIFIED_SINCE:
+        db.executescript(_SCHEMA_6)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 

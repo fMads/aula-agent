@@ -418,15 +418,15 @@ def todo_item(t: archive.ItemTodo, *, today: dt.date, checked: bool) -> str:
         f'<input type="hidden" name="version" value="{t.version.id}">'
         f'<button class="small">{"Fortryd" if checked else "Klaret"}</button></form>'
     )
-    if t.item.sensitive:  # the page may stand open on a screen: not even what to do
-        what = "🔒 Følsom tråd"
-    else:
-        overdue = not checked and t.due is not None and t.due < today
-        meta = [m for m in (
-            t.due and f"senest {fmt_date(t.due.isoformat())}", t.item.latest.title or "(uden titel)",
-        ) if m]
-        flag = ' <b class="bad">overskredet</b>' if overdue else ""
-        what = f'<span class="todo">{e(t.text)}</span>{flag}<br><span class="mut">{e(" · ".join(meta))}</span>'
+    sensitive = t.item.sensitive  # the page may stand open on a screen: not what to do, nor the subject
+    overdue = not checked and t.due is not None and t.due < today
+    meta = [m for m in (
+        t.due and f"senest {fmt_date(t.due.isoformat())}",
+        None if sensitive else t.item.latest.title or "(uden titel)",
+    ) if m]
+    flag = ' <b class="bad">overskredet</b>' if overdue else ""
+    text = "🔒 Følsom tråd" if sensitive else t.text
+    what = f'<span class="todo">{e(text)}</span>{flag}<br><span class="mut">{e(" · ".join(meta))}</span>'
     return f'<li><span class="grow">{what}</span><span class="acts">{button}</span></li>'
 
 
