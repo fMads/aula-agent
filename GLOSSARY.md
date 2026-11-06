@@ -141,8 +141,12 @@ Et item, der ikke længere er aktuelt. Det gælder et arrangement, en frist elle
 _Avoid_: Overstået (kun i brugertekst), udløbet (det er Aulas expireAt), arkiveret
 
 **Overview**:
-Web-siden, hvor arkivets items vises efter span og category, med fritekstsøgning og et item ad gangen i fuld længde.
+Web-siden, hvor arkivets items vises efter span og category, med fritekstsøgning og et item ad gangen i fuld længde. Sektionerne er Skal gøres (de åbne todos), Gælder nu (perioder og arrangementer over flere dage, der er i gang, orienteringer, der ikke er past, og opslag med Aulas vigtig-markering), Kommende (uge for uge fra i dag: items, hvis span begynder, events og todos med frist), Stående info (efter topic) og Tidligere (til og med i går, uge for uge bagud).
 _Avoid_: Overblik (kun i brugertekst), dashboard, arkiv-side
+
+**Aulas vigtig-markering**:
+Et opslag, Aula har markeret som vigtigt fra–til. Det står under Gælder nu i den periode; uden slutdato i 14 dage fra startdatoen, uden startdato fra opslagets dato.
+_Avoid_: Fremhævet, prioriteret
 
 ## Kørsler
 

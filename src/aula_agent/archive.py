@@ -281,6 +281,14 @@ class Topic:
     items: int  # how many items have it in their newest classification
 
 
+class Current(StrEnum):
+    """Why an item is current ("Gælder nu" on the overview)."""
+
+    SPAN = "span"  # a period (or an arrangement over several days) whose span covers the day
+    IMPORTANT = "important"  # Aula marks the post as important on the day
+    NOTICE = "notice"  # an orientering not past yet
+
+
 ORIENTERING_CURRENT_FOR = dt.timedelta(days=14)  # an orientering (and a reply, an unclassified item) is past this long after it came
 
 
@@ -324,7 +332,8 @@ class Item:
     def important_on(self, today: dt.date) -> bool:
         """Whether Aula marks the post as important on this day (its "vigtig" with its from–to, both inclusive).
 
-        Without a from or a to, it holds from when the post came or for :data:`ORIENTERING_CURRENT_FOR` after.
+        Without a from, it holds from when the post came; without a to, for :data:`ORIENTERING_CURRENT_FOR`
+        after its first day.
         """
         raw = self.latest.raw if self.kind == "post" and self.versions else {}
         if not raw.get("isImportant"):
@@ -332,8 +341,23 @@ class Item:
         came = dt.date.fromisoformat(self.latest.date[:10]) if self.latest.date else today
         start, end = (parse_api_datetime(raw.get(name)) for name in ("importantFrom", "importantTo"))
         first = start.date() if start else came
-        last = end.date() if end else came + ORIENTERING_CURRENT_FOR
+        last = end.date() if end else first + ORIENTERING_CURRENT_FOR
         return first <= today <= last
+
+    def current(self, today: dt.date) -> Current | None:
+        """Why the item is current on this day, or None when it is not (by the newest classification)."""
+        c = self.classification
+        if c is None:
+            return None
+        several_days = c.span_end is not None and c.span_start is not None and c.span_end > c.span_start
+        spans = c.category == Category.PERIODE or (c.category == Category.ARRANGEMENT and several_days)
+        if spans and c.span_start and c.span_start <= today <= (c.span_end or c.span_start):
+            return Current.SPAN
+        if self.important_on(today):
+            return Current.IMPORTANT
+        if c.category == Category.ORIENTERING and not self.past(today):
+            return Current.NOTICE
+        return None
 
     def past(self, today: dt.date) -> bool:
         """Whether it is no longer current (then it is dimmed, never hidden), by the newest classification.

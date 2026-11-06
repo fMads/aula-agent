@@ -12,11 +12,12 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import html
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import quote, urlencode, urlparse, urlsplit
 
 from starlette.applications import Starlette
@@ -27,7 +28,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import archive, credentials, runs, store
+from . import archive, credentials, runs, store, timeline
 from .ledger import EventHistory, Ledger, UpcomingEvent
 from .runs import Outcome
 
@@ -276,6 +277,10 @@ ul.now{border:1px solid var(--line);border-radius:12px;padding:0 .9rem;backgroun
 #ikke-inddelt{margin-top:2.5rem}
 .thumbs{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem}.thumb{width:7rem;height:7rem;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 form.search select{flex:1 1 7rem;min-width:0;min-height:2.5rem}form.search button{min-height:2.5rem}
+details.filtre{flex:1 1 auto}details.filtre>summary{margin:0;display:inline-flex;align-items:center;min-height:2.5rem;font-weight:400;color:var(--mut)}
+.filtre-felter{display:flex;flex-wrap:wrap;gap:.4rem}
+@supports selector(::details-content){@media (min-width:40rem){details.filtre>summary{display:none}
+details.filtre::details-content{content-visibility:visible;block-size:auto}}}
 li.valgt{background:var(--soft);box-shadow:-.6rem 0 0 var(--soft),.6rem 0 0 var(--soft)}
 #skuffe{position:fixed;top:0;right:0;bottom:0;width:min(42rem,48vw);z-index:20;background:var(--bg);
 border-left:1px solid var(--line);box-shadow:-8px 0 24px rgba(0,0,0,.12);display:flex;flex-direction:column}
@@ -319,7 +324,7 @@ def page(title: str, body: str, flash: str | None = None, *, status_code: int = 
     )
 
 
-def main(content: str) -> str:
+def overview_main(content: str) -> str:
     """What the overview's script swaps: everything under the tabs and the search field."""
     return f'<main id="overblik-main">{content}</main>'
 
@@ -540,9 +545,11 @@ def todo_item(
     return f'<li class="row todo-row">{day_cell(day)}<span class="grow">{what}</span><span class="acts">{button}</span></li>'
 
 
-def todos_html(todos: list[archive.ItemTodo], ledger: Ledger, today: dt.date, back: str) -> str:
-    """Skal gøres and the folded Klaret; ``back``: the overview as it is filtered, for the buttons to return to."""
-    open_, checked = todo_lists(todos, ledger)
+def todos_html(
+    open_: list[archive.ItemTodo], checked: list[archive.ItemTodo], ledger: Ledger, today: dt.date, back: str
+) -> str:
+    """Skal gøres and the folded Klaret (:func:`todo_lists`); ``back``: the overview as it is filtered,
+    for the buttons to return to."""
     open_html = "".join(todo_item(t, today=today, checked=False, back=back) for t in open_)
     checked_html = "".join(todo_item(t, today=today, checked=True, back=back) for t in checked)
     open_html = open_html or '<li class="mut">Intet at gøre.</li>'
@@ -554,8 +561,9 @@ def todos_html(todos: list[archive.ItemTodo], ledger: Ledger, today: dt.date, ba
     )
 
 
-def item_row(item: archive.Item, extra: str = "", *, day: dt.date | None = None) -> str:
-    """One item on the timeline: its category, title and summary, who sent it and when, linked to its detail page.
+def item_row(item: archive.Item, extra: str = "", *, day: dt.date | None = None, acts: str = "") -> str:
+    """One item on the timeline: its category, title and summary, who sent it and when, linked to its detail page;
+    ``acts``: buttons at its side.
 
     A sensitive thread shows only its date, source and category (the page may stand open on a screen).
     """
@@ -567,7 +575,8 @@ def item_row(item: archive.Item, extra: str = "", *, day: dt.date | None = None)
         f'<li class="row" data-key="{e(item.key)}">{day_cell(day)}<span class="grow">'
         f'<span class="tag cat-{c.category}">{e(CATEGORY_NAMES[c.category])}</span> '
         f'<a class="item-link" href="{e(store.item_path(item.key))}">{e(item_title(item))}</a>'
-        f'{summary}<span class="mut meta">{e(meta)}</span>{extra}</span></li>'
+        f'{summary}<span class="mut meta">{e(meta)}</span>{extra}</span>'
+        f'{f"<span class=\"acts\">{acts}</span>" if acts else ""}</li>'
     )
 
 
@@ -590,21 +599,9 @@ def day_param(value: str | None) -> dt.date | None:
         return None
 
 
-def monday(day: dt.date) -> dt.date:
-    return day - dt.timedelta(days=day.weekday())
-
-
-def placed_on(item: archive.Item) -> dt.date | None:
-    """The day an item has on the timeline: when its span begins, or else when it came."""
-    c = item.classification
-    if c.span_start:
-        return c.span_start
-    return dt.date.fromisoformat(item.latest.date[:10]) if item.latest.date else None
-
-
-def event_row(ev: UpcomingEvent, source: archive.Item | None, day: dt.date) -> str:
-    """An event in the calendar, with a link to the item it came from."""
-    start = dt.date.fromisoformat(ev.start[:10])
+def event_row(line: timeline.EventLine) -> str:
+    """An event in the calendar (on the day it begins), with a link to the item it came from."""
+    ev, source, start = line.event, line.source, line.start
     end = dt.date.fromisoformat((ev.end or ev.start)[:10])
     when = [f"kl. {ev.start[11:16]}"] if len(ev.start) > 10 else []
     if end != start:
@@ -613,7 +610,7 @@ def event_row(ev: UpcomingEvent, source: archive.Item | None, day: dt.date) -> s
     if ev.source and source is not None:
         src = f' · fra <a class="item-link event-src" href="{e(store.item_path(ev.source))}">{e(item_title(source))}</a>'
     return (
-        f'<li class="row event" data-event="{e(ev.key)}">{day_cell(day)}<span class="grow">'
+        f'<li class="row event" data-event="{e(ev.key)}">{day_cell(start)}<span class="grow">'
         f'<span class="ev">📅 {e(ev.title)}</span>{" " + e(" ".join(when)) if when else ""}'
         f'<br><span class="mut">i kalenderen{src}</span></span></li>'
     )
@@ -621,7 +618,7 @@ def event_row(ev: UpcomingEvent, source: archive.Item | None, day: dt.date) -> s
 
 def week_html(first: dt.date, rows: list[str], today: dt.date) -> str:
     """One week (Monday ``first``) with its lines."""
-    this = first == monday(today)
+    this = first == timeline.monday(today)
     label = f"Uge {first.isocalendar().week}" + (" · denne uge" if this else "")
     return (
         f'<div class="week{" cur" if this else ""}" data-week="{first.isoformat()}"><h3><span>{e(label)}</span>'
@@ -630,58 +627,41 @@ def week_html(first: dt.date, rows: list[str], today: dt.date) -> str:
     )
 
 
+def line_html(line: timeline.Line, today: dt.date, back: str) -> str:
+    match line:
+        case timeline.ItemLine(todo=None):
+            return item_row(line.item, day=line.day)
+        case timeline.ItemLine(todo=t):
+            what = "" if t.item.sensitive else f'<span class="meta">✓ <span class="todo">{e(t.text)}</span></span>'
+            return item_row(line.item, what, day=line.day, acts=todo_button(t, checked=False, back=back))
+        case timeline.EventLine():
+            return event_row(line)
+        case timeline.TodoLine():
+            return todo_item(line.todo, today=today, checked=False, day=line.day, back=back)
+
+
+def weeks_html(weeks: list[timeline.Week], today: dt.date, back: str) -> str:
+    return "".join(week_html(w.monday, [line_html(line, today, back) for line in w.lines], today) for w in weeks)
+
+
 def upcoming_html(
-    items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date, back: str
+    items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date, back: str,
+    sources: dict[str, archive.Item],
 ) -> str:
-    """Kommende, week by week from this week: items whose span begins in the week, the events in it
-    (an event on the day its item's span begins is that item, shown once) and the open ``todos`` due in it."""
-    this_week = monday(today)
-    by_key = {i.key: i for i in items}
-    lines: list[tuple[dt.date, int, str]] = []
-    for day, item in in_weeks(items):
-        if day >= this_week:
-            lines.append((day, 0, item_row(item, day=day)))
-    for ev in events:
-        start = dt.date.fromisoformat(ev.start[:10])
-        source = by_key.get(ev.source or "")
-        if source is not None and source.classification.span_start == start:
-            continue
-        day = max(start, this_week)
-        lines.append((day, 1, event_row(ev, source, start)))
-    for t in todos:
-        if t.due is not None and t.due >= this_week:
-            lines.append((t.due, 2, todo_item(t, today=today, checked=False, day=t.due, back=back)))
-    by_week: dict[dt.date, list[str]] = {}
-    for day, _, html_ in sorted(lines, key=lambda line: line[:2]):
-        by_week.setdefault(monday(day), []).append(html_)
-    weeks = "".join(week_html(first, rows, today) for first, rows in by_week.items())
+    """Kommende (:func:`timeline.upcoming`)."""
+    weeks = weeks_html(timeline.upcoming(items, events, todos, today, sources), today, back)
     return f'<section id="kommende"><h2>Kommende</h2>{weeks or "<p class=\"mut\">Intet kommende.</p>"}</section>'
 
 
-EARLIER_WEEKS = 8  # how many weeks back "Tidligere" shows before "Vis ældre"
-
-
-def in_weeks(items: list[archive.Item]) -> list[tuple[dt.date, archive.Item]]:
-    """The items that stand in the weeks (not standing info), each on its day."""
-    return [(day, i) for i in items if i.classification.category != archive.Category.INFO and (day := placed_on(i))]
-
-
-def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date) -> str:
-    """Tidligere: the :data:`EARLIER_WEEKS` weeks before the week of ``before``, newest first, shown as usual
-    (past or not), and "Vis ældre" when there is something before them."""
-    end = monday(before)
-    start = end - dt.timedelta(weeks=EARLIER_WEEKS)
-    placed = in_weeks(items)
-    by_week: dict[dt.date, list[tuple[dt.date, archive.Item]]] = {}
-    for day, item in sorted(placed, key=lambda p: (p[0], p[1].key), reverse=True):
-        if start <= day < end:
-            by_week.setdefault(monday(day), []).append((day, item))
-    weeks = "".join(
-        week_html(first, [item_row(i, day=day) for day, i in members], today) for first, members in by_week.items()
-    )
+def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date, params) -> str:
+    """Tidligere (:func:`timeline.earlier`), shown as usual (past or not), and "Vis ældre" when there is more
+    (filtered as the overview is, by ``params``)."""
+    got = timeline.earlier(items, before, today)
+    weeks = weeks_html(got.weeks, today, "/overblik")
     older = ""
-    if any(day < start for day, _ in placed):
-        older = f'<p><a class="btn older" href="/overblik?before={start.isoformat()}">Vis ældre</a></p>'
+    if got.older:
+        href = overview_url(params, drop=("before",), add=[("before", got.older.isoformat())])
+        older = f'<p><a class="btn older" href="{e(href)}">Vis ældre</a></p>'
     return f'<section id="tidligere"><h2>Tidligere</h2>{weeks or "<p class=\"mut\">Intet.</p>"}{older}</section>'
 
 
@@ -701,16 +681,14 @@ def standing_html(items: list[archive.Item]) -> str:
     return f'<section id="staaende-info"><h2>Stående info</h2>{"".join(parts) or "<p class=\"mut\">Ingen endnu.</p>"}</section>'
 
 
-def current(item: archive.Item, today: dt.date) -> str | None:
-    """Why the item is in "Gælder nu" (shown under it), or None when it is not."""
-    c = item.classification
-    if c.category == archive.Category.PERIODE and c.span_start and c.span_start <= today <= (c.span_end or c.span_start):
-        return f"gælder {c.span_text('%d.%m.%Y')}"
-    if item.important_on(today):
-        return "⭐ markeret vigtig i Aula"
-    if c.category == archive.Category.ORIENTERING and not item.past(today):
-        return ""
-    return None
+def why_current(item: archive.Item, why: archive.Current) -> str:
+    """What "Gælder nu" says under an item about why it is there ("" for nothing)."""
+    match why:
+        case archive.Current.SPAN:
+            return f"gælder {item.classification.span_text('%d.%m.%Y')}"
+        case archive.Current.IMPORTANT:
+            return "⭐ markeret vigtig i Aula"
+    return ""
 
 
 KIND_FILTER_NAMES = {
@@ -760,18 +738,23 @@ def for_child(child_ids: list[int], child: int | None) -> bool:
     return child is None or not child_ids or child in child_ids
 
 
+def overview_url(params, *, drop: tuple[str, ...] = (), add: list[tuple[str, str]] = ()) -> str:
+    """The overview as ``params`` filter it, without the message (``msg``) and the ``drop`` ones, with ``add``."""
+    keep = [(k, v) for k, v in params.multi_items() if k not in ("msg", *drop) and v] + list(add)
+    return "/overblik" + (f"?{urlencode(keep)}" if keep else "")
+
+
 def child_filter(params, children: dict[str, Any]) -> str:
-    """The child filter: one link per child and one for every child, keeping the search (only with more than one child)."""
+    """The child filter: one link per child and one for every child, keeping the search and the rest of the view
+    (only with more than one child)."""
     if len(children) < 2:
         return ""
-    keep = [(k, v) for k, v in params.multi_items() if k not in ("child", "msg", "before") and v]
     chosen = child_param(params)
 
     def chip(cid: int | None, name: str) -> str:
-        query = urlencode(keep + ([("child", str(cid))] if cid is not None else []))
         on = " on" if cid == chosen else ""
         current = ' aria-current="true"' if cid == chosen else ""
-        href = "/overblik" + (f"?{query}" if query else "")
+        href = overview_url(params, drop=("child",), add=[("child", str(cid))] if cid is not None else [])
         return f'<a class="chip{on}" href="{e(href)}"{current}>{e(name)}</a>'
 
     chips = [chip(None, "Alle børn")] + [chip(int(cid), child_first_name(c)) for cid, c in children.items() if cid.isdigit()]
@@ -779,7 +762,8 @@ def child_filter(params, children: dict[str, Any]) -> str:
 
 
 def search_form(params, topics: list[archive.Topic]) -> str:
-    """The search field with its filters, a GET form on /overblik, and the child filter under it, sticky at the top."""
+    """The search field with its filters folded under "Filtre" (open when one is chosen), a GET form on /overblik,
+    and the child filter under it, sticky at the top. Its button is only there without script (Enter sends it)."""
     def select(name: str, label: str, options: list[tuple[str, str]]) -> str:
         chosen = params.get(name) or ""
         opts = "".join(
@@ -790,17 +774,22 @@ def search_form(params, topics: list[archive.Topic]) -> str:
 
     children = store.load_config()["children"]
     child = child_param(params)
-    filters = [
-        f'<input type="hidden" name="child" value="{child}">' if child is not None and len(children) > 1 else "",
+    hidden = f'<input type="hidden" name="child" value="{child}">' if child is not None and len(children) > 1 else ""
+    selects = [
         select("category", "Alle slags", [(str(c), name) for c, name in CATEGORY_NAMES.items()]),
         select("topic", "Alle emner", [(t.name, t.name) for t in topics]),
         select("kind", "Alle kilder", [(str(k), name) for k, name in KIND_FILTER_NAMES.items()]),
     ]
+    chosen = sum(1 for name in ("category", "topic", "kind") if params.get(name))
+    filters = (
+        f'<details class="filtre"{" open" if chosen else ""}><summary>Filtre{f" ({chosen})" if chosen else ""}</summary>'
+        f'<div class="filtre-felter">{"".join(selects)}</div></details>'
+    )
     return (
         f'<div id="overblik-top" class="sticky"><form id="search" class="search" method="get" action="/overblik">'
         f'<input type="search" id="q" name="q" value="{e(params.get("q"))}"'
-        f' placeholder="Søg i alt fra Aula" aria-label="Søg">{"".join(filters)}<button>Søg</button></form>'
-        f'{child_filter(params, children)}</div>'
+        f' placeholder="Søg i alt fra Aula" aria-label="Søg">{hidden}{filters}'
+        f'<noscript><button>Søg</button></noscript></form>{child_filter(params, children)}</div>'
     )
 
 
@@ -809,9 +798,15 @@ def searching(params) -> bool:
     return any((params.get(name) or "").strip() for name in ("q", "category", "topic", "kind"))
 
 
-def search_part(params, today: dt.date) -> tuple[str, bool, str] | None:
-    """The search field for the top of the overview, whether it is asked for results (:func:`searching`)
-    and the results then; None without an archive ready for it."""
+class SearchPart(NamedTuple):
+    """The top of the overview, and the search results when it is asked for them."""
+
+    form: str  # the search field with its filters and the child filter (:func:`search_form`)
+    results: str | None  # the search results; None when it is not asked for them (:func:`searching`)
+
+
+def search_part(params, today: dt.date) -> SearchPart | None:
+    """The search field for the top of the overview and the search results; None without an archive ready for it."""
     def choice(name, kind):
         try:
             return kind(params.get(name)) if params.get(name) else None
@@ -823,14 +818,14 @@ def search_part(params, today: dt.date) -> tuple[str, bool, str] | None:
             return None
         form = search_form(params, a.topics())
         if not searching(params):
-            return form, False, ""
+            return SearchPart(form, None)
         hits = a.search(
             params.get("q") or "", child=child_param(params), category=choice("category", archive.Category),
             topic=params.get("topic") or None, kind=choice("kind", archive.KindFilter),
         )
     found = "".join(search_hit(h, today) for h in hits) or '<li class="mut">Intet fundet.</li>'
     results = f'<section id="soegning"><h2>Søgning <span class="mut">({len(hits)})</span></h2><ul class="list">{found}</ul></section>'
-    return form, True, results
+    return SearchPart(form, results)
 
 
 async def overview(request: Request) -> Response:
@@ -840,44 +835,48 @@ async def overview(request: Request) -> Response:
     pending = ledger.pending_keys()
     today = request.app.state.today()
 
-    def read() -> tuple[list[archive.Item], int, list[archive.ItemTodo]] | None:
+    child = child_param(request.query_params)
+    events = [ev for ev in ledger.upcoming(today.isoformat()) if child is None or child in ev.child_ids]
+
+    def read() -> tuple[list[archive.Item], int, list[archive.ItemTodo], dict[str, archive.Item]] | None:
         with archive.read() as a:
             if a is None:
                 return None
-            return a.items(), len(a.unclassified(exclude=pending)), a.todos()
+            sources = {k: item for k in {ev.source for ev in events if ev.source} if (item := a.item(k))}
+            return a.items(), len(a.unclassified(exclude=pending)), a.todos(), sources
 
     nav = tabs("overblik")
     search = await asyncio.to_thread(search_part, request.query_params, today)
-    if search and search[1]:
-        return page("Søgning", nav + search[0] + main(search[2]), enhanced=True)
+    if search and search.results is not None:
+        return page("Søgning", nav + search.form + overview_main(search.results), enhanced=True)
     got = await asyncio.to_thread(read)
     if got is None or search is None:
-        body = main('<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>')
+        body = overview_main('<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>')
         return page("Overblik", nav + body, enhanced=True)
-    items, unclassified, todos = got
-    child = child_param(request.query_params)
-    events = [ev for ev in ledger.upcoming(today.isoformat()) if child is None or child in ev.child_ids]
+    items, unclassified, todos, sources = got
     todos = [t for t in todos if for_child(t.item.child_ids, child)]
     shown = [
         i for i in items
         if i.classification and i.classification.category != archive.Category.SVAR and for_child(i.child_ids, child)
     ]
-    if before := day_param(request.query_params.get("before")):
-        back = '<p><a href="/overblik">Til overblikket</a></p>'
-        return page("Tidligere", nav + search[0] + main(earlier_html(shown, before, today) + back), enhanced=True)
-    keep = [(k, v) for k, v in request.query_params.multi_items() if k != "msg" and v]
-    back = "/overblik" + (f"?{urlencode(keep)}" if keep else "")  # where "Klaret" returns to: this view
-    now = [(i, why) for i in shown if (why := current(i, today)) is not None]
-    now.sort(key=lambda n: (placed_on(n[0]) or dt.date.min, n[0].key), reverse=True)
-    now_html = "".join(item_row(i, f'<span class="mut meta">{e(why)}</span>' if why else "") for i, why in now)
+    params = request.query_params
+    if before := day_param(params.get("before")):
+        back = f'<p><a href="{e(overview_url(params, drop=("before",)))}">Til overblikket</a></p>'
+        return page("Tidligere", nav + search.form + overview_main(earlier_html(shown, before, today, params) + back), enhanced=True)
+    back = overview_url(params)  # where "Klaret" returns to: this view
+    open_, checked = todo_lists(todos, ledger)
+    now_html = "".join(
+        item_row(i, f'<span class="mut meta">{e(why)}</span>' if (why := why_current(i, reason)) else "")
+        for i, reason in timeline.now(shown, today)
+    )
     body = f"""
-<section id="skal-goeres">{todos_html(todos, ledger, today, back)}</section>
+<section id="skal-goeres">{todos_html(open_, checked, ledger, today, back)}</section>
 <section id="gaelder-nu"><h2>Gælder nu</h2><ul class="list now">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>
-{upcoming_html(shown, events, todo_lists(todos, ledger)[0], today, back)}
+{upcoming_html(shown, events, open_, today, back, sources)}
 {standing_html([i for i in shown if i.classification.category == archive.Category.INFO])}
-{earlier_html(shown, today, today)}
+{earlier_html(shown, today, today, params)}
 <p class="mut" id="ikke-inddelt">{unclassified} endnu ikke inddelt</p>"""
-    return page("Overblik", nav + search[0] + main(body), request.query_params.get("msg"), enhanced=True)
+    return page("Overblik", nav + search.form + overview_main(body), request.query_params.get("msg"), enhanced=True)
 
 
 async def tick_todo(request: Request) -> Response:
@@ -908,15 +907,19 @@ async def tick_todo(request: Request) -> Response:
     return RedirectResponse(back + (f"{'&' if '?' in back else '?'}msg={quote(msg)}" if msg else ""), status_code=303)
 
 
+# An item key in a path back to its detail, as store.item_path writes it unquoted (an id needing %-quoting falls
+# back to the overview): never "." or "..", nor anything encoded.
+ITEM_KEY = re.compile(r"(?!\.+$)[A-Za-z0-9_.~:-]+")
+
+
 def safe_back(back: str) -> str:
-    """Where a button may return to: the overview (with its query) or an item's detail (with its), as a path on
-    this site (no scheme, no host, no ``//``, no ``..``, nothing unprintable); anything else is the overview."""
+    """Where a button may return to: the overview or an item's detail, as a path on this site (no scheme, no host,
+    nothing unprintable anywhere), with any query; anything else is the overview."""
     parts = urlsplit(back)
     key = parts.path.removeprefix("/overblik/item/")
     on_site = (
-        not parts.scheme and not parts.netloc and not parts.fragment
-        and back.isprintable() and "\\" not in back and "//" not in back
-        and (parts.path == "/overblik" or (key != parts.path and key and "/" not in key and key not in (".", "..")))
+        back.isprintable() and not parts.scheme and not parts.netloc and not parts.fragment
+        and (parts.path == "/overblik" or (key != parts.path and ITEM_KEY.fullmatch(key) is not None))
     )
     return back if on_site else "/overblik"
 
@@ -1135,11 +1138,11 @@ async def item_detail(request: Request) -> Response:
     d = await asyncio.to_thread(read)
     nav = tabs(None)
     if d is None:
-        body = main('<p class="mut">Det findes ikke i arkivet.</p>')
+        body = overview_main('<p class="mut">Det findes ikke i arkivet.</p>')
         return page("Findes ikke", nav + body, status_code=404, enhanced=True)
     hide = d.item.sensitive and request.query_params.get("show") != "1"
     title = "Overblik" if hide else d.item.latest.title or "Overblik"
-    return page(title, nav + main(detail_html(d, hide=hide)), request.query_params.get("msg"), enhanced=True)
+    return page(title, nav + overview_main(detail_html(d, hide=hide)), request.query_params.get("msg"), enhanced=True)
 
 
 STATIC_DIR = Path(__file__).parent / "static"

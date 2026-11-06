@@ -201,10 +201,7 @@ def main(argv: list[str] | None = None) -> None:
 
     from . import store
 
-    real.append(store.PROJECT_ROOT / "data")
-    if main_checkout := store._main_checkout(store.PROJECT_ROOT):
-        real.append(main_checkout / "data")
-    for path in real:
+    for path in real + store.real_data_dirs():
         refuse_real_data(target, path)
     if store.DATA_DIR.resolve() != target.resolve():
         raise SystemExit(f"Demoen ville bruge {store.DATA_DIR}, ikke {target}.")

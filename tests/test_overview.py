@@ -61,7 +61,7 @@ def test_a_period_covering_today_is_current_and_replies_are_shown_nowhere():
 
 def weeks(html):
     """The weeks in a part of the timeline, by their Monday, in order: Monday -> what is in the week."""
-    parts = html.split('<div class="week" data-week="')[1:]
+    parts = html.split(' data-week="')[1:]
     return {p[:10]: p for p in parts}
 
 
@@ -237,3 +237,116 @@ def test_an_open_todo_with_due_stands_in_its_week_under_upcoming_too():
     assert list(upcoming) == ["2026-11-16"]
     assert "Bestil billeder" in upcoming["2026-11-16"] and "Køb badehætte" not in section(html, "kommende")
     assert "Bestil billeder" in section(html, "skal-goeres") and "Køb badehætte" in section(html, "skal-goeres")
+
+
+def test_upcoming_is_from_today_earlier_is_until_yesterday_and_nothing_current_or_without_a_span_is_upcoming():
+    with archive.open() as a:
+        a.save_post(post(1, "Teater onsdag", publish="2026-10-28T08:00:00"))
+        a.save_post(post(2, "Bagedag i dag", publish="2026-10-28T08:00:00"))
+        a.save_post(post(3, "Svømning i november", publish="2026-10-20T08:00:00"))
+        a.save_post(post(4, "Lus i klassen", publish="2026-11-05T08:00:00"))
+        a.save_post(post(5, "Ny ordning i garderoben", publish="2026-11-06T07:00:00"))
+        a.save_post(post(6, "Husk madpakke", publish="2026-11-06T07:30:00"))
+        a.create_topic("skole", "Skolens hverdag")
+        classify(a, "post:1", "arrangement", topics=["skole"], start="2026-11-04")
+        classify(a, "post:2", "arrangement", topics=["skole"], start="2026-11-06")
+        classify(a, "post:3", "periode", topics=["skole"], start="2026-11-02", end="2026-11-30")
+        classify(a, "post:4", "orientering", topics=["skole"])
+        classify(a, "post:5", "orientering", topics=["skole"])
+        classify(a, "post:6", "arrangement", topics=["skole"])  # no span, came today: neither upcoming nor lost
+
+    html = overview()
+
+    assert titles(section(html, "kommende")) == ["Bagedag i dag"]
+    assert titles(section(html, "gaelder-nu")) == ["Ny ordning i garderoben", "Lus i klassen", "Svømning i november"]
+    earlier = section(html, "tidligere")
+    assert list(weeks(earlier)) == ["2026-11-02"]  # this week until yesterday
+    assert titles(earlier) == ["Husk madpakke", "Lus i klassen", "Teater onsdag", "Svømning i november"]
+
+
+def test_an_arrangement_over_several_days_under_way_today_is_current_with_its_event_shown_once():
+    with archive.open() as a:
+        a.save_post(post(1, "Lejrskole", publish="2026-10-20T08:00:00"))
+        a.save_post(post(2, "Bagedag", publish="2026-10-20T08:00:00"))
+        a.create_topic("lejrskole", "Lejrskole og ture med overnatning")
+        classify(a, "post:1", "arrangement", topics=["lejrskole"], start="2026-11-05", end="2026-11-07")
+        classify(a, "post:2", "arrangement", topics=["lejrskole"], start="2026-11-05")  # one day, yesterday
+    synced("post:1#1", "Lejrskole", "2026-11-05", end="2026-11-07", source="post:1")
+
+    html = overview()
+
+    now = section(html, "gaelder-nu")
+    assert titles(now) == ["Lejrskole"] and "gælder 05.11.2026–07.11.2026" in now
+    assert "Lejrskole" not in section(html, "kommende")
+
+
+def test_aulas_important_mark_with_a_from_but_no_to_holds_for_fourteen_days_from_the_from():
+    with archive.open() as a:
+        a.save_post(important(1, "Vigtigt om skolevejen", "2026-10-25T00:00:00", None, publish="2026-10-01T08:00:00"))
+        a.save_post(important(2, "Vigtigt om cykelhjelme", "2026-10-20T00:00:00", None, publish="2026-11-01T08:00:00"))
+        a.create_topic("skole", "Skolens hverdag")
+        classify(a, "post:1", "info", topics=["skole"])
+        classify(a, "post:2", "info", topics=["skole"])
+
+    assert titles(section(overview(), "gaelder-nu")) == ["Vigtigt om skolevejen"]  # from 25/10: until 8/11
+
+
+def test_an_upcoming_event_links_to_its_item_whenever_the_archive_has_it():
+    with archive.open() as a:
+        save_message(a, message("7", "m1", "2026-11-02T09:00:00", "Svar om turen"))
+        save_message(a, message("9", "m1", "2026-11-02T09:00:00", "Samtale om skoledagen", sensitive=True))
+        a.save_post(post(5, "Endnu ikke inddelt", publish="2026-11-02T08:00:00"))
+        a.save_post(post(6, "Tur for Oscar", publish="2026-11-02T08:00:00"), child_ids=[2])
+        classify(a, "message:7:m1", "svar")
+        classify(a, "message:9:m1", "orientering")
+        classify(a, "post:6", "arrangement", start="2026-11-24")
+    synced("message:7:m1#1", "Frist: betal turen", "2026-11-20", source="message:7:m1")
+    synced("post:5#1", "Skolefoto", "2026-11-21", source="post:5")
+    synced("message:9:m1#1", "Samtale", "2026-11-22", source="message:9:m1")
+    synced("post:6#1", "Madpakke til turen", "2026-11-23", source="post:6", child_ids=(1,))
+    synced("post:7#1", "Uden kilde i arkivet", "2026-11-25", source="post:7")
+    two_children()
+
+    upcoming = section(overview(child="1"), "kommende")
+
+    sources = dict(re.findall(r'class="item-link event-src" href="/overblik/item/([^"]+)">(.*?)</a>', upcoming))
+    assert sources == {
+        "message:7:m1": "Svar om turen", "post:5": "Endnu ikke inddelt", "message:9:m1": "🔒 Følsom tråd",
+        "post:6": "Tur for Oscar",
+    }
+    assert "Samtale om skoledagen" not in upcoming and "Uden kilde i arkivet" in upcoming
+
+
+def test_a_todo_due_on_the_day_its_item_stands_in_upcoming_is_on_the_items_line_not_a_line_of_its_own():
+    with archive.open(at=dt.datetime(2026, 11, 2, 9, tzinfo=dt.UTC)) as a:
+        a.save_post(post(1, "Juleklip", publish="2026-11-02T08:00:00"))
+        a.save_post(post(2, "Skolefoto", publish="2026-11-02T08:00:00"))
+        a.create_topic("skole", "Skolens hverdag")
+        for key, start, todo in (("post:1", dt.date(2026, 11, 18), archive.Todo("Medbring saks", dt.date(2026, 11, 18))),
+                                 ("post:2", dt.date(2026, 11, 20), archive.Todo("Bestil billeder", dt.date(2026, 11, 17)))):
+            a.classify(key, archive.Classification(archive.Category.ARRANGEMENT, start, topics=("skole",), todo=todo))
+
+    week = weeks(section(overview(), "kommende"))["2026-11-16"]
+
+    lines = week.split("<li")[1:]
+    assert len(lines) == 3  # Bestil billeder (17/11, its own line), Juleklip (18/11), Skolefoto (20/11)
+    assert "todo-row" in lines[0] and "Bestil billeder" in lines[0]
+    assert 'data-key="post:1"' in lines[1] and "Medbring saks" in lines[1] and 'action="/todos/check"' in lines[1]
+    assert "Medbring saks" not in lines[0] + lines[2]
+
+
+def test_vis_aeldre_keeps_the_child_and_the_child_filter_on_an_earlier_page_keeps_before():
+    with archive.open() as a:
+        a.save_post(post(1, "Skolestart", publish="2026-08-01T08:00:00"), child_ids=[1])
+        a.save_post(post(2, "Motionsdag", publish="2026-10-01T08:00:00"), child_ids=[1])
+        classify(a, "post:1", "arrangement", start="2026-08-12")
+        classify(a, "post:2", "arrangement", start="2026-10-09")
+    two_children()
+
+    earlier = section(overview(child="1"), "tidligere")
+    assert 'href="/overblik?child=1&amp;before=2026-09-07"' in earlier
+
+    html = overview(child="1", before="2026-09-07")
+    chips = html.split('id="barn-filter"', 1)[1].split("</nav>", 1)[0]
+    assert 'href="/overblik?before=2026-09-07&amp;child=2"' in chips and 'href="/overblik?before=2026-09-07"' in chips
+    assert titles(section(html, "tidligere")) == ["Skolestart"]
