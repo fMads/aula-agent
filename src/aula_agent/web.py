@@ -547,9 +547,8 @@ def archive_unclassified(pending: set[str]) -> str:
 def removed_html(ledger: Ledger, cfg: dict[str, Any], today: dt.date) -> str:
     """ "Fjernet af dig": per child, the upcoming events the user removed from that child's calendar (only shown)."""
     removed = ledger.removed_upcoming(today.isoformat())
-    every = [int(c) for c in cfg["children"]]
     groups = []
-    for cid in every:
+    for cid, name in Children.of(cfg).names.items():
         mine = sorted(
             (r for r in removed if r["child_ids"] is None or cid in r["child_ids"]), key=lambda r: (r["start"] or "", r["title"] or "")
         )
@@ -557,7 +556,7 @@ def removed_html(ledger: Ledger, cfg: dict[str, Any], today: dt.date) -> str:
             rows = "".join(
                 f'<li><span class="date">{e(fmt_date(r["start"]))}</span><span class="grow">{e(r["title"])}</span></li>' for r in mine
             )
-            groups.append(f'<h3>{e(child_first_name(cfg["children"][str(cid)]))}</h3><ul class="list">{rows}</ul>')
+            groups.append(f'<h3>{e(name)}</h3><ul class="list">{rows}</ul>')
     content = "".join(groups) or '<p class="mut">Intet fjernet.</p>'
     return f'<section id="fjernet"><h2>Fjernet af dig</h2>{content}</section>'
 
@@ -1417,7 +1416,7 @@ def calendar_html(d: Detail) -> str:
                 other = d.others.get(line.item)
                 who = f'<a href="{e(store.item_path(line.item))}">{e(item_title(other))}</a>' if other else e(item_title(None))
             lines.append(f"{HISTORY_ACTIONS[line.action]} af {who}" + (f" {e(fmt_when(line.at))}" if line.at else ""))
-        removed = [c for c in map(int, d.cfg["children"]) if d.ledger.is_removed(h.key, c)]
+        removed = [c for c in Children.of(d.cfg).names if d.ledger.is_removed(h.key, c)]
         if removed:
             lines.append(f"fjernet af dig for {e(child_names(removed, d.cfg))}")
         buttons = "".join(

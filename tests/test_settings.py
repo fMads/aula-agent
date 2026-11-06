@@ -174,6 +174,17 @@ def test_the_settings_show_whom_each_upcoming_event_was_removed_for_and_nothing_
     assert "<form" not in removed and "<button" not in removed
 
 
+def test_the_settings_skip_a_child_in_the_config_that_is_not_an_id_as_the_other_pages_do():
+    cfg = store.load_config()
+    cfg["children"] = {"1": {"name": "Emma Test"}, "noter": {"name": "Ikke et barn"}}
+    store.save_config(cfg)
+    ledger = Ledger()
+    ledger.mark_removed("k1", 1, title="Skovtur", start="2026-11-20", end="2026-11-20")
+    ledger.save()
+    removed = section(get("/settings"), "fjernet")
+    assert "<h3>Emma</h3>" in removed and "Skovtur" in removed and "Ikke et barn" not in removed
+
+
 def test_the_settings_without_removed_events_say_so():
     assert "Intet fjernet" in section(get("/settings"), "fjernet")
 
