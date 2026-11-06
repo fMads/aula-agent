@@ -52,12 +52,36 @@ def test_a_search_without_anything_to_search_for_is_the_front_page_and_the_front
     assert r.status_code == 302 and r.headers["location"] == "/search?q=skov"
 
 
-def test_the_tabs_are_forside_and_indstillinger():
+def tabs_of(html):
+    return re.search(r'<nav class="tabs" id="faner">(.*?)</nav>', html)[1]
+
+
+@pytest.mark.parametrize(
+    ("path", "active"),
+    [("/", "Forside"), ("/info", "Info"), ("/past", "Tidligere"), ("/settings", "Indstillinger")],
+)
+def test_the_tabs_are_forside_info_tidligere_and_indstillinger_with_the_active_one_marked(path, active):
     archive_with_a_post()
-    nav = re.search(r'<nav class="tabs" id="faner">(.*?)</nav>', get("/settings").text)[1]
-    assert nav == '<a href="/">Forside</a><b aria-current="page">Indstillinger</b>'
-    nav = re.search(r'<nav class="tabs" id="faner">(.*?)</nav>', get("/").text)[1]
-    assert nav == '<b aria-current="page">Forside</b><a href="/settings">Indstillinger</a>'
+    links = {"Forside": "/", "Info": "/info", "Tidligere": "/past", "Indstillinger": "/settings"}
+    assert tabs_of(get(path).text) == "".join(
+        f'<b aria-current="page">{label}</b>' if label == active else f'<a href="{href}">{label}</a>'
+        for label, href in links.items()
+    )
+
+
+@pytest.mark.parametrize("path", ["/", "/info", "/past"])
+def test_the_search_field_is_on_the_front_page_info_and_tidligere(path):
+    archive_with_a_post()
+    assert '<form id="search" class="search" method="get" action="/search">' in get(path).text
+
+
+def test_an_earlier_page_on_the_front_page_is_on_past_and_a_search_from_past_or_info_on_search():
+    archive_with_a_post()
+    r = get("/", params={"before": "2026-10-05", "child": "1"}, follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "/past?before=2026-10-05&child=1"
+    for path in ("/past", "/info"):
+        r = get(path, params={"q": "skov", "child": "1"}, follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "/search?q=skov&child=1"
 
 
 @pytest.mark.parametrize(
@@ -65,7 +89,7 @@ def test_the_tabs_are_forside_and_indstillinger():
     [
         ("/overblik", "/"),
         ("/overblik?child=1", "/?child=1"),
-        ("/overblik?before=2026-10-05&child=2", "/?before=2026-10-05&child=2"),
+        ("/overblik?before=2026-10-05&child=2", "/past?before=2026-10-05&child=2"),
         ("/overblik?q=skov", "/search?q=skov"),
         ("/overblik?q=sv%C3%B8m&category=arrangement&topic=tur&kind=post&child=1",
          "/search?q=sv%C3%B8m&category=arrangement&topic=tur&kind=post&child=1"),

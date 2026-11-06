@@ -3,7 +3,7 @@
 // - detaljen i en skuffe på brede skærme (tilbage-knappen og Esc lukker den), fuld side på mobil,
 // - "/" fokuserer søgefeltet (på detaljen som fuld side: går til forsiden med fokus i det),
 // - "Klaret"/"Fortryd" uden at miste pladsen på siden.
-// Siderne hentes som almindelig HTML, og kun <main id="overblik-main"> (og toppen) skiftes ud.
+// Siderne hentes som almindelig HTML, og kun <main id="overblik-main"> (og toppen og fanerne) skiftes ud.
 // Går noget galt (fx Cloudflare Access vil have et nyt login), så navigeres der helt almindeligt.
 (() => {
   "use strict";
@@ -14,6 +14,7 @@
   const PAUSE_MS = 1500; // så længe uden at skrive, og næste søgning er en ny post i historikken
   const parser = new DOMParser();
   const top = () => document.getElementById("overblik-top");
+  const LISTS = ["/", "/info", "/past", "/search"]; // forsiden, Info, Tidligere og søgning: skiftes ud uden genindlæsning
   const main = () => document.getElementById(MAIN);
 
   if (!main()) return;
@@ -64,7 +65,7 @@
     return u.pathname + u.search === v.pathname + v.search;
   }
 
-  // ------------------------------------------------------------------ listen (forsiden og søgning)
+  // ------------------------------------------------------------------ listen (forsiden, Info, Tidligere og søgning)
 
   let listUrl = location.href;
 
@@ -92,6 +93,8 @@
       if (chips && mine) mine.replaceWith(chips);
     }
     main().replaceWith(mainOf(doc));
+    const tabs = doc.getElementById("faner"), mine = document.getElementById("faner");
+    if (tabs && mine) mine.replaceWith(tabs); // den aktive fane følger med
     document.title = doc.title;
     listUrl = url;
     if (history === "search") {
@@ -227,7 +230,7 @@
 
   function isList(a) {
     const u = new URL(a.href, location.href);
-    return u.origin === location.origin && (u.pathname === "/" || u.pathname === "/search");
+    return u.origin === location.origin && LISTS.includes(u.pathname);
   }
 
   // ------------------------------------------------------------------ klik og formularer
