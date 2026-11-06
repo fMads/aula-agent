@@ -281,7 +281,7 @@ class Topic:
     items: int  # how many items have it in their newest classification
 
 
-NOTICE_CURRENT_FOR = dt.timedelta(days=14)  # a notice is past this long after it came
+ORIENTERING_CURRENT_FOR = dt.timedelta(days=14)  # an orientering (and a reply, an unclassified item) is past this long after it came
 
 
 @dataclass
@@ -325,8 +325,8 @@ class Item:
         """Whether it is no longer current (then it is dimmed, never hidden), by the newest classification.
 
         An arrangement, a deadline or a period is past when its span is over (without a span: when the
-        item's day has passed). Standing info never is. A notice, a reply or an item not classified
-        yet is past :data:`NOTICE_CURRENT_FOR` after it came, or when its span is over.
+        item's day has passed). Standing info never is. An orientering, a reply or an item not
+        classified yet is past :data:`ORIENTERING_CURRENT_FOR` after it came, or when its span is over.
         """
         c = self.classification
         if c is not None and c.category == Category.INFO:
@@ -337,7 +337,7 @@ class Item:
         day = dt.date.fromisoformat(self.latest.date[:10]) if self.versions and self.latest.date else None
         if c is not None and c.category in (Category.ARRANGEMENT, Category.FRIST, Category.PERIODE):
             return end is None and day is not None and day < today
-        return day is not None and today - day > NOTICE_CURRENT_FOR
+        return day is not None and today - day > ORIENTERING_CURRENT_FOR
 
 
 TODO_FRESH_FOR = dt.timedelta(days=14)  # a todo without due counts on an item at most this old
@@ -399,8 +399,8 @@ class Hit:
     files: tuple[File, ...] = ()  # the item's files whose name or text matched
 
 
-class Source(StrEnum):
-    """Where an item came from, for a search filter."""
+class KindFilter(StrEnum):
+    """A search filter on what an item is: a post, a message, or an item with a document."""
 
     POST = "opslag"
     MESSAGE = "besked"
@@ -738,44 +738,63 @@ class Archive:
 
     def search(
         self, query: str = "", *, child: int | None = None, category: Category | None = None,
-        topic: str | None = None, source: Source | None = None,
+        topic: str | None = None, kind: KindFilter | None = None,
     ) -> list[Hit]:
         """The items that match ``query`` (every word as the beginning of a word), newest first.
 
-        An item matches on its title, text, sender, summary and topics, or on the name of or the text
-        in one of its files; without a query every item matches. The filters narrow it: the items for
-        ``child`` (an item for no child in particular is for every child), of ``category``, with
-        ``topic`` (both by the newest classification), and from ``source``.
+        Every word must be in the item (its title, text, sender, summary and topics) or in one of its
+        files (the name or the text in it), not necessarily the same place; without a query every item
+        matches. A hit shows the files that have a word the item itself does not have, or every word.
+        The filters narrow it: the items for ``child`` (an item for no child in particular is for every
+        child), of ``category``, with ``topic`` (both by the newest classification), and of ``kind``.
         """
         words = re.findall(r"\w+", query)
         if query.strip() and not words:  # only quotes, stars and the like
             return []
         excerpts: dict[str, tuple[tuple[str, bool], ...]] = {}
-        in_files: dict[str, dict[str, tuple[tuple[str, bool], ...]]] = {}  # item key -> attachment id -> excerpt
+        file_excerpts: dict[str, dict[str, tuple[tuple[str, bool], ...]]] = {}  # item key -> attachment id -> excerpt
+        shown: dict[str, set[str]] = {}  # item key -> the attachment ids of the files to show
         if words:
-            match = " ".join(f'"{w}"*' for w in words)
+            in_item: list[set[str]] = []  # per word: the items that have it themselves
+            in_files: list[dict[str, set[str]]] = []  # per word: item key -> the attachment ids of its files with it
+            for w in words:
+                term = f'"{w}"*'
+                in_item.append({k for (k,) in self._db.execute(
+                    "SELECT item_key FROM search_items WHERE search_items MATCH ?", (term,))})
+                files: dict[str, set[str]] = {}
+                for key, attachment in self._db.execute(
+                    "SELECT item_key, attachment_id FROM search_files WHERE search_files MATCH ?", (term,)
+                ):
+                    files.setdefault(key, set()).add(attachment)
+                in_files.append(files)
+            keys = set.intersection(*(item_keys | files.keys() for item_keys, files in zip(in_item, in_files)))
+            for key in keys:
+                with_all = set.intersection(*(files.get(key, set()) for files in in_files))
+                only_there = {a for item_keys, files in zip(in_item, in_files) if key not in item_keys
+                              for a in files.get(key, ())}
+                shown[key] = with_all | only_there
+            any_word = " OR ".join(f'"{w}"*' for w in words)
             for key, snippet in self._db.execute(
                 "SELECT item_key, snippet(search_items, -1, ?, ?, '…', 16) FROM search_items WHERE search_items MATCH ?",
-                (_MARK, _UNMARK, match),
+                (_MARK, _UNMARK, any_word),
             ):
                 excerpts[key] = _parts(snippet)
             for key, attachment, snippet in self._db.execute(
                 "SELECT item_key, attachment_id, snippet(search_files, 4, ?, ?, '…', 16) FROM search_files"
                 " WHERE search_files MATCH ?",
-                (_MARK, _UNMARK, match),
+                (_MARK, _UNMARK, any_word),
             ):
-                in_files.setdefault(key, {})[attachment] = _parts(snippet)
-            keys = excerpts.keys() | in_files.keys()
+                file_excerpts.setdefault(key, {})[attachment] = _parts(snippet)
         else:
             keys = {key for (key,) in self._db.execute("SELECT key FROM items")}
         out = []
         for key in keys:
             item = self.item(key)
-            if item is None or not item.versions or not _wanted(item, child, category, topic, source):
+            if item is None or not item.versions or not _wanted(item, child, category, topic, kind):
                 continue
-            matched = in_files.get(key, {})
-            files = tuple(f for f in item.files if f.attachment_id in matched)
-            excerpt = excerpts.get(key) or next((x for x in matched.values() if x), ())
+            files = tuple(f for f in item.files if f.attachment_id in shown.get(key, ()))
+            in_shown = (file_excerpts.get(key, {}).get(f.attachment_id) for f in files)
+            excerpt = excerpts.get(key) or next((x for x in in_shown if x), ())
             out.append(Hit(item, excerpt, files))
         out.sort(key=lambda h: (h.item.latest.date or "", h.item.key), reverse=True)
         return out
@@ -881,7 +900,7 @@ def _parts(snippet: str) -> tuple[tuple[str, bool], ...]:
     return tuple(parts)
 
 
-def _wanted(item: Item, child: int | None, category: Category | None, topic: str | None, source: Source | None) -> bool:
+def _wanted(item: Item, child: int | None, category: Category | None, topic: str | None, kind: KindFilter | None) -> bool:
     c = item.classification
     if child is not None and item.child_ids and child not in item.child_ids:
         return False
@@ -889,11 +908,11 @@ def _wanted(item: Item, child: int | None, category: Category | None, topic: str
         return False
     if topic is not None and (c is None or topic not in c.topics):
         return False
-    if source == Source.POST:
+    if kind == KindFilter.POST:
         return item.kind == "post"
-    if source == Source.MESSAGE:
+    if kind == KindFilter.MESSAGE:
         return item.kind == "message"
-    if source == Source.DOCUMENT:
+    if kind == KindFilter.DOCUMENT:
         return any(f.kind in (Kind.FILE, Kind.SECURE_DOCUMENT) for f in item.files)
     return True
 

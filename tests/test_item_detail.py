@@ -116,6 +116,32 @@ def test_the_file_route_hands_out_a_registered_file_pdfs_and_images_inline_other
     assert jpg.headers["content-disposition"].startswith("inline")
 
 
+def test_only_pdfs_and_plain_image_types_are_shown_inline_anything_else_registered_as_an_image_is_downloaded(aula):
+    atts = [image_att(21, "tegning.svg"), image_att(22, "side.html"), image_att(23, "klassen.png"),
+            file_att(24, "program.pdf")]
+    aula["client"] = FakeAula([child(1, "Emma")], [post(1, "Skovtur", 1, attachments=atts)], [], {})
+    run_fetch()
+    configure()
+    with make_client() as c:
+        svg, page_, png, pdf = (c.get(f"/overblik/item/post:1/fil/{i}", headers=auth()) for i in (21, 22, 23, 24))
+        detail = c.get("/overblik/item/post:1", headers=auth()).text
+    for r in (svg, page_):  # would run script on the site's own address
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/octet-stream"
+        assert r.headers["content-disposition"].startswith("attachment")
+    assert png.headers["content-type"] == "image/png" and png.headers["content-disposition"].startswith("inline")
+    assert pdf.headers["content-type"] == "application/pdf" and pdf.headers["content-disposition"].startswith("inline")
+    for r in (svg, page_, png, pdf):
+        assert r.headers["x-content-type-options"] == "nosniff"
+    for r in (svg, page_, png):
+        assert r.headers["content-security-policy"] == "sandbox"
+    assert "content-security-policy" not in pdf.headers  # Chrome's PDF viewer won't open under a sandbox
+    files = detail[detail.index("<h3>Filer"):]
+    assert '<img src="/overblik/item/post:1/fil/23"' in files
+    assert '<img src="/overblik/item/post:1/fil/21"' not in files and '<img src="/overblik/item/post:1/fil/22"' not in files
+    assert '<a href="/overblik/item/post:1/fil/21" download>tegning.svg</a>' in files
+
+
 def test_the_file_route_gives_404_for_an_unknown_id_another_items_file_a_path_and_what_it_has_no_file_for(aula):
     fetch_post_with_files(aula)
     aula["client"].posts.append(post(2, "Svømning", 1, attachments=[file_att(11, "badetøj.pdf")]))
@@ -297,3 +323,22 @@ def test_upcoming_events_on_the_status_page_and_the_overview_link_to_the_item(au
     upcoming = status[status.index("<h2>Kommende begivenheder"):status.index("<h2>Børn")]
     assert 'href="/overblik/item/post:1"' in upcoming
     assert '<a href="/overblik/item/post:1">Skovtur</a>' in get("/overblik").text
+
+
+def test_an_upcoming_event_from_a_sensitive_thread_shows_its_source_only_as_sensitive_on_the_status_page(aula):
+    thread = {"id": 5, "subject": "Samtale om skoledagen", "lastMessageDate": iso(1), "sensitive": True}
+    aula["client"] = FakeAula([child(1, "Emma")], [], [thread], {"5": [message("a")]})
+    run_fetch()
+    apply({"processed": ["message:5:a"], "events": [{**trip_event("message:5:a"), "child_ids": [1]}],
+           "new_topics": TOPICS, "classifications": [{"item": "message:5:a", "category": "arrangement", "topics": ["tur"]}]})
+
+    def upcoming():
+        status = get("/").text
+        return status[status.index("<h2>Kommende begivenheder"):status.index("<h2>Børn")]
+
+    shown = upcoming()
+    assert '<a href="/overblik/item/message:5:a">🔒 Følsom tråd</a>' in shown
+    assert "Samtale om skoledagen" not in shown
+
+    store.path("ARCHIVE_FILE").unlink()  # no archive to look it up in: as before
+    assert '<a href="/overblik/item/message:5:a">Samtale om skoledagen</a>' in upcoming()

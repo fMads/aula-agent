@@ -16,7 +16,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote
 
 from . import contract, credentials, store
 from .contract import Event, EventError, EventsDoc  # noqa: F401  (EventError re-exported)
@@ -116,11 +115,11 @@ def _source_footer(item: dict[str, Any] | None) -> str:
     if item.get("type") == "post":
         what = f"opslag »{item.get('title') or ''}«"
         who, when = item.get("author"), item.get("published")
-    else:
-        what = f"besked »{item.get('subject') or ''}«"
+    else:  # the calendar may be shared and is on phones: never a sensitive thread's subject
+        what = "besked (følsom tråd)" if item.get("sensitive") else f"besked »{item.get('subject') or ''}«"
         who, when = item.get("sender"), item.get("sent")
     parts = [f"Fra Aula: {what}"]
-    if who:
+    if who and not item.get("sensitive"):  # the detail page hides a sensitive thread's sender too
         parts.append(f"af {who}")
     if when:
         parts.append(f"({when[:10]})")
@@ -128,9 +127,8 @@ def _source_footer(item: dict[str, Any] | None) -> str:
 
 
 def item_link(key: str | None) -> str | None:
-    """The public address of an item's detail page on the web page (as
-    ``web.item_url``), or None when the web page's address is not set up."""
-    return store.web_url(f"/overblik/item/{quote(key, safe=':')}") if key else None
+    """The public address of an item's detail page on the web page, or None when its address is not set up."""
+    return store.web_url(store.item_path(key)) if key else None
 
 
 def build_event_body(

@@ -15,6 +15,8 @@ MAX_CHARS = 200_000  # more than any letter from school; a huge file is cut off 
 _MAX_XML_BYTES = 20_000_000  # word/document.xml read at most this far (a zip can unpack to far more)
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
+logging.getLogger("pypdf").setLevel(logging.ERROR)  # a sloppy PDF gives warnings, not errors
+
 
 def extract(path: Path) -> str | None:
     """The text in the file at ``path``, or None when it is not a PDF or docx or cannot be read."""
@@ -32,10 +34,17 @@ def extract(path: Path) -> str | None:
 
 
 def _pdf(path: Path) -> str:
+    """The text page by page, stopping once there is :data:`MAX_CHARS` of it."""
     from pypdf import PdfReader
 
-    logging.getLogger("pypdf").setLevel(logging.ERROR)  # a sloppy PDF gives warnings, not errors
-    return "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
+    pages: list[str] = []
+    size = 0
+    for page in PdfReader(path).pages:
+        pages.append(page.extract_text() or "")
+        size += len(pages[-1]) + 1
+        if size >= MAX_CHARS:
+            break
+    return "\n".join(pages)
 
 
 def _docx(path: Path) -> str:
