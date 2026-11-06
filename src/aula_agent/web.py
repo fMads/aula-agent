@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import html
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -887,15 +888,19 @@ async def tick_todo(request: Request) -> Response:
     return RedirectResponse(back + (f"{'&' if '?' in back else '?'}msg={quote(msg)}" if msg else ""), status_code=303)
 
 
+# An item key in a path back to its detail, as store.item_path writes it unquoted (an id needing %-quoting falls
+# back to the overview): never "." or "..", nor anything encoded.
+ITEM_KEY = re.compile(r"(?!\.+$)[A-Za-z0-9_.~:-]+")
+
+
 def safe_back(back: str) -> str:
-    """Where a button may return to: the overview (with its query) or an item's detail (with its), as a path on
-    this site (no scheme, no host, no ``//``, no ``..``, nothing unprintable); anything else is the overview."""
+    """Where a button may return to: the overview or an item's detail, as a path on this site (no scheme, no host,
+    nothing unprintable anywhere), with any query; anything else is the overview."""
     parts = urlsplit(back)
     key = parts.path.removeprefix("/overblik/item/")
     on_site = (
-        not parts.scheme and not parts.netloc and not parts.fragment
-        and back.isprintable() and "\\" not in back and "//" not in back
-        and (parts.path == "/overblik" or (key != parts.path and key and "/" not in key and key not in (".", "..")))
+        back.isprintable() and not parts.scheme and not parts.netloc and not parts.fragment
+        and (parts.path == "/overblik" or (key != parts.path and ITEM_KEY.fullmatch(key) is not None))
     )
     return back if on_site else "/overblik"
 

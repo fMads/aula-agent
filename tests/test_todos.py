@@ -234,10 +234,14 @@ def test_klaret_only_returns_to_the_overview_or_an_item_on_this_site(aula):
     classify(trip("post:1", {"text": "Betal turen"}))
     item, version = version_of(overview(), "Betal turen")
     configure()
-    allowed = ["/overblik", "/overblik?child=1&q=tur", "/overblik/item/post:1", "/overblik/item/post:1?show=1"]
+    allowed = ["/overblik", "/overblik?child=1&q=tur", "/overblik/item/post:1", "/overblik/item/post:1?show=1",
+               "/overblik?q=http://example.dk//x", "/overblik?q=http%3A%2F%2Fexample.dk", "/overblik/item/message:7:m1"]
     refused = ["//evil.example/overblik", "https://evil.example/overblik", "/\\evil.example", "/overblik//x",
                "/overblik/../", "/", "/andet", "overblik", "/overblik\r\nX: y", "javascript:alert(1)",
-               "/overblik/item/post:1/../../x", "/overblikx"]
+               "/overblik/item/post:1/../../x", "/overblikx", "\\\\evil.example/overblik", "/overblik\\..\\x",
+               "/%2F%2Fevil.example", "%2F%2Fevil.example/overblik", "/overblik/item/%2F%2Fevil.example",
+               "/overblik/item/..%2F..%2Fx", "/overblik/item/%2e%2e", "/overblik/item/", "/overblik/item/..",
+               "/overblik?q=x\ty", "/overblik/item/post:1\x00"]
     with make_client(today=lambda: TODAY) as c:
         for back in allowed + refused:
             r = c.post("/todos/uncheck", data={"item": item, "version": str(version), "back": back},
