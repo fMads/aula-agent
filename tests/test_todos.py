@@ -208,3 +208,38 @@ def test_klaret_needs_same_origin_and_an_existing_todo(aula):
         assert "Pr%C3%B8v%20igen" in r.headers["location"]
     assert to_do(overview()) == ["Betal turen"]
     assert Ledger.load().todo_checked(item, version + 1) is False
+
+
+def test_klaret_on_the_overview_filtered_on_one_child_returns_to_that_view(aula):
+    aula["client"] = FakeAula([child(1, "Emma"), child(2, "Oscar")], [post(1, "Skovtur", 1)], [], {})
+    run_fetch()
+    classify(trip("post:1", {"text": "Betal turen"}))
+    configure()
+    with make_client(today=lambda: TODAY) as c:
+        html = c.get("/overblik", params={"child": "1"}, headers=auth()).text
+        li = next(li for li in html.split("<li") if '<span class="todo">Betal turen</span>' in li)
+        assert re.search(r'name="back" value="/overblik\?child=1"', li)
+        item, version = version_of(html, "Betal turen")
+        r = c.post("/todos/check", data={"item": item, "version": str(version), "back": "/overblik?child=1"},
+                   headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == "/overblik?child=1"
+        r = c.post("/todos/check", data={"item": item, "version": str(version + 1), "back": "/overblik?child=1"},
+                   headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
+        assert r.headers["location"].startswith("/overblik?child=1&msg=")
+
+
+def test_klaret_only_returns_to_the_overview_or_an_item_on_this_site(aula):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(1, "Skovtur", 1)], [], {})
+    run_fetch()
+    classify(trip("post:1", {"text": "Betal turen"}))
+    item, version = version_of(overview(), "Betal turen")
+    configure()
+    allowed = ["/overblik", "/overblik?child=1&q=tur", "/overblik/item/post:1", "/overblik/item/post:1?show=1"]
+    refused = ["//evil.example/overblik", "https://evil.example/overblik", "/\\evil.example", "/overblik//x",
+               "/overblik/../", "/", "/andet", "overblik", "/overblik\r\nX: y", "javascript:alert(1)",
+               "/overblik/item/post:1/../../x", "/overblikx"]
+    with make_client(today=lambda: TODAY) as c:
+        for back in allowed + refused:
+            r = c.post("/todos/uncheck", data={"item": item, "version": str(version), "back": back},
+                       headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
+            assert r.headers["location"] == (back if back in allowed else "/overblik"), back
