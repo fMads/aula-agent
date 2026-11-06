@@ -881,13 +881,11 @@ def near_html(coming: timeline.Upcoming, today: dt.date, back: str, kids: Childr
 
 
 def upcoming_html(coming: timeline.Upcoming, today: dt.date, back: str, kids: Children = NOBODY) -> str:
-    """Kommende (:func:`timeline.upcoming`): the days with something on them, and a line when the week changes
-    (from the week of tomorrow, the last day above)."""
-    parts, week = [], timeline.monday(coming.near[-1].day)
+    """Kommende (:func:`timeline.upcoming`): the days with something on them, and a line where a new week begins."""
+    parts = []
     for d in coming.later:
-        if (first := timeline.monday(d.day)) != week:
+        if first := d.new_week:
             parts.append(f'<p class="week-line" data-week="{first.isoformat()}">Uge {first.isocalendar().week}</p>')
-            week = first
         parts.append(day_html(d, today, back, kids))
     return f'<section id="kommende"><h2>Kommende</h2>{"".join(parts) or "<p class=\"mut\">Intet kommende.</p>"}</section>'
 

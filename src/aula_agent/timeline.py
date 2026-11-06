@@ -9,6 +9,7 @@ calendar or an open todo with due. Standing info is never on the days or in the 
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from . import archive
@@ -74,12 +75,17 @@ class Week:
     lines: tuple[Line, ...]
 
 
-def weeks(lines: list[Line], *, newest_first: bool = False) -> list[Week]:
-    """The lines grouped in their weeks, by day (and then as :data:`_ORDER` has them)."""
-    by_week: dict[dt.date, list[Line]] = {}
+def grouped(lines: list[Line], by: Callable[[dt.date], dt.date], *, newest_first: bool = False) -> dict[dt.date, list[Line]]:
+    """The lines by day (and then as :data:`_ORDER` has them), grouped on ``by`` of their day, in that order."""
+    groups: dict[dt.date, list[Line]] = {}
     for line in sorted(lines, key=lambda line: (line.day, _ORDER[type(line)]), reverse=newest_first):
-        by_week.setdefault(monday(line.day), []).append(line)
-    return [Week(first, tuple(members)) for first, members in by_week.items()]
+        groups.setdefault(by(line.day), []).append(line)
+    return groups
+
+
+def weeks(lines: list[Line], *, newest_first: bool = False) -> list[Week]:
+    """The lines grouped in their weeks."""
+    return [Week(first, tuple(members)) for first, members in grouped(lines, monday, newest_first=newest_first).items()]
 
 
 def is_upcoming(item: archive.Item, today: dt.date) -> bool:
@@ -92,6 +98,7 @@ def is_upcoming(item: archive.Item, today: dt.date) -> bool:
 class Day:
     day: dt.date
     lines: tuple[Line, ...]
+    new_week: dt.date | None = None  # in Kommende: the Monday of the week this day begins (a week line above it)
 
 
 @dataclass(frozen=True)
@@ -100,7 +107,7 @@ class Upcoming:
     (``later``: from the day after tomorrow, the days with something on them)."""
 
     near: tuple[Day, Day]
-    later: list[Day]
+    later: list[Day]  # each with ``new_week`` when its week is not the one of the day before it (from tomorrow's)
 
 
 def upcoming(
@@ -125,12 +132,14 @@ def upcoming(
             continue
         lines.append(EventLine(max(start, today), ev, sources.get(ev.source or "")))
     lines += [TodoLine(t.due, t) for t in due.values()]
-    by_day: dict[dt.date, list[Line]] = {}
-    for line in sorted(lines, key=lambda line: (line.day, _ORDER[type(line)])):
-        by_day.setdefault(line.day, []).append(line)
+    by_day = grouped(lines, lambda day: day)
     tomorrow = today + dt.timedelta(days=1)
     near = (Day(today, tuple(by_day.pop(today, ()))), Day(tomorrow, tuple(by_day.pop(tomorrow, ()))))
-    return Upcoming(near, [Day(day, tuple(members)) for day, members in by_day.items()])
+    later, week = [], monday(tomorrow)
+    for day, members in by_day.items():
+        later.append(Day(day, tuple(members), monday(day) if monday(day) != week else None))
+        week = monday(day)
+    return Upcoming(near, later)
 
 
 @dataclass(frozen=True)
