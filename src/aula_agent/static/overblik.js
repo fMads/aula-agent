@@ -2,7 +2,8 @@
 // - søgning mens man skriver (og filtre og barn-filter uden genindlæsning), URL'en følger med,
 // - detaljen i en skuffe på brede skærme (tilbage-knappen og Esc lukker den), fuld side på mobil,
 // - "/" fokuserer søgefeltet (på detaljen som fuld side: går til forsiden med fokus i det),
-// - "Klaret"/"Fortryd" uden at miste pladsen på siden.
+// - "Klaret"/"Fortryd" uden at miste pladsen på siden,
+// - "Fjern for <barn>" spørger i en dialog i stedet for på bekræftelsessiden.
 // Siderne hentes som almindelig HTML, og kun <main id="overblik-main"> (og toppen) skiftes ud.
 // Går noget galt (fx Cloudflare Access vil have et nyt login), så navigeres der helt almindeligt.
 (() => {
@@ -258,13 +259,21 @@
       search(form, true);
       return;
     }
+    if (form.hasAttribute("data-confirm")) {
+      // "Fjern for <barn>": spørg her i stedet for på bekræftelsessiden, og send den så som POST.
+      ev.preventDefault();
+      if (!window.confirm(form.dataset.confirm)) return;
+      form.method = "post";
+      tick(form);
+      return;
+    }
     const action = new URL(form.action, location.href);
     if (form.method.toLowerCase() !== "post" || !action.pathname.startsWith("/todos/")) return;
     ev.preventDefault();
     tick(form);
   });
 
-  // "Klaret"/"Fortryd": send formularen, og vis det, siden sender tilbage til, der hvor knappen sad.
+  // "Klaret"/"Fortryd" (og "Fjern"): send formularen, og vis det, siden sender tilbage til, der hvor knappen sad.
   async function tick(form) {
     const inDrawer = drawer && drawer.el.contains(form);
     const button = form.querySelector("button");
