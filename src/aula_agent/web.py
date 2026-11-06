@@ -343,7 +343,10 @@ def overview_main(content: str) -> str:
     return f'<main id="overblik-main">{content}</main>'
 
 
-TABS = {"forside": ("/", "Forside"), "settings": ("/settings", "Indstillinger")}
+TABS = {
+    "forside": ("/", "Forside"), "info": ("/info", "Info"), "past": ("/past", "Tidligere"),
+    "settings": ("/settings", "Indstillinger"),
+}
 
 
 def tabs(active: str | None) -> str:
@@ -702,10 +705,10 @@ def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date, par
     """Tidligere (:func:`timeline.earlier`), shown as usual (past or not), and "Vis ældre" when there is more
     (filtered as the overview is, by ``params``)."""
     got = timeline.earlier(items, before, today)
-    weeks = weeks_html(got.weeks, today, "/")
+    weeks = weeks_html(got.weeks, today, overview_url(params, page="/past"))
     older = ""
     if got.older:
-        href = overview_url(params, drop=("before",), add=[("before", got.older.isoformat())])
+        href = overview_url(params, page="/past", drop=("before",), add=[("before", got.older.isoformat())])
         older = f'<p><a class="btn older" href="{e(href)}">Vis ældre</a></p>'
     return f'<section id="tidligere"><h2>Tidligere</h2>{weeks or "<p class=\"mut\">Intet.</p>"}{older}</section>'
 
@@ -783,16 +786,18 @@ def for_child(child_ids: list[int], child: int | None) -> bool:
     return child is None or not child_ids or child in child_ids
 
 
-def overview_url(params, *, drop: tuple[str, ...] = (), add: list[tuple[str, str]] = ()) -> str:
-    """The overview as ``params`` filter it, without the message (``msg``) and the ``drop`` ones, with ``add``
-    (on the front page, or on /search when that asks for search results)."""
+def overview_url(
+    params, *, page: str = "/", drop: tuple[str, ...] = (), add: list[tuple[str, str]] = ()
+) -> str:
+    """The overview's ``page`` as ``params`` filter it, without the message (``msg``) and the ``drop`` ones, with
+    ``add`` (where :func:`list_path` has it)."""
     keep = [(k, v) for k, v in params.multi_items() if k not in ("msg", *drop) and v] + list(add)
-    return list_path(dict(keep)) + (f"?{urlencode(keep)}" if keep else "")
+    return list_path(dict(keep), page) + (f"?{urlencode(keep)}" if keep else "")
 
 
-def child_filter(params, children: dict[str, Any]) -> str:
+def child_filter(params, children: dict[str, Any], page: str = "/") -> str:
     """The child filter: one link per child and one for every child, keeping the search and the rest of the view
-    (only with more than one child)."""
+    on ``page`` (only with more than one child)."""
     if len(children) < 2:
         return ""
     chosen = child_param(params)
@@ -800,16 +805,17 @@ def child_filter(params, children: dict[str, Any]) -> str:
     def chip(cid: int | None, name: str) -> str:
         on = " on" if cid == chosen else ""
         current = ' aria-current="true"' if cid == chosen else ""
-        href = overview_url(params, drop=("child",), add=[("child", str(cid))] if cid is not None else [])
+        href = overview_url(params, page=page, drop=("child",), add=[("child", str(cid))] if cid is not None else [])
         return f'<a class="chip{on}" href="{e(href)}"{current}>{e(name)}</a>'
 
     chips = [chip(None, "Alle børn")] + [chip(int(cid), child_first_name(c)) for cid, c in children.items() if cid.isdigit()]
     return f'<nav id="barn-filter" class="chips" aria-label="Barn">{"".join(chips)}</nav>'
 
 
-def search_form(params, topics: list[archive.Topic]) -> str:
+def search_form(params, topics: list[archive.Topic], page: str = "/") -> str:
     """The search field with its filters folded under "Filtre" (open when one is chosen), a GET form on /search,
-    and the child filter under it, sticky at the top. Its button is only there without script (Enter sends it)."""
+    and the child filter (for ``page``) under it, sticky at the top. Its button is only there without script (Enter
+    sends it)."""
     def select(name: str, label: str, options: list[tuple[str, str]]) -> str:
         chosen = params.get(name) or ""
         opts = "".join(
@@ -835,7 +841,7 @@ def search_form(params, topics: list[archive.Topic]) -> str:
         f'<div id="overblik-top" class="sticky"><form id="search" class="search" method="get" action="/search">'
         f'<input type="search" id="q" name="q" value="{e(params.get("q"))}"'
         f' placeholder="Søg i alt fra Aula" aria-label="Søg">{hidden}{filters}'
-        f'<noscript><button>Søg</button></noscript></form>{child_filter(params, children)}</div>'
+        f'<noscript><button>Søg</button></noscript></form>{child_filter(params, children, page)}</div>'
     )
 
 
@@ -844,9 +850,14 @@ def searching(params) -> bool:
     return any((params.get(name) or "").strip() for name in ("q", "category", "topic", "kind"))
 
 
-def list_path(params) -> str:
-    """Where the overview as ``params`` ask for it is: the search results on /search, the rest on the front page."""
-    return "/search" if searching(params) else "/"
+def list_path(params, page: str = "/") -> str:
+    """Where the overview's ``page`` as ``params`` ask for it is: the search results on /search, an earlier page
+    (``before``) on /past, the rest on ``page`` (the front page for /search without anything to search for)."""
+    if searching(params):
+        return "/search"
+    if page in ("/", "/search") and params.get("before"):
+        return "/past"
+    return "/" if page == "/search" else page
 
 
 class SearchPart(NamedTuple):
@@ -856,8 +867,9 @@ class SearchPart(NamedTuple):
     results: str | None  # the search results; None when it is not asked for them (:func:`searching`)
 
 
-def search_part(params, today: dt.date) -> SearchPart | None:
-    """The search field for the top of the overview and the search results; None without an archive ready for it."""
+def search_part(params, today: dt.date, page: str = "/") -> SearchPart | None:
+    """The search field for the top of the overview's ``page`` and the search results; None without an archive ready
+    for it."""
     def choice(name, kind):
         try:
             return kind(params.get(name)) if params.get(name) else None
@@ -867,7 +879,7 @@ def search_part(params, today: dt.date) -> SearchPart | None:
     with archive.read() as a:
         if a is None:
             return None
-        form = search_form(params, a.topics())
+        form = search_form(params, a.topics(), page)
         if not searching(params):
             return SearchPart(form, None)
         hits = a.search(
@@ -879,12 +891,16 @@ def search_part(params, today: dt.date) -> SearchPart | None:
     return SearchPart(form, results)
 
 
+OVERVIEW_PAGES = {"/": "forside", "/info": "info", "/past": "past", "/search": "forside"}  # path -> its tab
+
+
 async def overview(request: Request) -> Response:
-    """The front page: the timeline (Skal gøres, I dag og i morgen, Gælder nu, Kommende day by day, Stående info,
-    Tidligere) under the search field; on /search the search results instead of it (either sends on to the other
-    when it is asked for what the other shows)."""
-    if request.url.path != list_path(request.query_params):
-        return RedirectResponse(overview_url(request.query_params), status_code=302)
+    """The overview's pages, each under the tabs and the search field: the front page (Skal gøres, I dag og i
+    morgen, Gælder nu, Kommende day by day), Stående info on /info, Tidligere on /past, and the search results on
+    /search (each sends on to the one :func:`list_path` has for what it is asked for)."""
+    path = request.url.path
+    if path != list_path(request.query_params, path):
+        return RedirectResponse(overview_url(request.query_params, page=path), status_code=302)
     ledger = Ledger.load()
     pending = ledger.pending_keys()
     today = request.app.state.today()
@@ -899,8 +915,8 @@ async def overview(request: Request) -> Response:
             sources = {k: item for k in {ev.source for ev in events if ev.source} if (item := a.item(k))}
             return a.items(), len(a.unclassified(exclude=pending)), a.todos(), sources
 
-    nav = tabs("forside")
-    search = await asyncio.to_thread(search_part, request.query_params, today)
+    nav = tabs(OVERVIEW_PAGES[path])
+    search = await asyncio.to_thread(search_part, request.query_params, today, path)
     if search and search.results is not None:
         return page("Søgning", nav + search.form + overview_main(search.results), enhanced=True)
     got = await asyncio.to_thread(read)
@@ -913,10 +929,13 @@ async def overview(request: Request) -> Response:
         i for i in items
         if i.classification and i.classification.category != archive.Category.SVAR and for_child(i.child_ids, child)
     ]
-    params = request.query_params
-    if before := day_param(params.get("before")):
-        back = f'<p><a href="{e(overview_url(params, drop=("before",)))}">Til overblikket</a></p>'
-        return page("Tidligere", nav + search.form + overview_main(earlier_html(shown, before, today, params) + back), enhanced=True)
+    params, msg = request.query_params, request.query_params.get("msg")
+    if path == "/info":
+        info = standing_html([i for i in shown if i.classification.category == archive.Category.INFO])
+        return page("Info", nav + search.form + overview_main(info), msg, enhanced=True)
+    if path == "/past":
+        earlier = earlier_html(shown, day_param(params.get("before")) or today, today, params)
+        return page("Tidligere", nav + search.form + overview_main(earlier), msg, enhanced=True)
     back = overview_url(params)  # where "Klaret" returns to: this view
     open_, checked = todo_lists(todos, ledger)
     coming = timeline.upcoming(shown, events, open_, today, sources)
@@ -929,10 +948,8 @@ async def overview(request: Request) -> Response:
 {near_html(coming, today, back)}
 <section id="gaelder-nu"><h2>Gælder nu</h2><ul class="list now">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>
 {upcoming_html(coming, today, back)}
-{standing_html([i for i in shown if i.classification.category == archive.Category.INFO])}
-{earlier_html(shown, today, today, params)}
 <p class="mut" id="ikke-inddelt">{unclassified} endnu ikke inddelt</p>"""
-    return page(None, nav + search.form + overview_main(body), request.query_params.get("msg"), enhanced=True)
+    return page(None, nav + search.form + overview_main(body), msg, enhanced=True)
 
 
 async def tick_todo(request: Request) -> Response:
@@ -968,7 +985,7 @@ async def tick_todo(request: Request) -> Response:
 ITEM_KEY = re.compile(r"(?!\.+$)[A-Za-z0-9_.~:-]+")
 
 
-LIST_PATHS = ("/", "/search")  # the overview's pages a button may return to (besides an item's detail)
+LIST_PATHS = ("/", "/info", "/past", "/search")  # the overview's pages a button may return to (besides an item's detail)
 
 
 def safe_back(back: str) -> str:
@@ -1495,6 +1512,8 @@ def create_app(
         routes=[
             Route("/", overview),
             Route("/search", overview),
+            Route("/info", overview),
+            Route("/past", overview),
             Route("/settings", home),
             Route("/item/{key}", item_detail),
             Route("/item/{key}/file/{attachment:path}", item_file),

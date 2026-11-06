@@ -322,7 +322,7 @@ def test_upcoming_events_on_the_status_page_and_the_overview_link_to_the_item(au
     status = get("/settings").text
     upcoming = status[status.index("<h2>Kommende begivenheder"):status.index("<h2>Børn")]
     assert 'href="/item/post:1"' in upcoming
-    assert '<a class="item-link" href="/item/post:1">Skovtur</a>' in get("/").text
+    assert '<a class="item-link" href="/item/post:1">Skovtur</a>' in get("/past").text  # no span: under Tidligere
 
 
 def test_an_upcoming_event_from_a_sensitive_thread_shows_its_source_only_as_sensitive_on_the_status_page(aula):

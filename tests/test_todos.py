@@ -234,7 +234,8 @@ def test_klaret_only_returns_to_the_overview_or_an_item_on_this_site(aula):
     classify(trip("post:1", {"text": "Betal turen"}))
     item, version = version_of(overview(), "Betal turen")
     configure()
-    allowed = ["/", "/?child=1&before=2026-10-05", "/search?q=tur", "/search?child=1&q=tur", "/item/post:1",
+    allowed = ["/", "/?child=1&before=2026-10-05", "/info", "/info?child=1", "/past", "/past?child=1&before=2026-10-05",
+               "/search?q=tur", "/search?child=1&q=tur", "/item/post:1",
                "/item/post:1?show=1", "/search?q=http://example.dk//x", "/search?q=http%3A%2F%2Fexample.dk",
                "/item/message:7:m1"]
     refused = ["//evil.example/search", "https://evil.example/", "/\\evil.example", "/search//x", "//",
@@ -242,7 +243,7 @@ def test_klaret_only_returns_to_the_overview_or_an_item_on_this_site(aula):
                "/overblik", "/overblik/item/post:1", "/item/post:1/../../x", "/searchx", "\\\\evil.example/search",
                "/search\\..\\x", "/%2F%2Fevil.example", "%2F%2Fevil.example/search", "/item/%2F%2Fevil.example",
                "/item/..%2F..%2Fx", "/item/%2e%2e", "/item/", "/item/..", "/item/post:1/file/5",
-               "/search?q=x\ty", "/item/post:1\x00", "/?q=x\ty"]
+               "/search?q=x\ty", "/item/post:1\x00", "/?q=x\ty", "/pastx", "/past/", "/info/x", "/info/../settings"]
     with make_client(today=lambda: TODAY) as c:
         for back in allowed + refused:
             r = c.post("/todos/uncheck", data={"item": item, "version": str(version), "back": back},

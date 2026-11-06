@@ -26,7 +26,7 @@ def archive_with_a_post():
 
 def test_the_overview_and_the_detail_load_the_script_from_the_site_under_a_csp_without_inline_script():
     archive_with_a_post()
-    for path, params in (("/", {}), ("/search", {"q": "skov"}), ("/item/post:1", {})):
+    for path, params in (("/", {}), ("/info", {}), ("/past", {}), ("/search", {"q": "skov"}), ("/item/post:1", {})):
         r = get(path, **params)
         assert r.status_code == 200
         assert '<script src="/static/overblik.js" defer></script>' in r.text
@@ -56,12 +56,13 @@ def test_the_pages_and_the_script_agree_on_the_ids_the_script_swaps_and_listens_
     cfg = store.load_config()
     cfg["children"] = {"1": {"name": "Emma Test"}, "2": {"name": "Oscar Test"}}
     store.save_config(cfg)
-    html = get("/").text
     script = (web.STATIC_DIR / "overblik.js").read_text(encoding="utf-8")
-    for element, id_ in (("main", "overblik-main"), ("div", "overblik-top"), ("nav", "barn-filter"),
-                         ("form", "search"), ("input", "q")):
-        assert re.search(rf'<{element}\b[^>]*\sid="{id_}"', html), id_
-        assert f'"{id_}"' in script or f"#{id_}" in script, id_
+    for path in ("/", "/info", "/past"):
+        html = get(path).text
+        for element, id_ in (("main", "overblik-main"), ("div", "overblik-top"), ("nav", "barn-filter"),
+                             ("form", "search"), ("input", "q"), ("nav", "faner")):  # the tabs: swapped with the list
+            assert re.search(rf'<{element}\b[^>]*\sid="{id_}"', html), (path, id_)
+            assert f'"{id_}"' in script or f"#{id_}" in script, id_
 
 
 def search_form(html):
@@ -90,7 +91,9 @@ def test_the_script_opens_the_addresses_the_pages_link_to():
     assert 'class="item-link" href="/item/post:1"' in html  # a detail, which the script opens in the drawer
     assert 'startsWith("/item/")' in script and '"/file/"' in script
     assert 'action="/search"' in html and 'href="/settings"' in html  # the search field; the tab is a plain link
-    assert '"/search"' in script and '"/#q"' in script  # the lists it swaps, and "/" from a detail as a whole page
+    assert all(f'"{path}"' in script for path in ("/search", "/info", "/past"))  # the lists it swaps
+    assert '"/#q"' in script  # "/" from a detail as a whole page
+    assert 'href="/info"' in html and 'href="/past"' in html
     assert "/overblik" not in script.replace("/static/overblik.js", "")
 
 

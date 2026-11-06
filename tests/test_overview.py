@@ -1,5 +1,5 @@
-"""The overview's timeline on the front page (trin 2, #54): I dag og i morgen, Gælder nu, Kommende day by day,
-Stående info, Tidligere week by week."""
+"""The overview's timeline (trin 2): I dag og i morgen, Gælder nu and Kommende day by day on the front page (#54),
+Stående info on /info and Tidligere week by week on /past (#53)."""
 
 import datetime as dt
 import re
@@ -11,12 +11,20 @@ from test_web import auth, classify, configure, make_client, post
 TODAY = dt.date(2026, 11, 6)  # a Friday in week 45 (Monday 2 November)
 
 
-def overview(**params):
+def overview(path="/", **params):
     configure()
     with make_client(today=lambda: TODAY) as c:
-        r = c.get("/", params=params, headers=auth())
+        r = c.get(path, params=params, headers=auth(), follow_redirects=False)
     assert r.status_code == 200
     return r.text
+
+
+def info(**params):
+    return overview("/info", **params)
+
+
+def past(**params):
+    return overview("/past", **params)
 
 
 def section(html, name):
@@ -147,14 +155,14 @@ def test_standing_info_is_grouped_by_topic_and_not_in_the_weeks():
         classify(a, "post:2", "info", topics=["skoleåret", "fødselsdage"])
         classify(a, "post:3", "info", topics=["fødselsdage"])
 
-    html = overview()
+    html = info()
 
     assert topics_in(section(html, "staaende-info")) == {
         "fødselsdage": ["Regler for fødselsdage"],
         "skoleåret": ["Mødetider", "Skema for 2.B"],  # newest first
     }
     assert "Idræt tirsdag og torsdag." in section(html, "staaende-info")
-    assert titles(section(html, "kommende")) == []
+    assert titles(section(overview(), "kommende")) == []
 
 
 def test_earlier_weeks_are_newest_first_for_eight_weeks_and_then_vis_aeldre():
@@ -169,14 +177,14 @@ def test_earlier_weeks_are_newest_first_for_eight_weeks_and_then_vis_aeldre():
         classify(a, "post:3", "arrangement", topics=["skole"], start="2026-08-12")
         classify(a, "post:4", "arrangement", topics=["skole"], start="2026-09-10")
 
-    earlier = section(overview(), "tidligere")
+    earlier = section(past(), "tidligere")
 
     assert list(weeks(earlier)) == ["2026-10-26", "2026-10-05", "2026-09-07"]
     assert titles(earlier) == ["Lus i klassen", "Motionsdag", "Forældremøde"]
     assert 'class="row past"' not in earlier  # shown as usual, not dimmed
-    assert 'href="/?before=2026-09-07"' in earlier
+    assert 'href="/past?before=2026-09-07"' in earlier
 
-    older = section(overview(before="2026-09-07"), "tidligere")
+    older = section(past(before="2026-09-07"), "tidligere")
     assert list(weeks(older)) == ["2026-08-10"] and titles(older) == ["Skolestart"]
     assert "?before=" not in older  # nothing older
 
@@ -251,13 +259,14 @@ def test_a_sensitive_thread_shows_only_its_date_source_and_category_and_the_uncl
 
     now = section(html, "gaelder-nu")
     assert "🔒 Følsom tråd" in now and "besked" in now and "03.11.2026" in now and "Orientering" in now
-    standing = topics_in(section(html, "staaende-info"))
-    assert standing == {"Uden emne": ["🔒 Følsom tråd"]}
-    for hidden in ("Samtale om skoledagen", "Aftale om hentning", "Et resumé der ikke må ses", "trivselssamtale",
-                   "Lærer Hansen"):
-        assert hidden not in html.split("</form>", 1)[1]  # the search field's list of topics has them all
-    assert "Endnu ikke læst" not in html
-    assert html.rindex("2 endnu ikke inddelt") > html.index('<section id="tidligere"')
+    standing = info()
+    assert topics_in(section(standing, "staaende-info")) == {"Uden emne": ["🔒 Følsom tråd"]}
+    for page in (html, standing, past()):
+        for hidden in ("Samtale om skoledagen", "Aftale om hentning", "Et resumé der ikke må ses", "trivselssamtale",
+                       "Lærer Hansen"):
+            assert hidden not in page.split("</form>", 1)[1]  # the search field's list of topics has them all
+        assert "Endnu ikke læst" not in page
+    assert html.rindex("2 endnu ikke inddelt") > html.index('<section id="kommende"')
 
 
 def test_an_open_todo_with_due_stands_on_its_day_under_upcoming_too():
@@ -297,7 +306,7 @@ def test_today_is_from_today_earlier_is_until_yesterday_and_nothing_current_or_w
 
     assert titles(section(html, "i-dag-og-i-morgen")) == ["Bagedag i dag"] and titles(section(html, "kommende")) == []
     assert titles(section(html, "gaelder-nu")) == ["Ny ordning i garderoben", "Lus i klassen", "Svømning i november"]
-    earlier = section(html, "tidligere")
+    earlier = section(past(), "tidligere")
     assert list(weeks(earlier)) == ["2026-11-02"]  # this week until yesterday
     assert titles(earlier) == ["Husk madpakke", "Lus i klassen", "Teater onsdag", "Svømning i november"]
 
@@ -373,6 +382,25 @@ def test_a_todo_due_on_the_day_its_item_stands_in_upcoming_is_on_the_items_line_
     assert "Medbring saks" not in lines[0] + lines[2]
 
 
+def test_the_front_page_has_neither_standing_info_nor_earlier_and_info_and_past_have_only_theirs():
+    with archive.open() as a:
+        a.save_post(post(1, "Skema", publish="2026-08-10T08:00:00"))
+        a.save_post(post(2, "Motionsdag", publish="2026-10-01T08:00:00"))
+        a.save_post(post(3, "Juleklip", publish="2026-11-02T08:00:00"))
+        classify(a, "post:1", "info")
+        classify(a, "post:2", "arrangement", start="2026-10-09")
+        classify(a, "post:3", "arrangement", start="2026-12-04")
+
+    front, standing, earlier = overview(), info(), past()
+
+    assert 'id="staaende-info"' not in front and 'id="tidligere"' not in front
+    assert "Skema" not in front and "Motionsdag" not in front and "Juleklip" in front
+    assert titles(section(standing, "staaende-info")) == ["Skema"]
+    assert 'id="tidligere"' not in standing and 'id="kommende"' not in standing and 'id="skal-goeres"' not in standing
+    assert titles(section(earlier, "tidligere")) == ["Motionsdag"]
+    assert 'id="staaende-info"' not in earlier and 'id="kommende"' not in earlier and 'id="skal-goeres"' not in earlier
+
+
 def test_vis_aeldre_keeps_the_child_and_the_child_filter_on_an_earlier_page_keeps_before():
     with archive.open() as a:
         a.save_post(post(1, "Skolestart", publish="2026-08-01T08:00:00"), child_ids=[1])
@@ -381,12 +409,12 @@ def test_vis_aeldre_keeps_the_child_and_the_child_filter_on_an_earlier_page_keep
         classify(a, "post:2", "arrangement", start="2026-10-09")
     two_children()
 
-    earlier = section(overview(child="1"), "tidligere")
-    assert 'href="/?child=1&amp;before=2026-09-07"' in earlier
+    earlier = section(past(child="1"), "tidligere")
+    assert 'href="/past?child=1&amp;before=2026-09-07"' in earlier
 
-    html = overview(child="1", before="2026-09-07")
+    html = past(child="1", before="2026-09-07")
     chips = html.split('id="barn-filter"', 1)[1].split("</nav>", 1)[0]
-    assert 'href="/?before=2026-09-07&amp;child=2"' in chips and 'href="/?before=2026-09-07"' in chips
+    assert 'href="/past?before=2026-09-07&amp;child=2"' in chips and 'href="/past?before=2026-09-07"' in chips
     assert titles(section(html, "tidligere")) == ["Skolestart"]
 
 
@@ -434,3 +462,18 @@ def test_an_event_today_on_its_items_day_stands_once_and_a_sensitive_thread_is_h
     tomorrow = days(near)["2026-11-07"]
     assert "🔒 Følsom tråd" in tomorrow
     assert "Ring til personalet" not in tomorrow and "Samtale om dagen" not in tomorrow
+
+
+def test_the_child_filter_on_info_stays_on_info():
+    with archive.open() as a:
+        a.save_post(post(1, "Skema for Emma", publish="2026-08-10T08:00:00"), child_ids=[1])
+        a.save_post(post(2, "Skema for Oscar", publish="2026-08-10T08:00:00"), child_ids=[2])
+        classify(a, "post:1", "info")
+        classify(a, "post:2", "info")
+    two_children()
+
+    html = info(child="2")
+
+    chips = html.split('id="barn-filter"', 1)[1].split("</nav>", 1)[0]
+    assert 'href="/info"' in chips and 'href="/info?child=1"' in chips
+    assert titles(section(html, "staaende-info")) == ["Skema for Oscar"]
