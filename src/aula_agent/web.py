@@ -350,7 +350,7 @@ async def home(request: Request) -> Response:
     )
 
     def first_name(child_id: int) -> str:
-        return ((cfg["children"].get(str(child_id)) or {}).get("name") or "?").split()[0]
+        return child_first_name(cfg["children"].get(str(child_id)))
 
     events = ledger.upcoming()
     sensitive = sensitive_items({ev.source for ev in events if ev.source})
@@ -405,6 +405,16 @@ async def home(request: Request) -> Response:
 
 
 SENSITIVE = "🔒 Følsom tråd"  # what a sensitive thread is called on a page that may stand open on a screen
+
+
+def child_first_name(child: dict[str, Any] | None) -> str:
+    """A child's first name, as the pages show it ("?" when the config does not know the child or its name)."""
+    return (((child or {}).get("name") or "").split() or ["?"])[0]
+
+
+def kind_name(item: archive.Item) -> str:
+    """What an item is, as the pages say it."""
+    return "opslag" if item.kind == "post" else "besked"
 
 
 def sensitive_items(keys: set[str]) -> set[str]:
@@ -485,7 +495,7 @@ def todos_html(todos: list[archive.ItemTodo], ledger: Ledger, today: dt.date) ->
 
 def overview_item(item: archive.Item) -> str:
     c, latest = item.classification, item.latest
-    meta = [m for m in ("opslag" if item.kind == "post" else "besked", fmt_date((latest.date or "")[:10])) if m]
+    meta = [m for m in (kind_name(item), fmt_date((latest.date or "")[:10])) if m]
     if span := c.span_text("%d.%m.%Y"):
         meta.append(f"gælder {span}")
     if item.sensitive:  # the page may stand open on a screen: no subject, summary or topics
@@ -515,16 +525,14 @@ def excerpt_html(parts: tuple[tuple[str, bool], ...]) -> str:
 def search_hit(hit: archive.Hit, today: dt.date) -> str:
     item, c, latest = hit.item, hit.item.classification, hit.item.latest
     past = item.past(today)
-    meta = [m for m in ("opslag" if item.kind == "post" else "besked", fmt_date((latest.date or "")[:10])) if m]
+    meta = [m for m in (kind_name(item), fmt_date((latest.date or "")[:10])) if m]
     if c:
         meta.append(CATEGORY_NAMES[c.category])
         if span := c.span_text("%d.%m.%Y"):
             meta.append(f"gælder {span}")
     lines = []
-    if item.sensitive:  # found, but no subject, excerpt, topics or file names (the page may stand open on a screen)
-        title = "🔒 Følsom tråd"
-    else:
-        title = latest.title or "(uden titel)"
+    title = item_title(item)
+    if not item.sensitive:  # found, but no subject, excerpt, topics or file names (the page may stand open on a screen)
         if c and c.topics:
             meta.append(f"emner: {', '.join(c.topics)}")
         if hit.excerpt:
@@ -551,7 +559,7 @@ def search_form(params, topics: list[archive.Topic]) -> str:
 
     children = store.load_config()["children"]
     filters = [
-        select("child", "Alle børn", [(cid, (c.get("name") or "?").split()[0]) for cid, c in children.items()])
+        select("child", "Alle børn", [(cid, child_first_name(c)) for cid, c in children.items()])
         if len(children) > 1 else "",
         select("category", "Alle slags", [(str(c), name) for c, name in CATEGORY_NAMES.items()]),
         select("topic", "Alle emner", [(t.name, t.name) for t in topics]),
@@ -673,7 +681,7 @@ def child_names(child_ids: list[int], cfg: dict[str, Any]) -> str:
     """The children's first names; no children means every child (Aula set none, nor did the agent)."""
     if not child_ids:
         return "alle børn"
-    return ", ".join(((cfg["children"].get(str(c)) or {}).get("name") or "?").split()[0] for c in child_ids)
+    return ", ".join(child_first_name(cfg["children"].get(str(c))) for c in child_ids)
 
 
 def item_text(body: str) -> str:
@@ -769,7 +777,7 @@ def detail_html(d: Detail, *, hide: bool) -> str:
     and its todo's status without its text."""
     item, latest, c = d.item, d.item.latest, d.item.classification
     meta = [
-        "opslag" if item.kind == "post" else "besked",
+        kind_name(item),
         None if hide else latest.author,
         fmt_date(latest.date),
         child_names(item.child_ids, d.cfg),
