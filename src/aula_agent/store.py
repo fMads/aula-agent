@@ -17,6 +17,7 @@ import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -113,6 +114,11 @@ def load_config() -> dict[str, Any]:
 
 def save_config(cfg: dict[str, Any]) -> None:
     write_json(path("CONFIG_FILE"), cfg)
+
+
+def item_path(key: str) -> str:
+    """Where one item's detail is on the web page: ``/overblik/item/<item-key>`` (bookmarks and calendar events link here)."""
+    return f"/overblik/item/{quote(key, safe=':')}"
 
 
 def web_url(suffix: str = "") -> str | None:

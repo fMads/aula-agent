@@ -16,7 +16,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote
 
 from . import contract, credentials, store
 from .contract import Event, EventError, EventsDoc  # noqa: F401  (EventError re-exported)
@@ -128,9 +127,8 @@ def _source_footer(item: dict[str, Any] | None) -> str:
 
 
 def item_link(key: str | None) -> str | None:
-    """The public address of an item's detail page on the web page (as
-    ``web.item_url``), or None when the web page's address is not set up."""
-    return store.web_url(f"/overblik/item/{quote(key, safe=':')}") if key else None
+    """The public address of an item's detail page on the web page, or None when its address is not set up."""
+    return store.web_url(store.item_path(key)) if key else None
 
 
 def build_event_body(

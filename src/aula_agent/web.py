@@ -374,7 +374,7 @@ async def home(request: Request) -> Response:
             )
             src = e(src_txt or "Aula")
             if ev.source:
-                src = f'<a href="{e(item_url(ev.source))}">{src}</a>'
+                src = f'<a href="{e(store.item_path(ev.source))}">{src}</a>'
             items.append(
                 f'<li><span class="date">{e(fmt_date(ev.start))}</span><span class="grow">{e(ev.title)}{link}'
                 f'<br><span class="mut">{e(names)}{" · fra " + src if src_txt or ev.source else ""}</span></span>'
@@ -495,7 +495,7 @@ def overview_item(item: archive.Item) -> str:
         if c.topics:
             meta.append(f"emner: {', '.join(c.topics)}")
     return (
-        f'<li><span class="grow"><a href="{e(item_url(item.key))}">{e(title)}</a>'
+        f'<li><span class="grow"><a href="{e(store.item_path(item.key))}">{e(title)}</a>'
         f'{"<br>" + e(summary) if summary else ""}'
         f'<br><span class="mut">{e(" · ".join(meta))}</span></span></li>'
     )
@@ -534,7 +534,7 @@ def search_hit(hit: archive.Hit, today: dt.date) -> str:
     flag = ' <span class="tag">overstået</span>' if past else ""
     lines.append(f'<span class="mut">{e(" · ".join(meta))}</span>')
     return (
-        f'<li{' class="past"' if past else ""}><span class="grow"><a href="{e(item_url(item.key))}">{e(title)}</a>{flag}'
+        f'<li{' class="past"' if past else ""}><span class="grow"><a href="{e(store.item_path(item.key))}">{e(title)}</a>{flag}'
         f'{"".join("<br>" + line for line in lines)}</span></li>'
     )
 
@@ -669,11 +669,6 @@ async def tick_todo(request: Request) -> Response:
 # ----------------------------------------------------------------------------- the detail of one item
 
 
-def item_url(key: str) -> str:
-    """Where one item's detail is: ``/overblik/item/<item-key>`` (bookmarks and calendar events link here)."""
-    return f"/overblik/item/{quote(key, safe=':')}"
-
-
 def child_names(child_ids: list[int], cfg: dict[str, Any]) -> str:
     """The children's first names; no children means every child (Aula set none, nor did the agent)."""
     if not child_ids:
@@ -687,7 +682,7 @@ def item_text(body: str) -> str:
 
 def file_url(item_key: str, attachment_id: str) -> str:
     """Where the file route hands out one of an item's files: by item key and attachment id, never a path."""
-    return f"{item_url(item_key)}/fil/{quote(attachment_id, safe=':')}"
+    return f"{store.item_path(item_key)}/fil/{quote(attachment_id, safe=':')}"
 
 
 # What the browser may show itself, by the file name's suffix (never by the kind Aula gave it): an SVG or HTML
@@ -817,7 +812,7 @@ def todo_detail(d: Detail, *, hide: bool) -> str:
     text = "Skal gøres" if hide else f'<span class="todo">{e(t.text)}</span>'
     return (
         f'<ul class="list"><li><span class="grow">✓ {text}<br><span class="mut">{status}{due}</span></span>'
-        f'<span class="acts">{todo_button(t, checked=checked, back=item_url(t.item.key))}</span></li></ul>'
+        f'<span class="acts">{todo_button(t, checked=checked, back=store.item_path(t.item.key))}</span></li></ul>'
     )
 
 
@@ -835,7 +830,7 @@ def calendar_html(d: Detail) -> str:
                 who = d.this
             else:
                 other = d.others.get(line.item)
-                who = f'<a href="{e(item_url(line.item))}">{e(item_title(other))}</a>' if other else e(item_title(None))
+                who = f'<a href="{e(store.item_path(line.item))}">{e(item_title(other))}</a>' if other else e(item_title(None))
             lines.append(f"{HISTORY_ACTIONS[line.action]} af {who}" + (f" {e(fmt_when(line.at))}" if line.at else ""))
         removed = [c for c in map(int, d.cfg["children"]) if d.ledger.is_removed(h.key, c)]
         if removed:
@@ -857,7 +852,7 @@ def thread_html(d: Detail) -> str:
         v = m.latest
         sel = m.key == d.item.key
         who = " · ".join(x for x in (v.author, fmt_date(v.date)) if x)
-        head = e(who) if sel else f'<a href="{e(item_url(m.key))}">{e(who or "besked")}</a>'
+        head = e(who) if sel else f'<a href="{e(store.item_path(m.key))}">{e(who or "besked")}</a>'
         rows.append(
             f'<li{' class="sel" aria-current="true"' if sel else ""}><span class="grow">'
             f'<span class="mut">{head}</span>{item_text(v.body)}</span></li>'
