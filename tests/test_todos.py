@@ -1,4 +1,4 @@
-"""Todos: from the agent's classification through ``apply`` to "Skal gøres" on /overblik, until ticked off."""
+"""Todos: from the agent's classification through ``apply`` to "Skal gøres" on the front page, until ticked off."""
 
 import datetime as dt
 import json
@@ -35,7 +35,7 @@ def classify(*classifications, processed=None):
 def overview(today=TODAY):
     configure()
     with make_client(today=lambda: today) as c:
-        return c.get("/overblik", headers=auth()).text
+        return c.get("/", headers=auth()).text
 
 
 def to_do(html):
@@ -58,7 +58,7 @@ def press(button, item, version):
     with make_client(today=lambda: TODAY) as c:
         r = c.post(f"/todos/{button}", data={"item": item, "version": str(version)},
                    headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"].startswith("/overblik"), r.headers.get("location")
+    assert r.status_code == 303 and r.headers["location"].startswith("/"), r.headers.get("location")
 
 
 def version_of(html, text):
@@ -74,7 +74,8 @@ def test_a_current_todo_is_open_after_apply_and_klaret_and_fortryd_move_it(aula)
 
     html = overview()
     assert to_do(html) == ["Betal 50 kr. til turen"] and done(html) == []
-    assert "Skovtur" in _between(html, "<h2>Skal gøres", "<details") and "20.11.2099" in html
+    part = _between(html, "<h2>Skal gøres", "<details")
+    assert 'href="/item/post:1"' in part and "senest fre 20/11 2099" in part  # the todo links to its item
     assert html.index("<h2>Skal gøres") < html.index("<h2>Gælder nu")
 
     press("check", *version_of(html, "Betal 50 kr. til turen"))
@@ -181,7 +182,7 @@ def test_a_todo_from_a_sensitive_thread_shows_that_it_is_sensitive_its_due_and_t
     classify(trip("message:5:a", {"text": "Ring til skolen om samtalen", "due": "2099-01-10"}, summary=None))
 
     part = _between(overview(), "<h2>Skal gøres", "<details")
-    assert "🔒 Følsom tråd" in part and "senest 10.01.2099" in part and "Klaret" in part
+    assert "🔒 Følsom tråd" in part and "senest lør 10/1 2099" in part and "Klaret" in part
     assert "overskredet" not in part
     assert "Ring til skolen" not in part and "Samtale om skoledagen" not in part
     assert "overskredet" in _between(overview(today=dt.date(2099, 2, 1)), "<h2>Skal gøres", "<details")
@@ -216,16 +217,16 @@ def test_klaret_on_the_overview_filtered_on_one_child_returns_to_that_view(aula)
     classify(trip("post:1", {"text": "Betal turen"}))
     configure()
     with make_client(today=lambda: TODAY) as c:
-        html = c.get("/overblik", params={"child": "1"}, headers=auth()).text
+        html = c.get("/", params={"child": "1"}, headers=auth()).text
         li = next(li for li in html.split("<li") if '<span class="todo">Betal turen</span>' in li)
-        assert re.search(r'name="back" value="/overblik\?child=1"', li)
+        assert re.search(r'name="back" value="/\?child=1"', li)
         item, version = version_of(html, "Betal turen")
-        r = c.post("/todos/check", data={"item": item, "version": str(version), "back": "/overblik?child=1"},
+        r = c.post("/todos/check", data={"item": item, "version": str(version), "back": "/?child=1"},
                    headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
-        assert r.status_code == 303 and r.headers["location"] == "/overblik?child=1"
-        r = c.post("/todos/check", data={"item": item, "version": str(version + 1), "back": "/overblik?child=1"},
+        assert r.status_code == 303 and r.headers["location"] == "/?child=1"
+        r = c.post("/todos/check", data={"item": item, "version": str(version + 1), "back": "/?child=1"},
                    headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
-        assert r.headers["location"].startswith("/overblik?child=1&msg=")
+        assert r.headers["location"].startswith("/?child=1&msg=")
 
 
 def test_klaret_only_returns_to_the_overview_or_an_item_on_this_site(aula):
@@ -234,16 +235,18 @@ def test_klaret_only_returns_to_the_overview_or_an_item_on_this_site(aula):
     classify(trip("post:1", {"text": "Betal turen"}))
     item, version = version_of(overview(), "Betal turen")
     configure()
-    allowed = ["/overblik", "/overblik?child=1&q=tur", "/overblik/item/post:1", "/overblik/item/post:1?show=1",
-               "/overblik?q=http://example.dk//x", "/overblik?q=http%3A%2F%2Fexample.dk", "/overblik/item/message:7:m1"]
-    refused = ["//evil.example/overblik", "https://evil.example/overblik", "/\\evil.example", "/overblik//x",
-               "/overblik/../", "/", "/andet", "overblik", "/overblik\r\nX: y", "javascript:alert(1)",
-               "/overblik/item/post:1/../../x", "/overblikx", "\\\\evil.example/overblik", "/overblik\\..\\x",
-               "/%2F%2Fevil.example", "%2F%2Fevil.example/overblik", "/overblik/item/%2F%2Fevil.example",
-               "/overblik/item/..%2F..%2Fx", "/overblik/item/%2e%2e", "/overblik/item/", "/overblik/item/..",
-               "/overblik?q=x\ty", "/overblik/item/post:1\x00"]
+    allowed = ["/", "/?child=1&before=2026-10-05", "/info", "/info?child=1", "/past", "/past?child=1&before=2026-10-05",
+               "/search?q=tur", "/search?child=1&q=tur", "/item/post:1",
+               "/item/post:1?show=1", "/search?q=http://example.dk//x", "/search?q=http%3A%2F%2Fexample.dk",
+               "/item/message:7:m1"]
+    refused = ["//evil.example/search", "https://evil.example/", "/\\evil.example", "/search//x", "//",
+               "/search/../", "/andet", "search", "/search\r\nX: y", "javascript:alert(1)", "/settings",
+               "/overblik", "/overblik/item/post:1", "/item/post:1/../../x", "/searchx", "\\\\evil.example/search",
+               "/search\\..\\x", "/%2F%2Fevil.example", "%2F%2Fevil.example/search", "/item/%2F%2Fevil.example",
+               "/item/..%2F..%2Fx", "/item/%2e%2e", "/item/", "/item/..", "/item/post:1/file/5",
+               "/search?q=x\ty", "/item/post:1\x00", "/?q=x\ty", "/pastx", "/past/", "/info/x", "/info/../settings"]
     with make_client(today=lambda: TODAY) as c:
         for back in allowed + refused:
             r = c.post("/todos/uncheck", data={"item": item, "version": str(version), "back": back},
                        headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
-            assert r.headers["location"] == (back if back in allowed else "/overblik"), back
+            assert r.headers["location"] == (back if back in allowed else "/"), back

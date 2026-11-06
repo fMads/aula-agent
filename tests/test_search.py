@@ -1,7 +1,8 @@
-"""Free-text search on /overblik: the archive's index (with text from PDF and docx files) and the results page."""
+"""Free-text search on /search: the archive's index (with text from PDF and docx files) and the results page."""
 
 import asyncio
 import datetime as dt
+import re
 
 from aula_agent import archive
 from test_web import auth, classify, configure, make_client, post
@@ -12,7 +13,7 @@ TODAY = dt.date(2026, 11, 6)
 def search(**params):
     configure()
     with make_client(today=lambda: TODAY) as c:
-        r = c.get("/overblik", params=params, headers=auth())
+        r = c.get("/search", params=params, headers=auth())
     assert r.status_code == 200
     return r.text
 
@@ -29,7 +30,7 @@ def test_a_word_beginning_finds_the_item_and_links_to_it():
 
     html = results(search(q="svøm"))
 
-    assert "Svømning i november" in html and 'href="/overblik/item/post:1"' in html
+    assert "Svømning i november" in html and 'href="/item/post:1"' in html
     assert "Juleklip" not in html
 
 
@@ -124,7 +125,7 @@ def hits(html):
     """The titles of the hits, in order."""
     import re
 
-    return re.findall(r'<a href="/overblik/item/[^"]+">(.*?)</a>', results(html))
+    return re.findall(r'<a href="/item/[^"]+">(.*?)</a>', results(html))
 
 
 def message(thread, mid, sent, text, subject, *, sensitive=False):
@@ -274,8 +275,8 @@ def test_the_search_field_is_at_the_top_of_the_overview_and_the_child_filter_onl
     configure_children()
     html = search(q="jul", child="2")
     assert '<input type="hidden" name="child" value="2">' in html  # a search keeps the child chosen in the filter
-    assert '<a class="chip on" href="/overblik?q=jul&amp;child=2" aria-current="true">Oscar</a>' in html
-    assert 'href="/overblik?q=jul">Alle børn</a>' in html  # the filter keeps the search
+    assert re.search(r'<a class="chip on[^"]*" href="/search\?q=jul&amp;child=2" aria-current="true">Oscar</a>', html)
+    assert 'href="/search?q=jul&amp;child=all">Alle børn</a>' in html  # the filter keeps the search
     assert 'value="jul"' in html  # the query stays in the field
 
 

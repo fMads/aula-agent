@@ -1,9 +1,11 @@
 // Overblik: et lag ovenpå siderne (#32). Uden JS virker alt; dette gør dem bare hurtigere at bruge:
 // - søgning mens man skriver (og filtre og barn-filter uden genindlæsning), URL'en følger med,
 // - detaljen i en skuffe på brede skærme (tilbage-knappen og Esc lukker den), fuld side på mobil,
-// - "/" fokuserer søgefeltet (på detaljen som fuld side: går til overblikket med fokus i det),
-// - "Klaret"/"Fortryd" uden at miste pladsen på siden.
-// Siderne hentes som almindelig HTML, og kun <main id="overblik-main"> (og toppen) skiftes ud.
+// - "/" fokuserer søgefeltet (på detaljen som fuld side: går til forsiden med fokus i det),
+// - "Klaret"/"Fortryd" uden genindlæsning: linjen bliver stående og markeres som klaret (eller åben) alle steder
+//   på siden, så et fejltryk kan fortrydes med samme knap,
+// - "Fjern for <barn>" spørger i en dialog i stedet for på bekræftelsessiden.
+// Siderne hentes som almindelig HTML, og kun <main id="overblik-main"> (og toppen, fanerne og bredden) skiftes ud.
 // Går noget galt (fx Cloudflare Access vil have et nyt login), så navigeres der helt almindeligt.
 (() => {
   "use strict";
@@ -14,6 +16,7 @@
   const PAUSE_MS = 1500; // så længe uden at skrive, og næste søgning er en ny post i historikken
   const parser = new DOMParser();
   const top = () => document.getElementById("overblik-top");
+  const LISTS = ["/", "/info", "/past", "/search"]; // forsiden, Info, Tidligere og søgning: skiftes ud uden genindlæsning
   const main = () => document.getElementById(MAIN);
 
   if (!main()) return;
@@ -57,6 +60,12 @@
     return content;
   }
 
+  // Sidens <main> (med advarselslinjen, kun på forsiden) og dens bredde (forsiden har to kolonner) i stedet for den viste.
+  function swapMain(doc) {
+    main().replaceWith(mainOf(doc));
+    document.body.classList.toggle("wide", doc.body.classList.contains("wide"));
+  }
+
   function sameList(a, b) {
     const u = new URL(a, location.href), v = new URL(b, location.href);
     u.searchParams.delete("msg");
@@ -64,7 +73,7 @@
     return u.pathname + u.search === v.pathname + v.search;
   }
 
-  // ------------------------------------------------------------------ listen (overblik og søgning)
+  // ------------------------------------------------------------------ listen (forsiden, Info, Tidligere og søgning)
 
   let listUrl = location.href;
 
@@ -78,6 +87,7 @@
       return fallback(url, err);
     }
     const { doc } = got;
+    url = got.url || url; // fx en tom søgning på /search, som sender videre til forsiden
     const y = window.scrollY;
     document.querySelectorAll("body > .flash").forEach((el) => el.remove());
     if (whole && top() && doc.getElementById("overblik-top")) {
@@ -90,7 +100,9 @@
       const mine = document.getElementById("barn-filter");
       if (chips && mine) mine.replaceWith(chips);
     }
-    main().replaceWith(mainOf(doc));
+    swapMain(doc);
+    const tabs = doc.getElementById("faner"), mine = document.getElementById("faner");
+    if (tabs && mine) mine.replaceWith(tabs); // den aktive fane følger med
     document.title = doc.title;
     listUrl = url;
     if (history === "search") {
@@ -197,7 +209,7 @@
     markChosen(null);
     let opener = drawer.opener;
     if (opener && !document.contains(opener)) {
-      // listen er hentet igen imens (fx efter "Klaret"): samme link i den nye liste
+      // listen er hentet igen imens (fx efter "Fjern"): samme link i den nye liste
       opener = [...main().querySelectorAll("a.item-link")].find((a) => a.href === drawer.opener.href);
     }
     if (opener) opener.focus({ preventScroll: true });
@@ -221,12 +233,12 @@
 
   function isDetail(a) {
     const u = new URL(a.href, location.href);
-    return u.origin === location.origin && u.pathname.startsWith("/overblik/item/") && !u.pathname.includes("/fil/");
+    return u.origin === location.origin && u.pathname.startsWith("/item/") && !u.pathname.includes("/file/");
   }
 
   function isList(a) {
     const u = new URL(a.href, location.href);
-    return u.origin === location.origin && u.pathname === "/overblik";
+    return u.origin === location.origin && LISTS.includes(u.pathname);
   }
 
   // ------------------------------------------------------------------ klik og formularer
@@ -257,34 +269,118 @@
       search(form, true);
       return;
     }
+    if (form.hasAttribute("data-confirm")) {
+      // "Fjern for <barn>": spørg her i stedet for på bekræftelsessiden, og send den så som POST.
+      ev.preventDefault();
+      if (!window.confirm(form.dataset.confirm)) return;
+      form.method = "post";
+      send(form);
+      return;
+    }
     const action = new URL(form.action, location.href);
-    if (form.method.toLowerCase() !== "post" || !action.pathname.startsWith("/todos/")) return;
+    if (form.method.toLowerCase() !== "post" || !TODO[action.pathname] || !form.closest("[data-todo]")) return;
     ev.preventDefault();
     tick(form);
   });
 
-  // "Klaret"/"Fortryd": send formularen, og vis det, siden sender tilbage til, der hvor knappen sad.
-  async function tick(form) {
-    const inDrawer = drawer && drawer.el.contains(form);
+  // Sender formularen med fetch og giver siden, den sender tilbage til; null når det gik galt (så er den sendt
+  // helt almindeligt i stedet).
+  async function post(form) {
     const button = form.querySelector("button");
+    const focused = button && document.activeElement === button;
     if (button) button.disabled = true;
-    let got;
     try {
-      got = await load(form.action, {
+      return await load(form.action, {
         keep: true,
         fetch: { method: "POST", body: new URLSearchParams(new FormData(form)) },
       });
     } catch (err) {
+      form.submit();
+      return null;
+    } finally {
       if (button) button.disabled = false;
-      return form.submit();
+      if (focused) button.focus({ preventScroll: true });
     }
+  }
+
+  // "Fjern" (og "Klaret"/"Fortryd", når siden har en besked): vis det, siden sender tilbage til, der hvor knappen sad.
+  async function send(form, got = null) {
+    const inDrawer = drawer && drawer.el.contains(form);
+    got = got || (await post(form));
+    if (!got) return;
     if (inDrawer) {
       drawer.body.replaceChildren(rebase(mainOf(got.doc), drawer.body.dataset.url));
       showList(listUrl, { keepScroll: true });
     } else {
       document.querySelectorAll("body > .flash").forEach((el) => el.remove());
-      main().replaceWith(mainOf(got.doc));
+      swapMain(got.doc);
       markChosen(isOpen() ? drawer.body.dataset.url : null);
+    }
+  }
+
+  // ------------------------------------------------------------------ Klaret og Fortryd
+
+  // En todo-knaps action, og hvad den bliver til, når den er sendt: den modsatte knap.
+  const TODO = {
+    "/todos/check": { next: "/todos/uncheck", label: "Fortryd", done: true },
+    "/todos/uncheck": { next: "/todos/check", label: "Klaret", done: false },
+  };
+
+  const holders = (root, ref) => root.querySelectorAll(`[data-todo="${CSS.escape(ref)}"]`);
+
+  // Send "Klaret"/"Fortryd", og markér todo'en der, hvor den står (i Skal gøres, I dag og i morgen, Kommende og
+  // detaljen), uden at hente siden igen. Siger siden, at det ikke gik (fx "Prøv igen om lidt"), så vises den.
+  async function tick(form) {
+    const ref = form.closest("[data-todo]").dataset.todo;
+    const flip = TODO[new URL(form.action, location.href).pathname];
+    const inDrawer = drawer && drawer.el.contains(form);
+    const focused = document.activeElement === form.querySelector("button");
+    const got = await post(form);
+    if (!got) return;
+    if (got.doc.querySelector("body > .flash")) return send(form, got);
+    document.querySelectorAll("body > .flash").forEach((el) => el.remove());
+    if (inDrawer || !top()) {
+      // detaljen: den viser status ("klaret 6/11 kl. 10.12"), så den skiftes ud med den, siden sender tilbage til
+      const content = mainOf(got.doc);
+      if (inDrawer) drawer.body.replaceChildren(rebase(content, drawer.body.dataset.url));
+      else main().replaceWith(content);
+      const button = holders(content, ref)[0]?.querySelector("button");
+      if (focused && button) button.focus({ preventScroll: true });
+    }
+    if (top()) markTodo(ref, flip);
+    if (!inDrawer && isOpen() && holders(drawer.body, ref).length) refreshDrawer();
+  }
+
+  // Todo'en ``ref`` alle steder i listen: klaret eller åben, og knappen den modsatte.
+  function markTodo(ref, flip) {
+    holders(main(), ref).forEach((el) => {
+      el.classList.toggle("done", flip.done);
+      const form = el.querySelector("form");
+      const button = form && form.querySelector("button");
+      if (!button) return;
+      form.action = new URL(flip.next, form.action).href;
+      const label = button.querySelector(".vh");
+      if (label) {
+        label.textContent = flip.label;
+        button.title = flip.label;
+      } else button.textContent = flip.label;
+    });
+    const count = document.querySelector("#skal-goeres .count");
+    if (count) count.textContent = main().querySelectorAll("#skal-goeres [data-todo]:not(.done)").length;
+  }
+
+  // Skuffen viser samme todo, som blev krydset af i listen: hent den igen, på samme sted.
+  async function refreshDrawer() {
+    const url = drawer.body.dataset.url;
+    try {
+      const got = await load(url, { keep: true });
+      if (isOpen() && drawer.body.dataset.url === url) {
+        const y = drawer.body.scrollTop;
+        drawer.body.replaceChildren(rebase(mainOf(got.doc), url));
+        drawer.body.scrollTop = y;
+      }
+    } catch (err) {
+      /* skuffen viser bare den gamle status */
     }
   }
 
@@ -317,7 +413,7 @@
       ev.preventDefault();
       const q = document.getElementById("q");
       if (q) focusSearch(q);
-      else window.location.assign("/overblik#q"); // detaljen som fuld side: søgefeltet er på overblikket
+      else window.location.assign("/#q"); // detaljen som fuld side: søgefeltet er på forsiden
     } else if (ev.key === "Escape" && isOpen()) {
       ev.preventDefault();
       closeDrawer();
@@ -329,7 +425,7 @@
     q.select();
   }
 
-  // Kom man hertil med "/" fra detaljen (/overblik#q): fokus i søgefeltet, og adressen uden #q.
+  // Kom man hertil med "/" fra detaljen (/#q): fokus i søgefeltet, og adressen uden #q.
   if (location.hash === "#q" && document.getElementById("q")) {
     focusSearch(document.getElementById("q"));
     listUrl = location.href.split("#")[0];

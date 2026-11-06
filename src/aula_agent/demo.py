@@ -60,14 +60,14 @@ def fill(today: dt.date, port: int) -> None:
 
     cfg = store.load_config()
     cfg["children"] = {
-        str(EMMA): {"name": "Emma Demo", "institution": "Demo Skole", "calendar_name": "Skole – Emma"},
-        str(OSCAR): {"name": "Oscar Demo", "institution": "Demo Skole", "calendar_name": "Skole – Oscar"},
+        str(EMMA): {"name": "Emma Demo", "institution": "Demo Skole", "calendar_name": "Aula – Emma"},
+        str(OSCAR): {"name": "Oscar Demo", "institution": "Demo Børnehus", "calendar_name": "Aula – Oscar"},
     }
     cfg["web"] = {"public_url": f"http://{HOST}:{port}", "allowed_emails": [EMAIL],
                   "access_team_domain": "demo.invalid", "access_aud": "demo"}
     store.save_config(cfg)
 
-    def post(pid, title, came, text, *, important=None, author="Lærer Demo"):
+    def post(pid, title, came, text, *, important=None, author="Medarbejder Demo"):
         raw = {"id": pid, "title": title, "content": {"html": "".join(f"<p>{p}</p>" for p in text.split("\n\n"))},
                "publishAt": stamp(came), "ownerProfile": {"id": 3, "profileId": 4, "fullName": author}}
         if important:
@@ -85,9 +85,9 @@ def fill(today: dt.date, port: int) -> None:
         )
 
     topics = {
-        "svømning": "Svømmeundervisning", "jul": "Julearrangementer", "skolefest": "Skolefest og fester",
+        "svømning": "Svømmeundervisning", "jul": "Julearrangementer", "fest": "Fester for hele institutionen",
         "tur": "Ture ud af huset", "skema": "Skema og mødetider", "sundhed": "Lus, sygdom og trivsel",
-        "sfo": "SFO og fritid", "forældremøde": "Forældremøder og samtaler", "idræt": "Idræt og sport",
+        "sfo": "SFO og fritid", "stuen": "Hverdagen på stuen", "forældremøde": "Forældremøder og samtaler", "idræt": "Idræt og sport",
     }
     with archive.open() as a:
         for name, description in topics.items():
@@ -100,32 +100,36 @@ def fill(today: dt.date, port: int) -> None:
 
         save(post(1, "Svømning i november", -10, "Vi skal svømme om onsdagen i fire uger.\n\nHusk badetøj og håndklæde."),
              c(C.PERIODE, -4, 24, ["svømning"], "Svømning onsdage i fire uger, husk badetøj og håndklæde."), [EMMA])
-        save(post(2, "Juleklip i klassen", -3, "Vi klipper julepynt. Medbring saks og lim.\n\nForældre er velkomne fra kl. 12."),
+        save(post(2, "Juleklip på stuen", -3, "Vi klipper julepynt. Medbring saks og lim.\n\nForældre er velkomne fra kl. 12."),
              c(C.ARRANGEMENT, 28, None, ["jul"], "Juleklip, husk saks og lim. Forældre velkomne fra kl. 12.",
                "Medbring saks og lim", 28), [OSCAR])
-        save(post(3, "Tilmelding til skolefesten", -2, "Skolefesten holdes om en måned. Tilmeld jer i Aula senest om ni dage."),
-             c(C.FRIST, 9, None, ["skolefest"], "Tilmelding til skolefesten senest om ni dage.", "Tilmeld i Aula", 9))
+        save(post(3, "Tilmelding til julefesten", -2, "Julefesten holdes om en måned. Tilmeld jer i Aula senest om ni dage."),
+             c(C.FRIST, 9, None, ["fest", "jul"], "Tilmelding til julefesten senest om ni dage.", "Tilmeld i Aula", 9))
         save(post(4, "Skema for skoleåret", -60, "Her er skemaet for året.\n\nMandag: dansk, matematik.\nTirsdag: idræt."),
              c(C.INFO, None, None, ["skema"], "Skemaet for skoleåret, idræt tirsdag."), [EMMA])
         save(post(5, "Mødetider i SFO", -45, "SFO åbner kl. 6.30 og lukker kl. 17."),
-             c(C.INFO, None, None, ["sfo"], "SFO åbner 6.30 og lukker 17."))
+             c(C.INFO, None, None, ["sfo"], "SFO åbner 6.30 og lukker 17."), [EMMA])
         save(post(6, "Lus i klassen", -2, "Der er konstateret lus. Tjek venligst jeres barns hår."),
-             c(C.ORIENTERING, None, None, ["sundhed"], "Lus i klassen, tjek håret."), [EMMA])
+             c(C.ORIENTERING, None, None, ["sundhed"], "Lus i klassen, tjek håret.", "Tjek håret for lus", 1), [EMMA])
         save(post(7, "Ny mødetid om morgenen", -1, "Fra på mandag møder vi kl. 8.15.", important=(-1, 6)),
              c(C.ORIENTERING, None, None, ["skema"], "Ny mødetid kl. 8.15 fra mandag."), [OSCAR])
-        save(post(8, "Forældremøde", -5, "Forældremøde i klassen om tolv dage kl. 19."),
-             c(C.ARRANGEMENT, 12, None, ["forældremøde"], "Forældremøde kl. 19 i klassen."), [OSCAR])
-        save(post(9, "Idrætsdag", -4, "Idrætsdag for hele skolen. Husk drikkedunk og tøj til at være ude."),
+        save(post(8, "Forældremøde", -5, "Forældremøde på stuen om tolv dage kl. 19."),
+             c(C.ARRANGEMENT, 12, None, ["forældremøde"], "Forældremøde kl. 19 på stuen."), [OSCAR])
+        save(post(9, "Idrætsdag", -4, "Idrætsdag for alle børn. Husk drikkedunk og tøj til at være ude."),
              c(C.ARRANGEMENT, 16, None, ["idræt"], "Idrætsdag, husk drikkedunk og udetøj.", "Pak drikkedunk og udetøj", 16))
         save(post(10, "Emneuge om rummet", -6, "Næste uge er emneuge om rummet."),
              c(C.PERIODE, 3, 7, ["skema"], "Emneuge om rummet, normale mødetider."), [EMMA])
-        for n in range(11):  # Tidligere, a few months back (with "Vis ældre")
-            ago = -14 - 8 * n
+        for n in range(11):  # Tidligere, a few months back (with "Vis ældre"), every other week for each child
+            ago, school = -14 - 8 * n, n % 2 == 1
             save(post(20 + n, f"Ugebrev uge {(day(ago)).isocalendar().week}", ago, "Hvad vi har lavet i ugen."),
-                 c(C.ORIENTERING, None, None, ["sfo" if n % 2 else "skema"], "Ugens nyt fra klassen."),
-                 [EMMA] if n % 2 else [OSCAR])
-        save(post(40, "Høstfest", -21, "Høstfest i skolegården."), c(C.ARRANGEMENT, -18, None, ["skolefest"], "Høstfest i skolegården."))
+                 c(C.ORIENTERING, None, None, ["sfo" if school else "stuen"], f"Ugens nyt fra {'klassen' if school else 'stuen'}."),
+                 [EMMA] if school else [OSCAR])
+        save(post(40, "Høstfest", -21, "Høstfest på legepladsen."), c(C.ARRANGEMENT, -18, None, ["fest"], "Høstfest på legepladsen."))
         save(post(41, "Billeder fra turen", -1, "Tak for en dejlig tur."))  # not classified yet
+        save(post(42, "Fællessang i salen", -3, "Vi synger sammen i salen om morgenen. Forældre er velkomne."),
+             c(C.ORIENTERING, None, None, ["skema"], "Fællessang i salen om morgenen, forældre velkomne."), [EMMA])
+        save(post(43, "Fodboldstævne", -8, "Stævne for alle børn i morgen hele dagen. Tilmelding senest i går."),
+             c(C.FRIST, -1, None, ["idræt"], "Fodboldstævne hele dagen, tilmelding senest i går.", "Tilmeld til stævnet", -1))
 
         a.save_thread("70", [msg("a", -2, "Vi skal i skoven på fredag. Betal 40 kr. via MobilePay."),
                              msg("b", -1, "Tak, det er betalt.", sender="Forælder Demo")],
@@ -138,23 +142,29 @@ def fill(today: dt.date, port: int) -> None:
         a.classify("message:71:a", c(C.ORIENTERING, todo="Ring til skolen", due=4))
 
     ledger = Ledger.load()
-    for key, children, title, start, source in (
-        ("post:2#1", [OSCAR], "Juleklip", day(28), "post:2"),
-        ("post:3#1", [EMMA, OSCAR], "Frist: tilmelding til skolefest", day(9), "post:3"),
-        ("post:8#1", [OSCAR], "Forældremøde", day(12), "post:8"),
-        ("message:70:a#1", [OSCAR], "Tur i skoven", day(5), "message:70:a"),
-        ("post:3#2", [EMMA, OSCAR], "Skolefest", day(30), "post:3"),
+    for key, children, title, start, end, source in (
+        ("post:2#1", [OSCAR], "Juleklip", day(28), None, "post:2"),
+        ("post:3#1", [EMMA, OSCAR], "Frist: tilmelding til julefest", day(9), None, "post:3"),
+        ("post:8#1", [OSCAR], "Forældremøde", day(12), None, "post:8"),
+        ("message:70:a#1", [OSCAR], "Tur i skoven", day(5), None, "message:70:a"),
+        ("post:3#2", [EMMA, OSCAR], "Julefest", day(30), None, "post:3"),
+        ("post:42#1", [EMMA], "Fællessang", f"{today}T08:15", f"{today}T08:45", "post:42"),  # today, with a time
+        ("post:43#1", [EMMA, OSCAR], "Fodboldstævne", day(1), None, "post:43"),  # tomorrow, all day, both
     ):
+        start = start if isinstance(start, str) else start.isoformat()
+        end = end or start
         for child in children:
-            ledger.record(SyncedEntry(key, [child], f"cal{child}", f"ev-{key}-{child}", title, start.isoformat(),
-                                      start.isoformat(), source, {}, f"https://calendar.google.com/demo/{key}"))
-        ledger.add_history(key, "created", source, title=title, start=start.isoformat(), end=start.isoformat())
+            ledger.record(SyncedEntry(key, [child], f"cal{child}", f"ev-{key}-{child}", title, start, end, source, {},
+                                      f"https://calendar.google.com/demo/{key}"))
+        ledger.add_history(key, "created", source, title=title, start=start, end=end)
     ledger.mark_removed("post:2#1", OSCAR, title="Juleklip", start=day(28).isoformat(), end=day(28).isoformat())
+    ledger.log_run("fetch", "ok", "3 nye/ændrede, 0 venter")  # a night that went well: no warning about it
+    ledger.log_run("apply", "ok", "5 oprettet")
     ledger.save()
 
 
 class DemoGoogle:
-    """Google as the demo has it: "Fjern" on the status page removes from the demo's own calendar (none)."""
+    """Google as the demo has it: "Fjern" on the detail removes from the demo's own calendar (none)."""
 
     def delete_event(self, calendar_id: str, event_id: str) -> bool:
         return True
@@ -213,9 +223,9 @@ def main(argv: list[str] | None = None) -> None:
 
     from . import credentials
 
-    credentials.aula_username = lambda: None  # the status page does not look at the real Aula login
+    credentials.aula_username = lambda: None  # the settings and the warnings do not look at the real Aula login
 
-    print(f"Demo: http://{HOST}:{port}/overblik  (opdigtede data i {target}; Ctrl-C stopper)", flush=True)
+    print(f"Demo: http://{HOST}:{port}/  (opdigtede data i {target}; Ctrl-C stopper)", flush=True)
     uvicorn.run(demo_app(), host=HOST, port=port, log_level="warning")
 
 

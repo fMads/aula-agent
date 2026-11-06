@@ -1,13 +1,15 @@
-"""The overview's timeline (#29): what stands where on /overblik, week by week. It returns data; web.py renders it.
+"""The overview's timeline (#29, #54): what stands where on the front page, day by day and week by week.
+It returns data; web.py renders it.
 
-Gælder nu is what :meth:`archive.Item.current` says is current. Kommende and Tidligere are weeks (Monday first),
-each with its lines: an item on its day (:func:`placed_on`), an event in the calendar or an open todo with due.
-Standing info is never in the weeks.
+Gælder nu is what :meth:`archive.Item.current` says is current. I dag og i morgen and Kommende are days, and
+Tidligere is weeks (Monday first), each with its lines: an item on its day (:func:`placed_on`), an event in the
+calendar or an open todo with due. Standing info is never on the days or in the weeks.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from . import archive
@@ -44,7 +46,7 @@ class ItemLine:
 
 @dataclass(frozen=True)
 class EventLine:
-    """An event in the calendar; ``day`` is where it stands (an event begun before the weeks: their first day)."""
+    """An event in the calendar; ``day`` is where it stands (an event begun before today: today)."""
 
     day: dt.date
     event: UpcomingEvent
@@ -73,12 +75,17 @@ class Week:
     lines: tuple[Line, ...]
 
 
-def weeks(lines: list[Line], *, newest_first: bool = False) -> list[Week]:
-    """The lines grouped in their weeks, by day (and then as :data:`_ORDER` has them)."""
-    by_week: dict[dt.date, list[Line]] = {}
+def grouped(lines: list[Line], by: Callable[[dt.date], dt.date], *, newest_first: bool = False) -> dict[dt.date, list[Line]]:
+    """The lines by day (and then as :data:`_ORDER` has them), grouped on ``by`` of their day, in that order."""
+    groups: dict[dt.date, list[Line]] = {}
     for line in sorted(lines, key=lambda line: (line.day, _ORDER[type(line)]), reverse=newest_first):
-        by_week.setdefault(monday(line.day), []).append(line)
-    return [Week(first, tuple(members)) for first, members in by_week.items()]
+        groups.setdefault(by(line.day), []).append(line)
+    return groups
+
+
+def weeks(lines: list[Line], *, newest_first: bool = False) -> list[Week]:
+    """The lines grouped in their weeks."""
+    return [Week(first, tuple(members)) for first, members in grouped(lines, monday, newest_first=newest_first).items()]
 
 
 def is_upcoming(item: archive.Item, today: dt.date) -> bool:
@@ -87,13 +94,29 @@ def is_upcoming(item: archive.Item, today: dt.date) -> bool:
     return c.category != archive.Category.INFO and bool(c.span_start) and c.span_start >= today and item.current(today) is None
 
 
+@dataclass(frozen=True)
+class Day:
+    day: dt.date
+    lines: tuple[Line, ...]
+    new_week: dt.date | None = None  # in Kommende: the Monday of the week this day begins (a week line above it)
+
+
+@dataclass(frozen=True)
+class Upcoming:
+    """I dag og i morgen (``near``: today and tomorrow, also when there is nothing on them) and Kommende
+    (``later``: from the day after tomorrow, the days with something on them)."""
+
+    near: tuple[Day, Day]
+    later: list[Day]  # each with ``new_week`` when its week is not the one of the day before it (from tomorrow's)
+
+
 def upcoming(
     items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date,
     sources: dict[str, archive.Item],
-) -> list[Week]:
-    """Kommende, week by week from today: the items :func:`is_upcoming`, the events (an event on the day its
-    item's span begins is that item, shown once: in Kommende or Gælder nu) and the
-    open ``todos`` due today or later. ``sources``: the events' items in the archive (shown or not), by key."""
+) -> Upcoming:
+    """I dag og i morgen and Kommende, day by day from today: the items :func:`is_upcoming`, the events (an event
+    on the day its item's span begins is that item, shown once: here or in Gælder nu) and the open ``todos`` due
+    today or later. ``sources``: the events' items in the archive (shown or not), by key."""
     by_key = {i.key: i for i in items}
     due = {t.item.key: t for t in todos if t.due is not None and t.due >= today}
     lines: list[Line] = []
@@ -109,7 +132,14 @@ def upcoming(
             continue
         lines.append(EventLine(max(start, today), ev, sources.get(ev.source or "")))
     lines += [TodoLine(t.due, t) for t in due.values()]
-    return weeks(lines)
+    by_day = grouped(lines, lambda day: day)
+    tomorrow = today + dt.timedelta(days=1)
+    near = (Day(today, tuple(by_day.pop(today, ()))), Day(tomorrow, tuple(by_day.pop(tomorrow, ()))))
+    later, week = [], monday(tomorrow)
+    for day, members in by_day.items():
+        later.append(Day(day, tuple(members), monday(day) if monday(day) != week else None))
+        week = monday(day)
+    return Upcoming(near, later)
 
 
 @dataclass(frozen=True)

@@ -63,7 +63,7 @@ def test_sync_creates_calendar_per_child_uploads_once_and_marks_processed(google
     }
     result = gcal.sync(doc, google=google)
 
-    assert sorted(google.calendars.values()) == ["Skole – Emma", "Skole – Oscar"]
+    assert sorted(google.calendars.values()) == ["Aula – Emma", "Aula – Oscar"]
     assert len(result["created"]) == 2 and result["processed"] == ["post:9"]
     assert google.uploads == ["indbydelse.pdf"]  # uploaded once, attached to both
     assert google.folders == ["Aula"]
@@ -87,7 +87,7 @@ def test_description_links_to_the_items_detail_page_when_the_web_page_has_an_add
     gcal.sync({"processed": ["message:4:7"], "classifications": [{"item": "message:4:7", "category": "svar"}], "events": [ev("message:4:7#1", source="message:4:7", description="Madpakke")]}, google=google)
 
     (body,) = google.bodies()
-    assert "https://aula.example.dk/overblik/item/message:4:7" in body["description"]
+    assert "https://aula.example.dk/item/message:4:7" in body["description"]
     assert body["description"].startswith("Madpakke\n\nFra Aula: besked »Skovtur«")
 
 
@@ -102,7 +102,7 @@ def test_description_of_an_event_from_a_sensitive_thread_has_no_subject_but_the_
     assert body["description"].startswith("Mød op på kontoret\n\nFra Aula: besked (følsom tråd)")
     assert "Samtale om skoledagen" not in body["description"] and "»" not in body["description"]
     assert "Hansen" not in body["description"]  # the detail page hides a sensitive thread's sender too
-    assert "https://aula.example.dk/overblik/item/message:4:7" in body["description"]
+    assert "https://aula.example.dk/item/message:4:7" in body["description"]
 
 
 def test_an_event_from_before_the_link_gets_it_when_it_is_updated(google):
@@ -110,14 +110,14 @@ def test_an_event_from_before_the_link_gets_it_when_it_is_updated(google):
     add_pending("post:9", type="post", title="Juleklip")
     gcal.sync({"processed": ["post:9"], "classifications": [{"item": "post:9", "category": "svar"}],
                "events": [ev("post:9#1", source="post:9")]}, google=google)
-    assert "/overblik" not in google.bodies()[0]["description"]
+    assert "/item/" not in google.bodies()[0]["description"]
 
     set_public_url("https://aula.example.dk")
     result = gcal.sync({"events": [ev("post:9#1", source="post:9", start="2099-11-13")]}, google=google)
 
     assert len(result["updated"]) == 1
     (body,) = google.bodies()
-    assert "Hele teksten: https://aula.example.dk/overblik/item/post:9" in body["description"]
+    assert "Hele teksten: https://aula.example.dk/item/post:9" in body["description"]
     assert "Fra Aula: opslag »Juleklip«" in body["description"]
 
 
@@ -127,7 +127,7 @@ def test_description_has_no_link_without_a_web_address(google):
     gcal.sync({"processed": ["post:9"], "classifications": [{"item": "post:9", "category": "svar"}], "events": [ev("post:9#1", source="post:9")]}, google=google)
 
     (body,) = google.bodies()
-    assert "http" not in body["description"] and "/overblik" not in body["description"]
+    assert "http" not in body["description"] and "/item/" not in body["description"]
 
 
 def test_same_key_updates_and_clears_removed_fields(google, data_dir):
@@ -230,7 +230,22 @@ def test_calendar_name_falls_back_to_child_id(google):
     cfg["children"]["7"] = {"name": "", "institution": "Skolen"}
     store.save_config(cfg)
     gcal.sync({"events": [ev(child_ids=[7])]}, google=google)
-    assert list(google.calendars.values()) == ["Skole – 7"]
+    assert list(google.calendars.values()) == ["Aula – 7"]
+
+
+def test_new_config_names_calendars_for_any_institution(google):
+    setup_children((1, "Emma Jensen"))
+    gcal.sync({"events": [ev()]}, google=google)
+    assert list(google.calendars.values()) == ["Aula – Emma"]
+    assert store.load_config()["children"]["1"]["calendar_name"] == "Aula – Emma"
+
+
+def test_saved_calendar_name_template_is_kept(google):
+    store.save_config({"children": {}, "calendar_name_template": "Skole – {name}"})  # an existing installation
+    setup_children((1, "Emma Jensen"))
+    gcal.sync({"events": [ev()]}, google=google)
+    assert list(google.calendars.values()) == ["Skole – Emma"]
+    assert store.load_config()["calendar_name_template"] == "Skole – {name}"
 
 
 def test_removed_by_user_is_never_recreated(google):

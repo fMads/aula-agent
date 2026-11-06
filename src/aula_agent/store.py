@@ -112,7 +112,7 @@ def write_json(file: Path, data: Any, *, private: bool = False) -> None:
 def load_config() -> dict[str, Any]:
     cfg = read_json(path("CONFIG_FILE"), {})
     cfg.setdefault("children", {})  # str(child_id) -> {"name", "institution", "calendar_id", "calendar_name"}
-    cfg.setdefault("calendar_name_template", "Skole – {name}")
+    cfg.setdefault("calendar_name_template", "Aula – {name}")  # a saved one (older installs: "Skole – {name}") is kept
     cfg.setdefault("drive_folder_name", "Aula")  # attachments of calendar events; may be shared
     cfg.setdefault("archive_folder_name", "Aula-arkiv")  # backup of the archive; never shared
     return cfg
@@ -123,8 +123,9 @@ def save_config(cfg: dict[str, Any]) -> None:
 
 
 def item_path(key: str) -> str:
-    """Where one item's detail is on the web page: ``/overblik/item/<item-key>`` (bookmarks and calendar events link here)."""
-    return f"/overblik/item/{quote(key, safe=':')}"
+    """Where one item's detail is on the web page: ``/item/<item-key>`` (bookmarks and calendar events link here; the
+    events from before #50 link to ``/overblik/item/<item-key>``, which sends on to this)."""
+    return f"/item/{quote(key, safe=':')}"
 
 
 def web_url(suffix: str = "") -> str | None:

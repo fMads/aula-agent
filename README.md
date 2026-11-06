@@ -2,7 +2,7 @@
 
 # aula-agent
 
-Mange datoer fra skolen står aldrig i Aula-kalenderen. De kommer i stedet i beskeder, i ugebreve og som PDF-indbydelser i opslag. **aula-agent** finder dem og lægger dem i Google Calendar.
+Mange datoer fra skolen eller børnehaven står aldrig i Aula-kalenderen. De kommer i stedet i beskeder, i ugebreve og som PDF-indbydelser i opslag. **aula-agent** finder dem og lægger dem i Google Calendar.
 
 Hver aften sker følgende:
 
@@ -10,7 +10,7 @@ Hver aften sker følgende:
 2. En AI-agent (Claude Code eller Codex) læser teksten og filerne. Den finder arrangementer og frister, f.eks. *"Fredag d. 14. er der juleklip, husk saks"* eller *"tilmelding senest 10/11"*.
 3. Arrangementerne lægges i en Google-kalender. Som standard har hvert barn sin egen kalender, men flere børn kan dele én. Indbydelser og andre filer bliver hængt på begivenhederne.
 
-Hvis skolen sender en rettelse, f.eks. *"det er flyttet til torsdag"*, opdateres den begivenhed, der allerede ligger i kalenderen. Der bliver ikke oprettet en ny.
+Hvis institutionen sender en rettelse, f.eks. *"det er flyttet til torsdag"*, opdateres den begivenhed, der allerede ligger i kalenderen. Der bliver ikke oprettet en ny.
 
 ## Sådan hænger det sammen
 
@@ -24,13 +24,13 @@ Hvis skolen sender en rettelse, f.eks. *"det er flyttet til torsdag"*, opdateres
    ├─ skriver data/events-<dato>.json
    └─ uv run aula-agent apply    → Python opretter og opdaterer i Google Calendar + Drive
 
- Valgfri web-side (bag Cloudflare Access): status, MitID-login, Google-login,
- kommende begivenheder og en knap til at fjerne forkerte
+ Valgfri web-side (bag Cloudflare Access): overblik, status, MitID-login,
+ Google-login og en knap til at fjerne forkerte begivenheder
 ```
 
 Python-delen forstår ikke selv tekst. Den henter og gemmer data og taler med Aula og Google. Det er agenten, der læser og vurderer indholdet.
 
-**Arkivet.** Aula sletter opslag og beskeder efter nogle måneder. Derfor gemmer `fetch` hvert opslag og hver beskedtråd, den ser, i et arkiv (`data/archive.sqlite`) med alle filer og billeder, også det der er for gammelt til agenten. En tråd gemmes hel, som Aula sendte den, også systembeskeder (fx modtagere tilføjet); beskeder fra en følsom tråd er markeret som følsomme. Retter skolen et opslag eller en besked, gemmes den nye version ved siden af den gamle. Hver nat læser `fetch` kun de tråde, der er ændret; `uv run aula-agent backfill` henter én gang alt, hvad Aula stadig har (alle opslag og alle tråde), til arkivet. Den kan køres igen uden dubletter, giver ikke agenten noget og starter aldrig et MitID-login. Med en sti til en redningskopi (`uv run aula-agent backfill data/rescue-2026-11-05`) læser den kopien i stedet for Aula: `posts.json`, `threads.json` og filerne i `files/` kopieres ind, og versionerne får datoen i mappens navn. Det kræver ikke Aula-login, og kører du bagefter `fetch` eller `backfill` mod Aula, giver de samme items ingen dubletter. Arkivet rydder aldrig op. Det er en almindelig SQLite-fil, som du kan åbne med SQLite-værktøjer, DuckDB eller ClickHouse.
+**Arkivet.** Aula sletter opslag og beskeder efter nogle måneder. Derfor gemmer `fetch` hvert opslag og hver beskedtråd, den ser, i et arkiv (`data/archive.sqlite`) med alle filer og billeder, også det der er for gammelt til agenten. En tråd gemmes hel, som Aula sendte den, også systembeskeder (fx modtagere tilføjet); beskeder fra en følsom tråd er markeret som følsomme. Retter institutionen et opslag eller en besked, gemmes den nye version ved siden af den gamle. Hver nat læser `fetch` kun de tråde, der er ændret; `uv run aula-agent backfill` henter én gang alt, hvad Aula stadig har (alle opslag og alle tråde), til arkivet. Den kan køres igen uden dubletter, giver ikke agenten noget og starter aldrig et MitID-login. Med en sti til en redningskopi (`uv run aula-agent backfill data/rescue-2026-11-05`) læser den kopien i stedet for Aula: `posts.json`, `threads.json` og filerne i `files/` kopieres ind, og versionerne får datoen i mappens navn. Det kræver ikke Aula-login, og kører du bagefter `fetch` eller `backfill` mod Aula, giver de samme items ingen dubletter. Arkivet rydder aldrig op. Det er en almindelig SQLite-fil, som du kan åbne med SQLite-værktøjer, DuckDB eller ClickHouse.
 
 **Backup.** Til sidst i hver `fetch` kopieres arkivet og dets filer til Drive-mappen **"Aula-arkiv"**, som aula-agent selv opretter. Den er privat: del den ikke (modsat mappen "Aula" med kalenderens vedhæftninger). Arkiv-filen erstattes hver gang, og hver fil lægges kun op én gang. Fejler backuppen, eller mangler Google-login, giver `fetch` en advarsel, men natkørslen fortsætter. Mappens navn kan ændres med `archive_folder_name` i `data/config.json`, før den første backup tages. `uv run aula-agent backup` tager en backup med det samme.
 
@@ -124,7 +124,7 @@ codex "Kør den natlige Aula-synkronisering"      # eller Codex
 
 Codex skal have lov til at bruge netværket, fordi `fetch` og `apply` taler med Aula og Google. Godkend det, når den spørger.
 
-Agenten følger [`AGENTS.md`](AGENTS.md). `CLAUDE.md` henviser bare til den, så begge agenter bruger de samme instruktioner. Den læser alt, der er hentet, laver en events-fil, laver en prøvekørsel og opretter derefter begivenhederne. Kalenderen hedder **"Skole – <barnets fornavn>"** og bliver oprettet automatisk. Første gang vil det meste ligge tilbage i tiden, så der bliver typisk kun oprettet nogle få begivenheder.
+Agenten følger [`AGENTS.md`](AGENTS.md). `CLAUDE.md` henviser bare til den, så begge agenter bruger de samme instruktioner. Den læser alt, der er hentet, laver en events-fil, laver en prøvekørsel og opretter derefter begivenhederne. Kalenderen hedder **"Aula – <barnets fornavn>"** og bliver oprettet automatisk. Navnet kommer fra `calendar_name_template` i `data/config.json`; har din config allerede en skabelon (ældre installationer har "Skole – {name}"), bliver den brugt, og eksisterende kalendere omdøbes ikke. Første gang vil det meste ligge tilbage i tiden, så der bliver typisk kun oprettet nogle få begivenheder.
 
 ### 5. Kør automatisk hver aften
 
@@ -159,14 +159,17 @@ Den kører `deploy/nightly.sh` hver aften kl. 21:00, og loggen ligger i `data/lo
 
 ### 6. Valgfrit: web-side med Cloudflare
 
-Web-siden viser:
+Web-siden viser (status og logins under fanen Indstillinger, `/settings`):
 - om Aula- og Google-login virker
 - de seneste kørsler
-- hvor mange opslag og beskeder arkivet har, hvornår der sidst blev gemt noget, og hvornår der sidst blev taget backup (med en advarsel, hvis det er mere end 2 døgn siden eller aldrig er sket)
-- de kommende begivenheder med en knap til at fjerne forkerte (de bliver så ikke oprettet igen). Gælder en begivenhed flere børn, er der en knap pr. barn
-- et overblik (`/overblik`) som en tidslinje: øverst "Skal gøres" (opgaver med en "Klaret"-knap, overskredne først), så "Gælder nu" (perioder, der kører, opslag Aula har markeret som vigtige, og nye orienteringer), "Kommende" uge for uge (opslag og beskeder efter hvornår de gælder, begivenhederne i kalenderen med link til det, de kom fra, og opgaver med en frist), "Stående info" efter emne og "Tidligere" uge for uge med nyeste først ("Vis ældre" går længere tilbage). Svar som "Tak" og "Ok" vises ikke på tidslinjen, kun i søgningen. Har du flere børn, kan du vælge ét barn. Så ser du det, der gælder det barn, og det, der ikke er knyttet til et bestemt barn. Nederst står, hvor mange items agenten endnu ikke har inddelt
-- et søgefelt øverst i overblikket. En søgning viser resultaterne i stedet for tidslinjen. Søgningen finder alt i arkivet på ordbegyndelser ("svøm" finder "svømning"), også tekst inde i vedhæftede PDF- og Word-filer (docx), og kan indsnævres efter barn, slags, emne og kilde (opslag, besked, med dokument). Overståede ting er dæmpede, og følsomme tråde vises uden emne og uddrag
-- hvert opslag og hver besked på sin egen side, `/overblik/item/<item-key>` (fx `/overblik/item/post:123` eller `/overblik/item/message:456:789`). Adressen ligger fast, så den kan bogmærkes og linkes til. Siden viser hele teksten, filerne (PDF åbnes i browseren, andre filer hentes ned), tidligere versioner, hvis det er rettet i Aula, hvad det blev til i kalenderen, en evt. opgave og for beskeder hele tråden. Følsomme tråde viser kun dato, kilde og art, indtil du trykker "Vis teksten". Filerne udleveres fra arkivet på `/overblik/item/<item-key>/fil/<vedhæftnings-id>`
+- hvor mange opslag og beskeder arkivet har, hvornår der sidst blev gemt noget, og hvornår der sidst blev taget backup (med en advarsel, hvis det er mere end 2 døgn siden eller aldrig er sket), og hvor mange items agenten endnu ikke har inddelt
+- børn og kalendere, og hvilke kommende begivenheder du har fjernet for hvilket barn (kun til at se; fjern dem på detaljen, se nedenfor)
+- hvem du er logget ind som
+- en advarselslinje øverst på forsiden, kun når noget kræver handling: Aula-login mangler eller er udløbet (med link til at logge ind), Google er ikke forbundet eller login er udløbet (link til `/google`), sidste kørsel (`fetch` eller `apply`) fejlede, eller der er ikke hentet fra Aula i over et døgn
+- et overblik på forsiden (`/`) som en tidslinje: øverst "Skal gøres" (opgaver med en "Klaret"-knap, overskredne først), så "I dag og i morgen" (det samme som Kommende, for de to dage), "Gælder nu" (perioder, der kører, opslag Aula har markeret som vigtige, og nye orienteringer) og "Kommende" dag for dag fra i overmorgen med en ugelinje, når ugen skifter (opslag og beskeder efter hvornår de gælder, begivenhederne i kalenderen med link til det, de kom fra, og opgaver med en frist). "Stående info" efter emne har sin egen fane, Info (`/info`), og "Tidligere" uge for uge med nyeste først ("Vis ældre" går længere tilbage) sin, Tidligere (`/past`). Fanerne Forside, Info, Tidligere og Indstillinger står på alle siderne: i bunden på telefonen, i toppen på PC. På PC står forsiden i to kolonner (Skal gøres og Gælder nu til venstre, dagene til højre), og Gælder nu er små kort, der kan rulles til siden på telefonen. Med flere børn står barnets fornavn i sin egen farve (efter rækkefølgen i config) ved hver linje, eller "Begge", når det gælder dem alle. Siden følger enhedens lyse eller mørke tema. Svar som "Tak" og "Ok" vises ikke på tidslinjen, kun i søgningen. Har du flere børn, kan du vælge ét barn under søgefeltet (på forsiden, Info, Tidligere og i søgningen). Så ser du det, der gælder det barn, og det, der ikke er knyttet til et bestemt barn. Valget huskes på enheden i et år (en cookie), til du vælger "Alle børn"
+- et søgefelt øverst på forsiden, Info og Tidligere. En søgning viser resultaterne på sin egen adresse, `/search` (fx `/search?q=svøm`). Søgningen finder alt i arkivet på ordbegyndelser ("svøm" finder "svømning"), også tekst inde i vedhæftede PDF- og Word-filer (docx), og kan indsnævres efter barn, slags, emne og kilde (opslag, besked, med dokument). Overståede ting er dæmpede, og følsomme tråde vises uden emne og uddrag
+- hvert opslag og hver besked på sin egen side, `/item/<item-key>` (fx `/item/post:123` eller `/item/message:456:789`). Adressen ligger fast, så den kan bogmærkes og linkes til. Siden viser hele teksten, filerne (PDF åbnes i browseren, andre filer hentes ned), tidligere versioner, hvis det er rettet i Aula, hvad det blev til i kalenderen (med en knap "Fjern for <barn>" pr. barn, så længe begivenheden ikke er overstået; du bekræfter, før den fjernes), en evt. opgave og for beskeder hele tråden. Følsomme tråde viser kun dato, kilde og art, indtil du trykker "Vis teksten". Filerne udleveres fra arkivet på `/item/<item-key>/file/<vedhæftnings-id>`
+- de gamle adresser (`/overblik…`) sender permanent videre til de nye, så links i begivenheder, der allerede ligger i kalenderen, stadig virker
 
 Fra web-siden kan du også logge ind i Aula med MitID (QR-koden vises i browseren) og forbinde Google.
 
@@ -198,16 +201,18 @@ Det kræver et domæne på Cloudflare. Zero Trust er gratis til få brugere.
 
 Se opsætningen med `uv run aula-agent web-setup`. Hvis du kører `--email` igen, erstatter det hele listen.
 
-Når adressen (`--url`) er sat, får begivenhederne i Google Calendar et link til item'ets detalje-side på web-siden (`/overblik/item/<item-key>`). Begivenheder, der allerede ligger i kalenderen, får linket, næste gang de bliver opdateret.
+Siden kan ligge på telefonens hjemmeskærm som en app (i Safari: Del → *Føj til hjemmeskærm*, i Chrome: *Installer app*). Den hedder "Overblik". Et andet navn sætter du med `"app_name"` under `"web"` i `data/config.json`, fx `"app_name": "Hjemme"`. Det står også øverst på siden. Kald den ikke "Aula", så den ikke forveksles med Aula-appen. Siden virker kun med net.
+
+Når adressen (`--url`) er sat, får begivenhederne i Google Calendar et link til item'ets detalje-side på web-siden (`/item/<item-key>`). Begivenheder, der allerede ligger i kalenderen, får linket, næste gang de bliver opdateret.
 
 ## I hverdagen
 
 - **Login udløbet:** Natkørslen stopper og siger det. Så logger du ind igen med `uv run aula login` eller på web-siden. Det, der ikke er nået at blive behandlet, venter bare til næste kørsel.
-- **Forkert begivenhed:** Fjern den på web-siden. Hvis du sletter den direkte i Google Calendar, kan den dukke op igen, næste gang skolen skriver om det samme.
+- **Forkert begivenhed:** Fjern den på web-siden. Hvis du sletter den direkte i Google Calendar, kan den dukke op igen, næste gang institutionen skriver om det samme.
 - **Del med den anden forælder:**
-  - I Google Calendar: Indstillinger → *Skole – …* → Delt med → tilføj vedkommende med *Se alle begivenhedsdetaljer*. Gør det ikke med redigeringsret, for rettelser fra skolen overskriver ændringer.
+  - I Google Calendar: Indstillinger → *Aula – …* → Delt med → tilføj vedkommende med *Se alle begivenhedsdetaljer*. Gør det ikke med redigeringsret, for rettelser fra institutionen overskriver ændringer.
   - Vedhæftede filer ligger i Drive-mappen **"Aula"**. Den skal også deles, hvis den anden forælder skal kunne åbne filerne. Del **ikke** mappen "Aula-arkiv" (backuppen af arkivet).
-- **Flere børn:** Hvert barn får sin egen kalender. Et nyt barn bliver fundet automatisk ved næste `fetch`. Aula fortæller ikke, hvilket barn et opslag gælder, så agenten afgør det ud fra klasse og grupper og ud fra indholdet. Når det er uklart, lægger den begivenheden hos alle relevante børn.
+- **Flere børn:** Hvert barn får sin egen kalender. Et nyt barn bliver fundet automatisk ved næste `fetch`. Aula fortæller ikke, hvilket barn et opslag gælder, så agenten afgør det ud fra klasse, stue og grupper og ud fra indholdet. Når det er uklart, lægger den begivenheden hos alle relevante børn.
 - **Fælles kalender for flere børn:** Hvert barn hører til præcis én kalender, men flere børn kan dele den. Sæt det samme `calendar_id` (og `calendar_name`) på børnene i `data/config.json`. En begivenhed for flere børn i samme kalender bliver så til én post dér, ikke én pr. barn. Fjerner du den for ét barn på web-siden, bliver posten liggende for de andre og slettes først, når ingen af kalenderens børn er tilbage. En rettelse, der ikke længere nævner et af børnene, gør det samme.
   - Har du før ladet flere børn pege på samme kalender (den gamle omvej), kender poster fra dengang kun ét af børnene, indtil begivenheden bliver rettet. Der kommer ikke dubletter.
 

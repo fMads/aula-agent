@@ -1,6 +1,7 @@
 """The demo (``python -m aula_agent.demo <dir>``): made-up data for trying the web page, never the real data/."""
 
 import datetime as dt
+import re
 import sys
 
 import pytest
@@ -10,12 +11,19 @@ from aula_agent import demo
 
 
 def test_the_demo_fills_its_directory_with_two_children_todos_and_events_and_lets_the_page_in(data_dir):
-    demo.fill(dt.date(2026, 11, 6), 8000)
+    today = dt.date.today()  # the demo's page has the real today
+    demo.fill(today, 8000)
     with TestClient(demo.demo_app(), base_url="http://127.0.0.1:8000") as c:
-        html = c.get("/overblik").text
+        html = c.get("/").text
         assert 'id="barn-filter"' in html and "Emma" in html and "Oscar" in html
         assert 'class="row todo-row"' in html and 'class="row event"' in html
+        near = html.split('<section id="i-dag-og-i-morgen"', 1)[1].split("</section>", 1)[0]
+        on_today, on_tomorrow = near.split(f'data-day="{today + dt.timedelta(days=1)}"')
+        assert re.search(r'<span class="date time">\d\d:\d\d</span>', on_today)
+        assert '<span class="date time">hele dagen' in on_tomorrow
+        assert 'action="/todos/check"' in on_tomorrow  # a todo to tick off there too
         assert c.get("/aula/login").status_code == 403 and c.get("/google").status_code == 403
+        assert "ikke hentet fra Aula" not in html  # the demo has had a good night
 
 
 @pytest.mark.parametrize("target", ["data", "data/sub", "."])

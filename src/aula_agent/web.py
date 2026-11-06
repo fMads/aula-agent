@@ -1,4 +1,5 @@
-"""Minimal web UI: status, MitID re-login, Google connect, upcoming events, the overview, one item and its files.
+"""Minimal web UI: the overview (with a warning line when something needs doing), the settings, MitID re-login,
+Google connect, one item and its files.
 
 Meant to sit behind a Cloudflare Tunnel with Cloudflare Access in front. The app
 does not trust the tunnel alone: every request must carry a valid Cloudflare
@@ -23,6 +24,7 @@ from urllib.parse import quote, urlencode, urlparse, urlsplit
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
 from starlette.middleware import Middleware
+from starlette.datastructures import QueryParams
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
@@ -35,6 +37,9 @@ from .runs import Outcome
 # ----------------------------------------------------------------------------- config
 
 
+DEFAULT_APP_NAME = "Overblik"  # never "Aula": not to be mistaken for Aula's own app
+
+
 def web_config() -> dict[str, Any]:
     web = store.load_config().get("web") or {}
     return {
@@ -42,6 +47,7 @@ def web_config() -> dict[str, Any]:
         "allowed_emails": [e.lower() for e in web.get("allowed_emails") or []],
         "access_team_domain": web.get("access_team_domain"),  # e.g. "myteam.cloudflareaccess.com"
         "access_aud": web.get("access_aud"),  # Application Audience (AUD) tag
+        "app_name": (web.get("app_name") or "").strip() or DEFAULT_APP_NAME,  # on the home screen and every page
     }
 
 
@@ -233,66 +239,154 @@ class MitIDLogin:
 
 # ----------------------------------------------------------------------------- HTML
 
+THEME_COLOR = "#2156c9"  # the accent colour; the browser's bar on a phone and the background of static/icon.svg
+ACCENT_DARK = "#8ab0ff"  # the accent colour in the dark theme
+THEME_COLOR_DARK = "#121214"  # the browser's bar in the dark theme: the page's background
+# The children's colours (light theme, dark theme), in turn by each child's place in the config (Children.colour).
+KID_PALETTE = (("#0b7a6c", "#3cc9b4"), ("#b85300", "#ff9a4d"), ("#6a4bc4", "#a993ff"), ("#b02a5e", "#ff7aa8"))
+KID_COLOURS = len(KID_PALETTE)
+
+
+def palette_css() -> str:
+    """The accent (``--acc``) and the children's colours (``--kid-<n>`` and the classes ``kid-<n>``) in both themes,
+    and the dark theme's background, from the constants above (the browser's bar and the manifest use them too)."""
+    light = f"--acc:{THEME_COLOR};" + "".join(f"--kid-{n}:{c};" for n, (c, _) in enumerate(KID_PALETTE))
+    dark = f"--bg:{THEME_COLOR_DARK};--acc:{ACCENT_DARK};" + "".join(f"--kid-{n}:{c};" for n, (_, c) in enumerate(KID_PALETTE))
+    classes = "".join(f".kid-{n}{{--k:var(--kid-{n})}}" for n in range(KID_COLOURS))
+    return f":root{{{light}}}\n@media (prefers-color-scheme:dark){{:root{{{dark}}}}}\n{classes}\n"
+
+
 CSS = """
-:root{--fg:#1d1d1f;--mut:#6e6e73;--line:#e5e5ea;--ok:#1a7f37;--bad:#c62828;--acc:#0b57d0;--bg:#fff;--soft:#f5f5f7}
-@media (prefers-color-scheme:dark){:root{--fg:#f2f2f7;--mut:#a1a1a6;--line:#38383a;--ok:#3fb950;--bad:#ff6b6b;--acc:#8ab4f8;--bg:#111;--soft:#1c1c1e}body{background:#111}}
-*{box-sizing:border-box}body{font:16px/1.5 system-ui,sans-serif;color:var(--fg);max-width:46rem;margin:0 auto;padding:1.25rem}
-h1{font-size:1.4rem;margin:.2rem 0 1.2rem}h2{font-size:1.05rem;margin:2rem 0 .6rem}
-a{color:var(--acc)}.mut{color:var(--mut);font-size:.9rem}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:.6rem}
-.card{border:1px solid var(--line);border-radius:10px;padding:.7rem .8rem}.card b{display:block;font-size:.8rem;color:var(--mut);font-weight:500}
-.ok{color:var(--ok)}.bad{color:var(--bad)}
-ul.list{list-style:none;padding:0;margin:0}ul.list li{border-top:1px solid var(--line);padding:.55rem 0;display:flex;gap:.8rem;align-items:baseline}
-ul.list li .grow{flex:1;min-width:0}.date{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--mut);min-width:6.5rem}
-button,.btn{font:inherit;border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:8px;padding:.35rem .8rem;cursor:pointer;text-decoration:none;display:inline-block}
-button.primary,.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+:root{color-scheme:light dark;--fg:#1c1c1e;--mut:#6b6b70;--line:#e4e4e8;--bg:#f7f7f5;--card:#fff;--soft:#f0f0ee;
+--on-acc:#fff;--near:#edf2fd;--ok:#1a7f37;--bad:#b3261e;--bad-soft:#fdecea;--mark:#fde68a;--tabs-h:3.6rem}
+@media (prefers-color-scheme:dark){:root{--fg:#ececef;--mut:#a0a0a6;--line:#2e2e33;--card:#1b1b1e;--soft:#232327;
+--on-acc:#0d1b3d;--near:#18213a;--ok:#4cc26a;--bad:#ff8a80;--bad-soft:#3a1d1b;--mark:#6b5200}}
+""" + palette_css() + """*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0 auto;max-width:46rem;padding:0 1.25rem 3rem;font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+color:var(--fg);background:var(--bg)}
+body.wide{max-width:76rem}
+a{color:var(--acc)}.mut{color:var(--mut);font-size:.9rem}.ok{color:var(--ok)}.bad{color:var(--bad)}
+h1{font-size:1.1rem;font-weight:700;margin:0}h1 a{color:inherit;text-decoration:none}
+h2{font-size:.8rem;font-weight:650;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:1.8rem 0 .5rem}
+h3{font-size:.98rem;margin:1.2rem 0 .35rem}
+h2.title{font-size:1.35rem;font-weight:700;text-transform:none;letter-spacing:0;color:var(--fg);margin:1.2rem 0 .4rem}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+/* the top: the app's name and the tabs (in the top on a wide screen, fixed at the bottom on a narrow one) */
+header.top{display:flex;align-items:center;gap:2rem;padding:.9rem 0 .6rem}
+nav.tabs{display:flex;flex:1;gap:1.4rem}nav.tabs>*{display:inline-flex;align-items:center;gap:.35rem;padding:.45rem 0;
+color:var(--mut);text-decoration:none;font-weight:500;border-bottom:2px solid transparent}
+nav.tabs>b{color:var(--fg);border-bottom-color:var(--acc)}nav.tabs a:hover{color:var(--fg)}
+nav.tabs>:last-child{margin-left:auto}nav.tabs svg{display:none;width:1.4rem;height:1.4rem}
+@media (max-width:59.99rem){body{padding-bottom:calc(var(--tabs-h) + env(safe-area-inset-bottom) + 2rem)}
+ header.top{padding:.7rem 0 .3rem}
+ nav.tabs{position:fixed;z-index:15;left:0;right:0;bottom:0;gap:0;background:var(--card);border-top:1px solid var(--line);
+ padding:0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+ nav.tabs>*{flex:1;flex-direction:column;justify-content:center;gap:.1rem;min-height:var(--tabs-h);padding:.3rem 0;
+ font-size:.72rem;border:0}nav.tabs>:last-child{margin-left:0}nav.tabs>b{color:var(--acc);font-weight:600}
+ nav.tabs svg{display:block}}
+nav.tabs svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+/* buttons and fields */
+button,.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:.35rem .8rem;
+cursor:pointer;text-decoration:none;display:inline-block}
+button.primary,.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc)}
 button.small{font-size:.85rem;padding:.15rem .6rem}
-input[type=text],input[type=search],select{font:inherit;padding:.35rem .5rem;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--fg)}
-.qr{width:min(20rem,80vw);aspect-ratio:1;margin:1rem 0}.qr svg{width:100%;height:100%}
-.otp{font-size:2rem;letter-spacing:.2em;font-weight:600}
-.flash{padding:.6rem .8rem;border-radius:8px;border:1px solid var(--line);margin-bottom:1rem}
+input[type=text],input[type=search],select{font:inherit;padding:.35rem .5rem;border:1px solid var(--line);border-radius:8px;
+background:var(--card);color:var(--fg)}
 form.inline{display:inline;margin:0}
-details>summary{cursor:pointer;margin:2rem 0 .6rem;font-weight:600}
-.acts{display:flex;flex-direction:column;gap:.3rem;align-items:flex-end}
-form.search{display:flex;flex-wrap:wrap;gap:.4rem;margin:0 0 1rem}form.search input[type=search]{flex:1 1 100%;font-size:1.05rem;padding:.55rem .7rem}
-li.past{opacity:.6}.tag{font-size:.8rem;border:1px solid var(--line);border-radius:6px;padding:0 .35rem;color:var(--mut)}
-mark{background:#fde68a;color:inherit;border-radius:2px}@media (prefers-color-scheme:dark){mark{background:#7a5c00}}
-.text{white-space:pre-wrap;overflow-wrap:anywhere}
-h3{font-size:1rem;margin:1.6rem 0 .5rem}details.version>summary{margin:.4rem 0;font-weight:400}
-ul.thread li.sel{border-left:3px solid var(--acc);padding-left:.6rem}
-.tabs{display:flex;gap:1.4rem;margin:-.6rem 0 1rem}.tabs>*{display:inline-block;padding:.45rem 0}.tabs b{border-bottom:2px solid var(--acc)}
-.sticky{position:sticky;top:0;z-index:5;background:var(--bg);padding:.6rem 0 .5rem;border-bottom:1px solid var(--line);margin-bottom:.5rem}
-.sticky form.search{margin:0}
-.chips{display:flex;flex-wrap:wrap;gap:.4rem;margin:.5rem 0 0}
-.chip{display:inline-flex;align-items:center;min-height:2.5rem;padding:0 1rem;border:1px solid var(--line);border-radius:999px;color:var(--fg);text-decoration:none}
-.chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
-ul.list li.row{padding:.75rem 0}.row .grow>.item-link{font-weight:500;display:inline-block;padding:.1rem 0}
-.sum{display:block;font-size:.92rem}.meta{display:block}
-.cat-arrangement{background:#e6f4ea;color:#0d652d;border-color:#e6f4ea}.cat-frist{background:#fce8e6;color:#a50e0e;border-color:#fce8e6}
-.cat-periode{background:#fef7e0;color:#8a5a00;border-color:#fef7e0}.cat-info{background:#e8f0fe;color:#174ea6;border-color:#e8f0fe}
-@media (prefers-color-scheme:dark){.cat-arrangement,.cat-frist,.cat-periode,.cat-info{background:transparent}}
-ul.now{border:1px solid var(--line);border-radius:12px;padding:0 .9rem;background:var(--soft)}ul.now li:first-child{border-top:0}
-.week{margin-top:1.2rem}.week h3{display:flex;justify-content:space-between;gap:.5rem;border-bottom:2px solid var(--line);padding-bottom:.2rem;margin:0}
-.week.cur h3{border-color:var(--acc)}.ev{font-weight:500}.topic h3{margin:1rem 0 .2rem}
-#ikke-inddelt{margin-top:2.5rem}
-.thumbs{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem}.thumb{width:7rem;height:7rem;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+details>summary{cursor:pointer;margin:1.6rem 0 .5rem;font-weight:600}
+.flash{padding:.6rem .8rem;border-radius:10px;border:1px solid var(--line);background:var(--card);margin:.4rem 0 1rem}
+ul.warnings{list-style:none;padding:0;margin:.6rem 0 0}
+ul.warnings li{padding:.55rem .9rem;border-radius:10px;background:var(--bad-soft);color:var(--bad);margin-bottom:.4rem;font-size:.92rem}
+ul.warnings a{color:inherit;font-weight:600}
+/* the search field and the child filter, sticky at the top */
+.sticky{position:sticky;top:0;z-index:5;background:var(--bg);padding:.5rem 0 .6rem}
+form.search{display:flex;flex-wrap:wrap;gap:.4rem;margin:0}
+form.search input[type=search]{flex:1 1 100%;font-size:1.05rem;padding:.65rem 1rem;border-radius:12px}
 form.search select{flex:1 1 7rem;min-width:0;min-height:2.5rem}form.search button{min-height:2.5rem}
-details.filtre{flex:1 1 auto}details.filtre>summary{margin:0;display:inline-flex;align-items:center;min-height:2.5rem;font-weight:400;color:var(--mut)}
-details.filtre>summary{cursor:pointer;border:1px solid var(--line);border-radius:999px;padding:0 .9rem;color:inherit}details.filtre>summary::before{content:"▸";margin-right:.4rem}details.filtre[open]>summary::before{content:"▾"}
+details.filtre{flex:1 1 auto}
+details.filtre>summary{margin:0;display:inline-flex;align-items:center;min-height:2.3rem;font-weight:400;color:var(--mut);
+border:1px solid var(--line);border-radius:999px;padding:0 .9rem}
+details.filtre>summary::before{content:"▸";margin-right:.4rem}details.filtre[open]>summary::before{content:"▾"}
 .filtre-felter{display:flex;flex-wrap:wrap;gap:.4rem}
 @supports selector(::details-content){@media (min-width:40rem){details.filtre>summary{display:none}
 details.filtre::details-content{content-visibility:visible;block-size:auto}}}
-li.valgt{background:var(--soft);box-shadow:-.6rem 0 0 var(--soft),.6rem 0 0 var(--soft)}
+.chips{display:flex;gap:.4rem;margin:.5rem 0 0;overflow-x:auto;scrollbar-width:none}
+.chip{display:inline-flex;align-items:center;gap:.4rem;flex:none;min-height:2.3rem;padding:0 .95rem;border:1px solid var(--line);
+border-radius:999px;background:var(--card);color:var(--fg);text-decoration:none;font-size:.92rem}
+.chip.on{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+/* a child's colour (kid-<n>, by its place in the config: palette_css) by its first name, in the lists and on the chips */
+.who{display:inline-flex;align-items:center;gap:.3rem;margin-right:.6rem;font-size:.8rem;font-weight:650;color:var(--k,var(--mut));
+white-space:nowrap}.who.all{font-weight:500}
+.who::before,.chip[class*=kid-]::before{content:"";width:.55rem;height:.55rem;border-radius:50%;background:var(--k,var(--mut))}
+.who.all::before{background:none;border:1.5px solid var(--mut);width:.45rem;height:.45rem}
+/* lists */
+ul.list{list-style:none;padding:0;margin:0}
+ul.list li{border-top:1px solid var(--line);padding:.6rem 0;display:flex;gap:.8rem;align-items:baseline}
+ul.list li:first-child{border-top:0}ul.list li .grow{flex:1;min-width:0}
+main section ul.list,ul.list.box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:0 .9rem}
+.date{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--mut);min-width:5.2rem;font-size:.9rem}
+.date.time{min-width:4.6rem}
+.acts{display:flex;flex-direction:column;gap:.3rem;align-items:flex-end}
+.row .grow>*{display:block}.row .grow>.todo-link,.row .grow>.ev{display:inline}
+.row .item-link,.row .ev,.todo-link{font-weight:550;color:var(--fg);text-decoration:none}.row .item-link:hover,.todo-link:hover{text-decoration:underline}
+.label{font-size:.7rem;font-weight:650;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+#staaende-info .label{display:none}.sum{font-size:.92rem}.meta{font-size:.88rem;color:var(--mut)}.meta:empty{display:none}
+.meta a{color:inherit}.row .meta .item-link{font-weight:450}.tag{font-size:.78rem;border:1px solid var(--line);border-radius:6px;padding:0 .35rem;color:var(--mut)}
+li.past{opacity:.6}mark{background:var(--mark);color:inherit;border-radius:2px}
+li.valgt{background:var(--soft);box-shadow:-.9rem 0 0 var(--soft),.9rem 0 0 var(--soft)}
+/* a todo: the round button in front ("Klaret"; filled: "Fortryd") */
+button.tick{flex:none;align-self:flex-start;width:1.6rem;height:1.6rem;padding:0;border-radius:50%;border:2px solid var(--mut);
+background:transparent;position:relative;top:.05rem}button.tick:hover{border-color:var(--acc)}
+.done button.tick{background:var(--acc);border-color:var(--acc)}
+.done button.tick::after{content:"";position:absolute;left:.45rem;top:.18rem;width:.35rem;height:.7rem;border:solid var(--on-acc);
+border-width:0 2px 2px 0;transform:rotate(45deg)}
+.done .todo{text-decoration:line-through;color:var(--mut)}.todo-row.done .bad{display:none}
+.row-todo{display:flex!important;gap:.5rem;align-items:center;margin-top:.3rem;font-size:.92rem}.row-todo button.tick{width:1.3rem;height:1.3rem}
+/* the front page: one column, or two when there is room (Skal gøres and Gælder nu | I dag og i morgen and Kommende) */
+main{container-type:inline-size}
+.cols{display:flex;flex-direction:column}.col{display:contents}
+#skal-goeres{order:1}#i-dag-og-i-morgen{order:2}#gaelder-nu{order:3}#kommende{order:4}
+@container (min-width:52rem){.cols{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:0 2.5rem;align-items:start}
+.col{display:block}}
+h2 .count{font-weight:600;color:var(--mut);margin-left:.3rem}
+#i-dag-og-i-morgen{background:var(--near);border-radius:18px;padding:.2rem 1rem 1rem;margin-top:1.4rem}
+#i-dag-og-i-morgen>h2{color:var(--acc)}#i-dag-og-i-morgen .day:first-of-type h3{color:var(--acc)}
+.day h3{margin:1rem 0 .35rem}.day.today h3{color:var(--acc)}
+.week-line{margin:1.6rem 0 0;padding-bottom:.15rem;border-bottom:1px solid var(--line);font-size:.78rem;color:var(--mut);font-weight:600}
+/* Gælder nu: cards side by side, to scroll sideways (wrapped in the column on a wide screen) */
+ul.now-cards{list-style:none;margin:0 -1.25rem;padding:.1rem 1.25rem .5rem;display:flex;gap:.6rem;overflow-x:auto;
+scroll-snap-type:x proximity;scroll-padding-inline:1.25rem;scrollbar-width:thin}
+.now-card{flex:none;width:15.5rem;scroll-snap-align:start;display:flex;flex-direction:column;gap:.15rem;background:var(--card);
+border:1px solid var(--line);border-radius:14px;padding:.7rem .85rem}
+.now-card .item-link{font-weight:600;color:var(--fg);text-decoration:none}.now-card .why{font-size:.85rem;color:var(--acc)}
+.now-card .sum{font-size:.86rem;color:var(--mut);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.now-card.valgt{background:var(--soft)}
+@container (min-width:52rem){ul.now-cards{margin:0;padding:0;flex-wrap:wrap;overflow:visible}.now-card{width:calc(50% - .3rem)}}
+/* the settings, the logins, the detail */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:.6rem;margin-top:1rem}
+.card{border:1px solid var(--line);border-radius:12px;padding:.7rem .8rem;background:var(--card)}
+.card b{display:block;font-size:.8rem;color:var(--mut);font-weight:500}
+.qr{width:min(20rem,80vw);aspect-ratio:1;margin:1rem 0}.qr svg{width:100%;height:100%}
+.otp{font-size:2rem;letter-spacing:.2em;font-weight:600}
+.text{white-space:pre-wrap;overflow-wrap:anywhere}
+details.version>summary{margin:.4rem 0;font-weight:400}
+ul.thread li.sel{border-left:3px solid var(--acc);padding-left:.6rem}
+.topic h3{margin:1.2rem 0 .35rem}.week{margin-top:1.2rem}
+.week h3{display:flex;justify-content:space-between;gap:.5rem;margin:0 0 .35rem}.week.cur h3{color:var(--acc)}
+#ikke-inddelt{margin-top:.8rem}
+.thumbs{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem}
+.thumb{width:7rem;height:7rem;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 #skuffe{position:fixed;top:0;right:0;bottom:0;width:min(42rem,48vw);z-index:20;background:var(--bg);
 border-left:1px solid var(--line);box-shadow:-8px 0 24px rgba(0,0,0,.12);display:flex;flex-direction:column}
 #skuffe[hidden]{display:none}
 .skuffe-top{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.6rem 1.25rem;border-bottom:1px solid var(--line)}
 .skuffe-indhold{flex:1;overflow:auto;padding:0 1.25rem 2rem;outline:0}.skuffe-indhold h2{margin-top:1.2rem}
 html.skuffe-aaben{padding-right:min(42rem,48vw)}
-@media (max-width:40rem){body{padding:.9rem}h1{margin-bottom:.8rem}
+@media (max-width:40rem){body{padding-left:.9rem;padding-right:.9rem}
 button.small{min-height:2.5rem;padding:.3rem .9rem}ul.list li{flex-wrap:wrap;gap:.3rem .8rem}
 ul.list li .grow{flex:1 1 12rem}.date{min-width:0}.acts{flex-direction:row}
-.row .grow>.item-link{padding:.35rem 0}.tabs{margin-top:-.3rem}.tabs>*{padding:.6rem 0}}
+ul.list li.row{flex-wrap:nowrap}ul.list li.row .grow{flex:1}.date.time{min-width:0;width:3.2rem;white-space:normal}
+ul.now-cards{margin:0 -.9rem;padding-left:.9rem;padding-right:.9rem;scroll-padding-inline:.9rem}}
 """
 
 
@@ -308,8 +402,14 @@ OVERVIEW_CSP = (
 OVERVIEW_SCRIPT = '<script src="/static/overblik.js" defer></script>'
 
 
-def page(title: str, body: str, flash: str | None = None, *, status_code: int = 200, enhanced: bool = False) -> HTMLResponse:
-    """A page; ``enhanced`` (the overview and the detail): with :data:`OVERVIEW_SCRIPT` under :data:`OVERVIEW_CSP`."""
+def page(
+    title: str | None, body: str, flash: str | None = None, *, status_code: int = 200, enhanced: bool = False,
+    nav: str = "", wide: bool = False,
+) -> HTMLResponse:
+    """A page under the app's name (``web.app_name``), which is also its title when ``title`` is None, with ``nav``
+    (:func:`tabs`) by the name; ``enhanced`` (the overview and the detail): with :data:`OVERVIEW_SCRIPT` under
+    :data:`OVERVIEW_CSP`; ``wide``: room for two columns (the front page)."""
+    app_name = web_config()["app_name"]
     flash_html = f'<div class="flash">{e(flash)}</div>' if flash else ""
     headers = {"Cache-Control": "no-store"}
     if enhanced:
@@ -318,28 +418,48 @@ def page(title: str, body: str, flash: str | None = None, *, status_code: int = 
         status_code=status_code,
         content=
         f"""<!doctype html><html lang="da"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)}</title>
-<meta name="robots" content="noindex"><style>{CSS}</style>{OVERVIEW_SCRIPT if enhanced else ""}</head><body>
-<h1><a href="/" style="color:inherit;text-decoration:none">Aula → Kalender</a></h1>{flash_html}{body}</body></html>""",
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>{e(title or app_name)}</title>
+<meta name="robots" content="noindex"><link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/static/icon-192.png">
+<meta name="theme-color" content="{THEME_COLOR}" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="{THEME_COLOR_DARK}" media="(prefers-color-scheme: dark)">
+<style>{CSS}</style>{OVERVIEW_SCRIPT if enhanced else ""}</head><body{' class="wide"' if wide else ""}>
+<header class="top"><h1><a href="/">{e(app_name)}</a></h1>{nav}</header>{flash_html}{body}</body></html>""",
         headers=headers,
     )
 
 
 def overview_main(content: str) -> str:
-    """What the overview's script swaps: everything under the tabs and the search field."""
+    """What the overview's script swaps: everything under the tabs and the search field (the front page's warning
+    line too), as it swaps the top, the tabs and the body's width (``wide``)."""
     return f'<main id="overblik-main">{content}</main>'
 
 
-TABS = {"status": ("/", "Status"), "overblik": ("/overblik", "Overblik")}
+TABS = {
+    "forside": ("/", "Forside"), "info": ("/info", "Info"), "past": ("/past", "Tidligere"),
+    "settings": ("/settings", "Indstillinger"),
+}
+
+
+# The tabs' icons (only at the bottom of a narrow screen): the lines of a 24×24 SVG drawn with the text's colour.
+TAB_ICONS = {
+    "forside": '<path d="M3.5 10.5 12 3.5l8.5 7V20a1 1 0 0 1-1 1H15v-6H9v6H4.5a1 1 0 0 1-1-1z"/>',
+    "info": '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/>',
+    "past": '<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5M12 7.5V12l3 2"/>',
+    "settings": '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/>'
+                '<circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
+}
 
 
 def tabs(active: str | None) -> str:
-    """The tabs shared by the status page and the overview (``active``: the page it is on; None: a link to each)."""
-    links = "".join(
-        f'<b aria-current="page">{e(label)}</b>' if name == active else f'<a href="{href}">{e(label)}</a>'
-        for name, (href, label) in TABS.items()
-    )
-    return f'<nav class="tabs" id="faner">{links}</nav>'
+    """The tabs shared by the pages (``active``: the page it is on; None: a link to each)."""
+    def tab(name: str, href: str, label: str) -> str:
+        icon = f'<svg viewBox="0 0 24 24" aria-hidden="true">{TAB_ICONS[name]}</svg>'
+        if name == active:
+            return f'<b aria-current="page">{icon}{e(label)}</b>'
+        return f'<a href="{href}">{icon}{e(label)}</a>'
+
+    return f'<nav class="tabs" id="faner">{"".join(tab(name, *link) for name, link in TABS.items())}</nav>'
 
 
 def fmt_date(value: str | None) -> str:
@@ -354,6 +474,11 @@ def fmt_date(value: str | None) -> str:
         return value
 
 
+def fmt_span(start: str | None, end: str | None) -> str:
+    """An event's dates (:func:`fmt_date`): its start, and "–" its end when it ends on another."""
+    return fmt_date(start) + (f"–{fmt_date(end)}" if end and end != start else "")
+
+
 def fmt_when(value: str | None) -> str:
     if not value:
         return "aldrig"
@@ -366,32 +491,98 @@ def fmt_when(value: str | None) -> str:
 BACKUP_STALE_AFTER = dt.timedelta(days=2)
 
 
-def backup_ok(status: archive.Status) -> bool:
+def backup_ok(status: archive.Status, now: dt.datetime) -> bool:
     if not status.last_backup:
         return False
-    return dt.datetime.now().astimezone() - dt.datetime.fromisoformat(status.last_backup) <= BACKUP_STALE_AFTER
+    return now - dt.datetime.fromisoformat(status.last_backup) <= BACKUP_STALE_AFTER
 
 
-def archive_text(status: archive.Status) -> str:
+def archive_text(status: archive.Status, now: dt.datetime) -> str:
     saved = "intet gemt endnu"
     if status.last_saved:
         messages = f"{status.messages} {'besked' if status.messages == 1 else 'beskeder'}"
         saved = f"{status.posts} opslag · {messages} · sidst gemt {fmt_when(status.last_saved)}"
     if not status.last_backup:
         return f"{saved} · ingen backup endnu"
-    stale = "" if backup_ok(status) else " – over 2 døgn gammel"
+    stale = "" if backup_ok(status, now) else " – over 2 døgn gammel"
     return f"{saved} · backup {fmt_when(status.last_backup)}{stale}"
+
+
+FETCH_STALE_AFTER = dt.timedelta(hours=24)
+LOGIN_OUTCOMES = (Outcome.AULA_LOGIN, Outcome.GOOGLE_LOGIN)  # a run that failed on these: the login's own warning
+
+
+def warnings(ledger: Ledger, now: dt.datetime) -> list[str]:
+    """What needs doing before the nightly run works (each as HTML with a link to where it is done), from the
+    logins and the run log as of ``now``; nothing when all is well."""
+    out = []
+    aula = credentials.aula_status(ledger)
+    if not aula.ok:
+        what = "er udløbet" if credentials.aula_session_saved() else "mangler"
+        out.append(f'Aula-login {what}. <a href="/aula/login">Log ind</a>')
+    google = credentials.google_status()
+    google_login = ledger.last_run("apply", "google-login")
+    if not google.ok:
+        out.append('Google er ikke forbundet. <a href="/google">Forbind</a>')
+    elif google_login and google_login["outcome"] == Outcome.GOOGLE_LOGIN:
+        out.append('Google-login er udløbet. <a href="/google">Forbind</a>')
+    last = ledger.last_run("fetch", "apply")
+    if last and not last["ok"] and last["outcome"] not in LOGIN_OUTCOMES:
+        out.append(
+            f'Sidste kørsel ({e(last["command"])}) fejlede {e(fmt_when(last["at"]))}. <a href="/settings">Se Indstillinger</a>'
+        )
+    fetched = next((r for r in ledger.runs() if r["command"] == "fetch" and r["ok"]), None)
+    if fetched is None:
+        out.append('Der er ikke hentet fra Aula endnu. <a href="/settings">Se Indstillinger</a>')
+    elif now - dt.datetime.fromisoformat(fetched["at"]).astimezone() > FETCH_STALE_AFTER:
+        out.append(
+            f'Der er ikke hentet fra Aula i over et døgn (sidst {e(fmt_when(fetched["at"]))}). '
+            '<a href="/settings">Se Indstillinger</a>'
+        )
+    return out
+
+
+def warnings_html(ledger: Ledger, now: dt.datetime) -> str:
+    """The front page's warning line: one entry per problem, or nothing."""
+    found = warnings(ledger, now)
+    return f'<ul id="advarsler" class="warnings">{"".join(f"<li>{w}</li>" for w in found)}</ul>' if found else ""
+
+
+def archive_unclassified(pending: set[str]) -> str:
+    """How many items the agent has not put in a category yet (the pending ones it gets anyway left out)."""
+    with archive.read() as a:
+        if a is None:
+            return "Arkivet er ikke klar endnu."
+        return f"{len(a.unclassified(exclude=pending))} endnu ikke inddelt"
+
+
+def removed_html(ledger: Ledger, cfg: dict[str, Any], today: dt.date) -> str:
+    """ "Fjernet af dig": per child, the upcoming events the user removed from that child's calendar (only shown)."""
+    removed = ledger.removed_upcoming(today.isoformat())
+    groups = []
+    for cid, name in Children.of(cfg).names.items():
+        mine = sorted(
+            (r for r in removed if r["child_ids"] is None or cid in r["child_ids"]), key=lambda r: (r["start"] or "", r["title"] or "")
+        )
+        if mine:
+            rows = "".join(
+                f'<li><span class="date">{e(fmt_date(r["start"]))}</span><span class="grow">{e(r["title"])}</span></li>' for r in mine
+            )
+            groups.append(f'<h3>{e(name)}</h3><ul class="list">{rows}</ul>')
+    content = "".join(groups) or '<p class="mut">Intet fjernet.</p>'
+    return f'<section id="fjernet"><h2>Fjernet af dig</h2>{content}</section>'
 
 
 # ----------------------------------------------------------------------------- routes
 
 
-async def home(request: Request) -> Response:
+async def settings(request: Request) -> Response:
+    """Indstillinger: the logins, the runs, the archive, the children and their calendars, what the user removed."""
     cfg, ledger = store.load_config(), Ledger.load()
     aula, google = credentials.aula_status(ledger), credentials.google_status()
     last_runs = ledger.runs(8)
     last_run = ledger.last_run("fetch", "apply")
-    archive_status = archive.status()
+    archive_status, now = archive.status(), request.app.state.now()
 
     def card(label: str, ok: bool | None, text: str, action: str = "") -> str:
         cls = "" if ok is None else ("ok" if ok else "bad")
@@ -407,45 +598,11 @@ async def home(request: Request) -> Response:
                 fmt_when(last_run["at"]) if last_run else "aldrig",
             ),
             card("Venter", None, f"{len(ledger.pending_keys())} beskeder/opslag"),
-            card("Arkiv", None if backup_ok(archive_status) else False, archive_text(archive_status)),
+            card("Arkiv", None if backup_ok(archive_status, now) else False, archive_text(archive_status, now)),
         ]
     )
 
-    def first_name(child_id: int) -> str:
-        return child_first_name(cfg["children"].get(str(child_id)))
-
-    events = ledger.upcoming()
-    sensitive = sensitive_items({ev.source for ev in events if ev.source})
-    if events:
-        items = []
-        for ev in events:
-            src_txt = ev.source_item.get("title") or ev.source_item.get("subject") or ""
-            if ev.source in sensitive:
-                src_txt = SENSITIVE
-            link = f' <a href="{e(ev.link)}" target="_blank" rel="noopener">åbn</a>' if ev.link else ""
-            names = ", ".join(first_name(c) for c in ev.child_ids)
-            several = len(ev.child_ids) > 1
-            buttons = "".join(
-                f'<form class="inline" method="post" action="/events/remove" '
-                f'data-title="{e(ev.title)}" data-who="{e(first_name(c))}" '
-                f'onsubmit="return confirm(\'Fjern »\'+this.dataset.title+\'« fra kalenderen for \'+this.dataset.who+\'? '
-                f'Den bliver ikke oprettet igen.\')">'
-                f'<input type="hidden" name="key" value="{e(ev.key)}"><input type="hidden" name="child_id" value="{c}">'
-                f'<button class="small">{"Fjern for " + e(first_name(c)) if several else "Fjern"}</button></form>'
-                for c in ev.child_ids
-            )
-            src = e(src_txt or "Aula")
-            if ev.source:
-                src = f'<a href="{e(store.item_path(ev.source))}">{src}</a>'
-            items.append(
-                f'<li><span class="date">{e(fmt_date(ev.start))}</span><span class="grow">{e(ev.title)}{link}'
-                f'<br><span class="mut">{e(names)}{" · fra " + src if src_txt or ev.source else ""}</span></span>'
-                f'<span class="acts">{buttons}</span></li>'
-            )
-        events_html = f'<ul class="list">{"".join(items)}</ul>'
-    else:
-        events_html = '<p class="mut">Ingen kommende begivenheder endnu.</p>'
-
+    unclassified = archive_unclassified(ledger.pending_keys())
     children_html = "".join(
         f'<li><span class="grow">{e(c.get("name"))} <span class="mut">· {e(c.get("institution"))}</span></span>'
         f'<span class="mut">{e(c.get("calendar_name") or "kalender oprettes ved første begivenhed")}</span></li>'
@@ -458,12 +615,13 @@ async def home(request: Request) -> Response:
         for r in last_runs
     ) or '<li class="mut">Ingen kørsler endnu.</li>'
 
-    body = f"""{tabs("status")}<div class="cards">{cards}</div>
-<h2>Kommende begivenheder</h2>{events_html}
+    body = f"""<div class="cards">{cards}</div>
+<p class="mut" id="ikke-inddelt">{e(unclassified)}</p>
 <h2>Børn og kalendere</h2><ul class="list">{children_html}</ul>
+{removed_html(ledger, cfg, request.app.state.today())}
 <h2>Seneste kørsler</h2><ul class="list">{runs_html}</ul>
 <p class="mut" style="margin-top:2rem">Logget ind som {e(getattr(request.state, "email", ""))}</p>"""
-    return page("Aula → Kalender", body, request.query_params.get("msg"))
+    return page(None, body, request.query_params.get("msg"), nav=tabs("settings"))
 
 
 SENSITIVE = "🔒 Følsom tråd"  # what a sensitive thread is called on a page that may stand open on a screen
@@ -474,17 +632,37 @@ def child_first_name(child: dict[str, Any] | None) -> str:
     return (((child or {}).get("name") or "").split() or ["?"])[0]
 
 
+@dataclass(frozen=True)
+class Children:
+    """The children in the config, in its order, each with its first name and its colour: the CSS class
+    ``kid-<n>`` by its place (the palette in turn), for its name in the lists, on the chips and by the events."""
+
+    names: dict[int, str]
+
+    @classmethod
+    def of(cls, cfg: dict[str, Any]) -> Children:
+        return cls({int(cid): child_first_name(c) for cid, c in cfg["children"].items() if cid.isdigit()})
+
+    def colour(self, child_id: int) -> str:
+        return f"kid-{list(self.names).index(child_id) % KID_COLOURS}" if child_id in self.names else ""
+
+    def mark(self, child_ids: list[int] | tuple[int, ...]) -> str:
+        """Whose a line is: each child's first name in its colour, "Begge" ("Alle" with more) when it is for every
+        child (or Aula and the agent set none); nothing with one child."""
+        if len(self.names) < 2:
+            return ""
+        mine = [c for c in self.names if c in child_ids]
+        if not mine or len(mine) == len(self.names):
+            return f'<span class="who all">{"Begge" if len(self.names) == 2 else "Alle"}</span>'
+        return "".join(f'<span class="who {self.colour(c)}">{e(self.names[c])}</span>' for c in mine)
+
+
+NOBODY = Children({})  # no names on the lines
+
+
 def kind_name(item: archive.Item) -> str:
     """What an item is, as the pages say it."""
     return "opslag" if item.kind == "post" else "besked"
-
-
-def sensitive_items(keys: set[str]) -> set[str]:
-    """Which of these items are sensitive threads, by the archive (none, when it is missing or not migrated yet)."""
-    with archive.read() as a:
-        if a is None:
-            return set()
-        return {k for k in keys if (item := a.item(k)) is not None and item.sensitive}
 
 
 CATEGORY_NAMES = {
@@ -518,74 +696,121 @@ TODO_ACTIONS: dict[str, tuple[str, Callable[[Ledger, str, int], None]]] = {
 }
 
 
-def todo_button(t: archive.ItemTodo, *, checked: bool, back: str | None = None) -> str:
-    """ "Klaret" or "Fortryd"; ``back``: the page to return to (:func:`safe_back`; else the overview)."""
+def todo_ref(t: archive.ItemTodo) -> str:
+    """``data-todo="<item>@<version>"`` on the element holding a todo's button: what overblik.js marks as ticked off
+    (class ``done``) after sending the button, on every place the todo stands on the page."""
+    return f'data-todo="{e(t.item.key)}@{t.version.id}"'
+
+
+def todo_button(t: archive.ItemTodo, *, checked: bool, back: str | None = None, tick: bool = False) -> str:
+    """ "Klaret" or "Fortryd"; ``back``: the page to return to (:func:`safe_back`; else the overview); ``tick``: as
+    the round button in front of a todo in the lists (filled when it is ticked off), its label only for a reader."""
     action = "uncheck" if checked else "check"
+    label = TODO_ACTIONS[action][0]
     back_field = f'<input type="hidden" name="back" value="{e(back)}">' if back else ""
+    button = (f'<button class="tick" title="{label}"><span class="vh">{label}</span></button>' if tick
+              else f'<button class="small">{label}</button>')
     return (
         f'<form class="inline" method="post" action="/todos/{action}">'
         f'<input type="hidden" name="item" value="{e(t.item.key)}">'
-        f'<input type="hidden" name="version" value="{t.version.id}">{back_field}'
-        f'<button class="small">{TODO_ACTIONS[action][0]}</button></form>'
+        f'<input type="hidden" name="version" value="{t.version.id}">{back_field}{button}</form>'
     )
+
+
+def due_text(due: dt.date, today: dt.date) -> str:
+    """When a todo is due, as the lists say it: "i dag", "i morgen" or the weekday and date ("fre 20/11")."""
+    return near_name(due, today) or fmt_day(due, today)
 
 
 def todo_item(
-    t: archive.ItemTodo, *, today: dt.date, checked: bool, day: dt.date | None = None, back: str | None = None
+    t: archive.ItemTodo, *, today: dt.date, checked: bool, day: dt.date | None = None, back: str | None = None,
+    kids: Children = NOBODY,
 ) -> str:
-    button = todo_button(t, checked=checked, back=back)
+    """A todo with the round button in front, its text linked to its item, whose it is and when it is due."""
+    button = todo_button(t, checked=checked, back=back, tick=True)
     sensitive = t.item.sensitive  # the page may stand open on a screen: not what to do, nor the subject
     overdue = not checked and t.due is not None and t.due < today
-    meta = [m for m in (
-        t.due and f"senest {fmt_date(t.due.isoformat())}",
-        None if sensitive else t.item.latest.title or "(uden titel)",
-    ) if m]
-    flag = ' <b class="bad">overskredet</b>' if overdue else ""
+    due = []
+    if overdue:
+        due.append('<b class="bad">overskredet</b>')
+    if t.due:
+        due.append(f"senest {e(due_text(t.due, today))}")
     text = SENSITIVE if sensitive else t.text
-    what = f'<span class="todo">{e(text)}</span>{flag}<br><span class="mut">{e(" · ".join(meta))}</span>'
-    return f'<li class="row todo-row">{day_cell(day)}<span class="grow">{what}</span><span class="acts">{button}</span></li>'
+    what = f'<a class="todo-link" href="{e(store.item_path(t.item.key))}"><span class="todo">{e(text)}</span></a>'
+    meta = f'<span class="meta">{kids.mark(t.item.child_ids)}{" · ".join(due)}</span>'
+    done = " done" if checked else ""
+    return f'<li class="row todo-row{done}" {todo_ref(t)}>{day_cell(day)}{button}<span class="grow">{what}{meta}</span></li>'
 
 
 def todos_html(
-    open_: list[archive.ItemTodo], checked: list[archive.ItemTodo], ledger: Ledger, today: dt.date, back: str
+    open_: list[archive.ItemTodo], checked: list[archive.ItemTodo], ledger: Ledger, today: dt.date, back: str,
+    kids: Children = NOBODY,
 ) -> str:
     """Skal gøres and the folded Klaret (:func:`todo_lists`); ``back``: the overview as it is filtered,
     for the buttons to return to."""
-    open_html = "".join(todo_item(t, today=today, checked=False, back=back) for t in open_)
-    checked_html = "".join(todo_item(t, today=today, checked=True, back=back) for t in checked)
+    open_html = "".join(todo_item(t, today=today, checked=False, back=back, kids=kids) for t in open_)
+    checked_html = "".join(todo_item(t, today=today, checked=True, back=back, kids=kids) for t in checked)
     open_html = open_html or '<li class="mut">Intet at gøre.</li>'
     checked_html = checked_html or '<li class="mut">Intet klaret endnu.</li>'
     return (
-        f'<h2>Skal gøres <span class="mut">({len(open_)})</span></h2><ul class="list">{open_html}</ul>'
+        f'<h2>Skal gøres<span class="count">{len(open_)}</span></h2><ul class="list">{open_html}</ul>'
         f'<details><summary>Klaret <span class="mut">({len(checked)})</span></summary>'
-        f'<ul class="list">{checked_html}</ul></details>'
+        f'<ul class="list box">{checked_html}</ul></details>'
     )
 
 
-def item_row(item: archive.Item, extra: str = "", *, day: dt.date | None = None, acts: str = "") -> str:
-    """One item on the timeline: its category, title and summary, who sent it and when, linked to its detail page;
-    ``acts``: buttons at its side.
+def item_row(
+    item: archive.Item, extra: str = "", *, day: dt.date | None = None, kids: Children = NOBODY,
+) -> str:
+    """One item on the timeline: its category (a neutral label), title and summary linked to its detail page, and
+    whose it is (who sent it, and when, are on the detail); ``extra``: more under it (its todo).
 
-    A sensitive thread shows only its date, source and category (the page may stand open on a screen).
+    A sensitive thread shows only its category (the page may stand open on a screen).
     """
-    c, latest = item.classification, item.latest
-    who = None if item.sensitive else latest.author
-    meta = " · ".join(m for m in (kind_name(item), who, fmt_date((latest.date or "")[:10])) if m)
-    summary = "" if item.sensitive or not c.summary else f'<span class="sum">{e(c.summary)}</span>'
+    c = item.classification
     return (
         f'<li class="row" data-key="{e(item.key)}">{day_cell(day)}<span class="grow">'
-        f'<span class="tag cat-{c.category}">{e(CATEGORY_NAMES[c.category])}</span> '
+        f'<span class="label">{e(CATEGORY_NAMES[c.category])}</span>'
         f'<a class="item-link" href="{e(store.item_path(item.key))}">{e(item_title(item))}</a>'
-        f'{summary}<span class="mut meta">{e(meta)}</span>{extra}</span>'
-        f'{f"<span class=\"acts\">{acts}</span>" if acts else ""}</li>'
+        f'{summary_html(item)}<span class="meta">{kids.mark(item.child_ids)}</span>{extra}</span></li>'
     )
 
 
-WEEKDAYS = ("man", "tir", "ons", "tor", "fre", "lør", "søn")
+def summary_html(item: archive.Item) -> str:
+    """An item's summary on a line or a card; none for a sensitive thread (the page may stand open on a screen)."""
+    summary = item.classification.summary
+    return "" if item.sensitive or not summary else f'<span class="sum">{e(summary)}</span>'
 
 
-def fmt_day(day: dt.date) -> str:
-    return f"{WEEKDAYS[day.weekday()]} {day:%d.%m}"
+def now_card(item: archive.Item, why: archive.Current, kids: Children = NOBODY) -> str:
+    """An item in Gælder nu, as a card: its category, title, why it holds now, its summary and whose it is."""
+    c = item.classification
+    reason = f'<span class="why">{e(text)}</span>' if (text := why_current(item, why)) else ""
+    return (
+        f'<li class="now-card" data-key="{e(item.key)}"><span class="label">{e(CATEGORY_NAMES[c.category])}</span>'
+        f'<a class="item-link" href="{e(store.item_path(item.key))}">{e(item_title(item))}</a>{reason}{summary_html(item)}'
+        f'<span class="meta">{kids.mark(item.child_ids)}</span></li>'
+    )
+
+
+WEEKDAYS = ("mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag")  # short: the first three letters
+NEAR_DAYS = {0: "i dag", 1: "i morgen"}  # what the lists call today and tomorrow
+
+
+def near_name(day: dt.date, today: dt.date) -> str | None:
+    """ "i dag" or "i morgen", else None."""
+    return NEAR_DAYS.get((day - today).days)
+
+
+def short_date(day: dt.date, today: dt.date | None = None) -> str:
+    """A date as the timeline's lists write it: "20/11", with the year when it is not ``today``'s."""
+    return f"{day.day}/{day.month}" + (f" {day.year}" if today and day.year != today.year else "")
+
+
+def fmt_day(day: dt.date, today: dt.date | None = None, *, long: bool = False) -> str:
+    """ "fre 20/11" (``long``: "Fredag 20/11"), with the year when it is not ``today``'s."""
+    name = WEEKDAYS[day.weekday()]
+    return f"{name.capitalize() if long else name[:3]} {short_date(day, today)}"
 
 
 def day_cell(day: dt.date | None) -> str:
@@ -600,20 +825,26 @@ def day_param(value: str | None) -> dt.date | None:
         return None
 
 
-def event_row(line: timeline.EventLine) -> str:
-    """An event in the calendar (on the day it begins), with a link to the item it came from."""
+def event_row(line: timeline.EventLine, *, dated: bool = True, kids: Children = NOBODY) -> str:
+    """An event in the calendar, whose it is and a link to the item it came from; ``dated``: with the day it begins
+    (in the weeks), else on a day of its own (under its heading) with its time or "hele dagen" instead."""
     ev, source, start = line.event, line.source, line.start
     end = dt.date.fromisoformat((ev.end or ev.start)[:10])
-    when = [f"kl. {ev.start[11:16]}"] if len(ev.start) > 10 else []
+    time = ev.start[11:16] if len(ev.start) > 10 else ""
+    when = [f"kl. {time}"] if time and dated else []
+    if not dated and start < line.day:
+        when.append(f"fra {fmt_day(start)}")
     if end != start:
         when.append(f"til {fmt_day(end)}")
     src = ""
     if ev.source and source is not None:
-        src = f' · fra <a class="item-link event-src" href="{e(store.item_path(ev.source))}">{e(item_title(source))}</a>'
+        src = f'fra <a class="item-link event-src" href="{e(store.item_path(ev.source))}">{e(item_title(source))}</a>'
+    cell = day_cell(start) if dated else f'<span class="date time">{e(time or "hele dagen")}</span>'
     return (
-        f'<li class="row event" data-event="{e(ev.key)}">{day_cell(start)}<span class="grow">'
-        f'<span class="ev">📅 {e(ev.title)}</span>{" " + e(" ".join(when)) if when else ""}'
-        f'<br><span class="mut">i kalenderen{src}</span></span></li>'
+        f'<li class="row event" data-event="{e(ev.key)}">{cell}<span class="grow">'
+        f'<span class="label">Kalender</span><span class="ev">{e(ev.title)}</span>'
+        f'{" " + e(" ".join(when)) if when else ""}'
+        f'<span class="meta">{kids.mark(ev.child_ids)}{src}</span></span></li>'
     )
 
 
@@ -623,45 +854,74 @@ def week_html(first: dt.date, rows: list[str], today: dt.date) -> str:
     label = f"Uge {first.isocalendar().week}" + (" · denne uge" if this else "")
     return (
         f'<div class="week{" cur" if this else ""}" data-week="{first.isoformat()}"><h3><span>{e(label)}</span>'
-        f' <span class="mut">{first:%d.%m}–{first + dt.timedelta(days=6):%d.%m}</span></h3>'
+        f' <span class="mut">{short_date(first)}–{short_date(first + dt.timedelta(days=6))}</span></h3>'
         f'<ul class="list">{"".join(rows)}</ul></div>'
     )
 
 
-def line_html(line: timeline.Line, today: dt.date, back: str) -> str:
+def line_html(
+    line: timeline.Line, today: dt.date, back: str, *, dated: bool = True, kids: Children = NOBODY,
+) -> str:
+    """One line on the timeline; ``dated``: with its day (in the weeks), else under its day's heading."""
+    day = line.day if dated else None
     match line:
         case timeline.ItemLine(todo=None):
-            return item_row(line.item, day=line.day)
+            return item_row(line.item, day=day, kids=kids)
         case timeline.ItemLine(todo=t):
-            what = "" if t.item.sensitive else f'<span class="meta">✓ <span class="todo">{e(t.text)}</span></span>'
-            return item_row(line.item, what, day=line.day, acts=todo_button(t, checked=False, back=back))
+            text = SENSITIVE if t.item.sensitive else t.text
+            what = (f'<span class="row-todo" {todo_ref(t)}>{todo_button(t, checked=False, back=back, tick=True)}'
+                    f'<span class="todo">{e(text)}</span></span>')
+            return item_row(line.item, what, day=day, kids=kids)
         case timeline.EventLine():
-            return event_row(line)
+            return event_row(line, dated=dated, kids=kids)
         case timeline.TodoLine():
-            return todo_item(line.todo, today=today, checked=False, day=line.day, back=back)
+            return todo_item(line.todo, today=today, checked=False, day=day, back=back, kids=kids)
 
 
-def weeks_html(weeks: list[timeline.Week], today: dt.date, back: str) -> str:
-    return "".join(week_html(w.monday, [line_html(line, today, back) for line in w.lines], today) for w in weeks)
+def weeks_html(weeks: list[timeline.Week], today: dt.date, back: str, kids: Children = NOBODY) -> str:
+    return "".join(
+        week_html(w.monday, [line_html(line, today, back, kids=kids) for line in w.lines], today) for w in weeks
+    )
 
 
-def upcoming_html(
-    items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date, back: str,
-    sources: dict[str, archive.Item],
+def day_html(d: timeline.Day, today: dt.date, back: str, kids: Children = NOBODY) -> str:
+    """One day with its lines under a heading ("Mandag 9/11"; "I dag · fredag 6/11"), or "Intet i dag/i morgen"."""
+    date = fmt_day(d.day, today, long=True)
+    near = near_name(d.day, today)
+    heading = f"{near.capitalize()} · {date.lower()}" if near else date
+    rows = "".join(line_html(line, today, back, dated=False, kids=kids) for line in d.lines) or f'<li class="mut">Intet {near}.</li>'
+    return (
+        f'<div class="day{" today" if d.day == today else ""}" data-day="{d.day.isoformat()}"><h3>{e(heading)}</h3>'
+        f'<ul class="list">{rows}</ul></div>'
+    )
+
+
+def near_html(coming: timeline.Upcoming, today: dt.date, back: str, kids: Children = NOBODY) -> str:
+    """I dag og i morgen (:func:`timeline.upcoming`), also when there is nothing on them."""
+    days = "".join(day_html(d, today, back, kids) for d in coming.near)
+    return f'<section id="i-dag-og-i-morgen"><h2>I dag og i morgen</h2>{days}</section>'
+
+
+def upcoming_html(coming: timeline.Upcoming, today: dt.date, back: str, kids: Children = NOBODY) -> str:
+    """Kommende (:func:`timeline.upcoming`): the days with something on them, and a line where a new week begins."""
+    parts = []
+    for d in coming.later:
+        if first := d.new_week:
+            parts.append(f'<p class="week-line" data-week="{first.isoformat()}">Uge {first.isocalendar().week}</p>')
+        parts.append(day_html(d, today, back, kids))
+    return f'<section id="kommende"><h2>Kommende</h2>{"".join(parts) or "<p class=\"mut\">Intet kommende.</p>"}</section>'
+
+
+def earlier_html(
+    items: list[archive.Item], before: dt.date, today: dt.date, params, kids: Children = NOBODY,
 ) -> str:
-    """Kommende (:func:`timeline.upcoming`)."""
-    weeks = weeks_html(timeline.upcoming(items, events, todos, today, sources), today, back)
-    return f'<section id="kommende"><h2>Kommende</h2>{weeks or "<p class=\"mut\">Intet kommende.</p>"}</section>'
-
-
-def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date, params) -> str:
     """Tidligere (:func:`timeline.earlier`), shown as usual (past or not), and "Vis ældre" when there is more
     (filtered as the overview is, by ``params``)."""
     got = timeline.earlier(items, before, today)
-    weeks = weeks_html(got.weeks, today, "/overblik")
+    weeks = weeks_html(got.weeks, today, overview_url(params, page="/past"), kids)
     older = ""
     if got.older:
-        href = overview_url(params, drop=("before",), add=[("before", got.older.isoformat())])
+        href = overview_url(params, page="/past", drop=("before",), add=[("before", got.older.isoformat())])
         older = f'<p><a class="btn older" href="{e(href)}">Vis ældre</a></p>'
     return f'<section id="tidligere"><h2>Tidligere</h2>{weeks or "<p class=\"mut\">Intet.</p>"}{older}</section>'
 
@@ -669,7 +929,7 @@ def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date, par
 NO_TOPIC = "Uden emne"  # also where a sensitive thread stands: its topic is not shown
 
 
-def standing_html(items: list[archive.Item]) -> str:
+def standing_html(items: list[archive.Item], kids: Children = NOBODY) -> str:
     """Stående info, grouped by each item's first topic (the topics by name), newest first under each."""
     groups: dict[str, list[archive.Item]] = {}
     for item in items:
@@ -678,7 +938,7 @@ def standing_html(items: list[archive.Item]) -> str:
     parts = []
     for topic in sorted(groups, key=lambda t: (t == NO_TOPIC, t)):
         members = sorted(groups[topic], key=lambda i: (i.latest.date or "", i.key), reverse=True)
-        parts.append(f'<div class="topic"><h3>{e(topic)}</h3><ul class="list">{"".join(map(item_row, members))}</ul></div>')
+        parts.append(f'<div class="topic"><h3>{e(topic)}</h3><ul class="list">{"".join(item_row(i, kids=kids) for i in members)}</ul></div>')
     return f'<section id="staaende-info"><h2>Stående info</h2>{"".join(parts) or "<p class=\"mut\">Ingen endnu.</p>"}</section>'
 
 
@@ -686,9 +946,11 @@ def why_current(item: archive.Item, why: archive.Current) -> str:
     """What "Gælder nu" says under an item about why it is there ("" for nothing)."""
     match why:
         case archive.Current.SPAN:
-            return f"gælder {item.classification.span_text('%d.%m.%Y')}"
+            c = item.classification
+            end = c.span_end if c.span_end and c.span_end != c.span_start else None
+            return f"gælder {short_date(c.span_start)}" + (f"–{short_date(end)}" if end else "")
         case archive.Current.IMPORTANT:
-            return "⭐ markeret vigtig i Aula"
+            return "markeret vigtig i Aula"
     return ""
 
 
@@ -703,7 +965,7 @@ def excerpt_html(parts: tuple[tuple[str, bool], ...]) -> str:
     return "".join(f"<mark>{e(text)}</mark>" if marked else e(text) for text, marked in parts)
 
 
-def search_hit(hit: archive.Hit, today: dt.date) -> str:
+def search_hit(hit: archive.Hit, today: dt.date, kids: Children = NOBODY) -> str:
     item, c, latest = hit.item, hit.item.classification, hit.item.latest
     past = item.past(today)
     meta = [m for m in (kind_name(item), fmt_date((latest.date or "")[:10])) if m]
@@ -721,7 +983,7 @@ def search_hit(hit: archive.Hit, today: dt.date) -> str:
         if hit.files:
             lines.append(f'<span class="mut">i fil: {e(", ".join(f.name for f in hit.files))}</span>')
     flag = ' <span class="tag">overstået</span>' if past else ""
-    lines.append(f'<span class="mut">{e(" · ".join(meta))}</span>')
+    lines.append(f'<span class="mut">{kids.mark(item.child_ids)}{e(" · ".join(meta))}</span>')
     return (
         f'<li{' class="past"' if past else ""}><span class="grow"><a href="{e(store.item_path(item.key))}">{e(title)}</a>{flag}'
         f'{"".join("<br>" + line for line in lines)}</span></li>'
@@ -734,37 +996,77 @@ def child_param(params) -> int | None:
     return int(raw) if raw.isdigit() else None
 
 
+CHILD_COOKIE = "child"  # the child chosen in the child filter, remembered on the device for pages without ?child=
+ALL_CHILDREN = "all"  # ?child= of "Alle børn": every child, and the device forgets the chosen one
+CHILD_COOKIE_AGE = 365 * 24 * 3600  # a year
+
+
+def known_child(raw: str | None) -> bool:
+    """Whether ``raw`` is a child in the config (one no longer there is ignored)."""
+    return bool(raw) and raw.isdigit() and raw in store.load_config()["children"]
+
+
+def view_params(request: Request) -> QueryParams:
+    """What the overview's page is asked for: the URL, with the child remembered on the device (:data:`CHILD_COOKIE`)
+    when the URL has none (``child`` in the URL wins)."""
+    params = request.query_params
+    remembered = request.cookies.get(CHILD_COOKIE)
+    if "child" in params or not known_child(remembered):
+        return params
+    return QueryParams([*params.multi_items(), ("child", remembered)])
+
+
+def remember_child(request: Request, response: Response) -> Response:
+    """Remember the child chosen in the URL on the device for a year, forget it for "Alle børn" (or when it is no
+    longer in the config). ``Secure`` when the site is on https, as it is behind Access (the demo is not)."""
+    chosen, remembered = request.query_params.get("child"), request.cookies.get(CHILD_COOKIE)
+    secure = web_config()["public_url"].startswith("https://")
+    if known_child(chosen):
+        response.set_cookie(
+            CHILD_COOKIE, chosen, max_age=CHILD_COOKIE_AGE, httponly=True, samesite="lax", secure=secure
+        )
+    elif remembered is not None and (chosen == ALL_CHILDREN or not known_child(remembered)):
+        response.delete_cookie(CHILD_COOKIE, httponly=True, samesite="lax", secure=secure)
+    return response
+
+
 def for_child(child_ids: list[int], child: int | None) -> bool:
     """Whether something for these children is shown for ``child``; for no child in particular is for every child."""
     return child is None or not child_ids or child in child_ids
 
 
-def overview_url(params, *, drop: tuple[str, ...] = (), add: list[tuple[str, str]] = ()) -> str:
-    """The overview as ``params`` filter it, without the message (``msg``) and the ``drop`` ones, with ``add``."""
+def overview_url(
+    params, *, page: str = "/", drop: tuple[str, ...] = (), add: list[tuple[str, str]] = ()
+) -> str:
+    """The overview's ``page`` as ``params`` filter it, without the message (``msg``) and the ``drop`` ones, with
+    ``add`` (where :func:`list_path` has it)."""
     keep = [(k, v) for k, v in params.multi_items() if k not in ("msg", *drop) and v] + list(add)
-    return "/overblik" + (f"?{urlencode(keep)}" if keep else "")
+    return list_path(dict(keep), page) + (f"?{urlencode(keep)}" if keep else "")
 
 
-def child_filter(params, children: dict[str, Any]) -> str:
+def child_filter(params, children: dict[str, Any], page: str = "/") -> str:
     """The child filter: one link per child and one for every child, keeping the search and the rest of the view
-    (only with more than one child)."""
+    on ``page`` (only with more than one child)."""
     if len(children) < 2:
         return ""
     chosen = child_param(params)
 
+    kids = Children.of({"children": children})
+
     def chip(cid: int | None, name: str) -> str:
-        on = " on" if cid == chosen else ""
+        on = (" on" if cid == chosen else "") + (f" {kids.colour(cid)}" if cid is not None else "")
         current = ' aria-current="true"' if cid == chosen else ""
-        href = overview_url(params, drop=("child",), add=[("child", str(cid))] if cid is not None else [])
+        href = overview_url(params, page=page, drop=("child",), add=[("child", str(cid) if cid is not None else ALL_CHILDREN)])
         return f'<a class="chip{on}" href="{e(href)}"{current}>{e(name)}</a>'
 
     chips = [chip(None, "Alle børn")] + [chip(int(cid), child_first_name(c)) for cid, c in children.items() if cid.isdigit()]
     return f'<nav id="barn-filter" class="chips" aria-label="Barn">{"".join(chips)}</nav>'
 
 
-def search_form(params, topics: list[archive.Topic]) -> str:
-    """The search field with its filters folded under "Filtre" (open when one is chosen), a GET form on /overblik,
-    and the child filter under it, sticky at the top. Its button is only there without script (Enter sends it)."""
+def search_form(params, topics: list[archive.Topic], page: str = "/") -> str:
+    """The search field with its filters folded under "Filtre" (open when one is chosen), a GET form on /search,
+    and the child filter (for ``page``) under it, sticky at the top. Its button is only there without script (Enter
+    sends it)."""
     def select(name: str, label: str, options: list[tuple[str, str]]) -> str:
         chosen = params.get(name) or ""
         opts = "".join(
@@ -787,16 +1089,26 @@ def search_form(params, topics: list[archive.Topic]) -> str:
         f'<div class="filtre-felter">{"".join(selects)}</div></details>'
     )
     return (
-        f'<div id="overblik-top" class="sticky"><form id="search" class="search" method="get" action="/overblik">'
+        f'<div id="overblik-top" class="sticky"><form id="search" class="search" method="get" action="/search">'
         f'<input type="search" id="q" name="q" value="{e(params.get("q"))}"'
         f' placeholder="Søg i alt fra Aula" aria-label="Søg">{hidden}{filters}'
-        f'<noscript><button>Søg</button></noscript></form>{child_filter(params, children)}</div>'
+        f'<noscript><button>Søg</button></noscript></form>{child_filter(params, children, page)}</div>'
     )
 
 
 def searching(params) -> bool:
     """Whether the overview is asked for search results (a query, or a filter other than the child)."""
     return any((params.get(name) or "").strip() for name in ("q", "category", "topic", "kind"))
+
+
+def list_path(params, page: str = "/") -> str:
+    """Where the overview's ``page`` as ``params`` ask for it is: the search results on /search, an earlier page
+    (``before``) on /past, the rest on ``page`` (the front page for /search without anything to search for)."""
+    if searching(params):
+        return "/search"
+    if page in ("/", "/search") and params.get("before"):
+        return "/past"
+    return "/" if page == "/search" else page
 
 
 class SearchPart(NamedTuple):
@@ -806,8 +1118,9 @@ class SearchPart(NamedTuple):
     results: str | None  # the search results; None when it is not asked for them (:func:`searching`)
 
 
-def search_part(params, today: dt.date) -> SearchPart | None:
-    """The search field for the top of the overview and the search results; None without an archive ready for it."""
+def search_part(params, today: dt.date, page: str = "/") -> SearchPart | None:
+    """The search field for the top of the overview's ``page`` and the search results; None without an archive ready
+    for it."""
     def choice(name, kind):
         try:
             return kind(params.get(name)) if params.get(name) else None
@@ -817,67 +1130,83 @@ def search_part(params, today: dt.date) -> SearchPart | None:
     with archive.read() as a:
         if a is None:
             return None
-        form = search_form(params, a.topics())
+        form = search_form(params, a.topics(), page)
         if not searching(params):
             return SearchPart(form, None)
         hits = a.search(
             params.get("q") or "", child=child_param(params), category=choice("category", archive.Category),
             topic=params.get("topic") or None, kind=choice("kind", archive.KindFilter),
         )
-    found = "".join(search_hit(h, today) for h in hits) or '<li class="mut">Intet fundet.</li>'
+    kids = Children.of(store.load_config())
+    found = "".join(search_hit(h, today, kids) for h in hits) or '<li class="mut">Intet fundet.</li>'
     results = f'<section id="soegning"><h2>Søgning <span class="mut">({len(hits)})</span></h2><ul class="list">{found}</ul></section>'
     return SearchPart(form, results)
 
 
+OVERVIEW_PAGES = {"/": "forside", "/info": "info", "/past": "past", "/search": "forside"}  # path -> its tab
+
+
 async def overview(request: Request) -> Response:
-    """The timeline (Skal gøres, Gælder nu, Kommende week by week, Stående info, Tidligere) under the search field;
-    the search results instead of it when the search field asks for them."""
+    """The overview's pages, each under the tabs and the search field: the front page (Skal gøres, I dag og i
+    morgen, Gælder nu, Kommende day by day), Stående info on /info, Tidligere on /past, and the search results on
+    /search (each sends on to the one :func:`list_path` has for what it is asked for), for the child in the URL or
+    else the one remembered on the device (:func:`view_params`, :func:`remember_child`)."""
+    return remember_child(request, await overview_page(request, view_params(request)))
+
+
+async def overview_page(request: Request, params: QueryParams) -> Response:
+    path = request.url.path
+    if path != list_path(params, path):
+        return RedirectResponse(overview_url(params, page=path), status_code=302)
     ledger = Ledger.load()
-    pending = ledger.pending_keys()
     today = request.app.state.today()
 
-    child = child_param(request.query_params)
+    child = child_param(params)
     events = [ev for ev in ledger.upcoming(today.isoformat()) if child is None or child in ev.child_ids]
 
-    def read() -> tuple[list[archive.Item], int, list[archive.ItemTodo], dict[str, archive.Item]] | None:
+    def read() -> tuple[list[archive.Item], list[archive.ItemTodo], dict[str, archive.Item]] | None:
         with archive.read() as a:
             if a is None:
                 return None
             sources = {k: item for k in {ev.source for ev in events if ev.source} if (item := a.item(k))}
-            return a.items(), len(a.unclassified(exclude=pending)), a.todos(), sources
+            return a.items(), a.todos(), sources
 
-    nav = tabs("overblik")
-    search = await asyncio.to_thread(search_part, request.query_params, today)
+    nav = tabs(OVERVIEW_PAGES[path])
+    search = await asyncio.to_thread(search_part, params, today, path)
     if search and search.results is not None:
-        return page("Søgning", nav + search.form + overview_main(search.results), enhanced=True)
+        return page("Søgning", search.form + overview_main(search.results), enhanced=True, nav=nav)
     got = await asyncio.to_thread(read)
+    warned = warnings_html(ledger, request.app.state.now()) if path == "/" else ""
     if got is None or search is None:
-        body = overview_main('<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>')
-        return page("Overblik", nav + body, enhanced=True)
-    items, unclassified, todos, sources = got
+        body = overview_main(warned + '<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>')
+        return page(None, body, enhanced=True, nav=nav)
+    items, todos, sources = got
     todos = [t for t in todos if for_child(t.item.child_ids, child)]
     shown = [
         i for i in items
         if i.classification and i.classification.category != archive.Category.SVAR and for_child(i.child_ids, child)
     ]
-    params = request.query_params
-    if before := day_param(params.get("before")):
-        back = f'<p><a href="{e(overview_url(params, drop=("before",)))}">Til overblikket</a></p>'
-        return page("Tidligere", nav + search.form + overview_main(earlier_html(shown, before, today, params) + back), enhanced=True)
+    msg, kids = params.get("msg"), Children.of(store.load_config())
+    if path == "/info":
+        info = standing_html([i for i in shown if i.classification.category == archive.Category.INFO], kids)
+        return page("Info", search.form + overview_main(info), msg, enhanced=True, nav=nav)
+    if path == "/past":
+        earlier = earlier_html(shown, day_param(params.get("before")) or today, today, params, kids)
+        return page("Tidligere", search.form + overview_main(earlier), msg, enhanced=True, nav=nav)
     back = overview_url(params)  # where "Klaret" returns to: this view
     open_, checked = todo_lists(todos, ledger)
-    now_html = "".join(
-        item_row(i, f'<span class="mut meta">{e(why)}</span>' if (why := why_current(i, reason)) else "")
-        for i, reason in timeline.now(shown, today)
-    )
-    body = f"""
-<section id="skal-goeres">{todos_html(open_, checked, ledger, today, back)}</section>
-<section id="gaelder-nu"><h2>Gælder nu</h2><ul class="list now">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>
-{upcoming_html(shown, events, open_, today, back, sources)}
-{standing_html([i for i in shown if i.classification.category == archive.Category.INFO])}
-{earlier_html(shown, today, today, params)}
-<p class="mut" id="ikke-inddelt">{unclassified} endnu ikke inddelt</p>"""
-    return page("Overblik", nav + search.form + overview_main(body), request.query_params.get("msg"), enhanced=True)
+    coming = timeline.upcoming(shown, events, open_, today, sources)
+    now_html = "".join(now_card(i, reason, kids) for i, reason in timeline.now(shown, today))
+    # Two columns when there is room (Skal gøres and Gælder nu | the days), else one in the order the CSS gives:
+    # Skal gøres, I dag og i morgen, Gælder nu, Kommende.
+    body = f"""<div class="cols"><div class="col">
+<section id="skal-goeres">{todos_html(open_, checked, ledger, today, back, kids)}</section>
+<section id="gaelder-nu"><h2>Gælder nu</h2><ul class="now-cards">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>
+</div><div class="col">
+{near_html(coming, today, back, kids)}
+{upcoming_html(coming, today, back, kids)}
+</div></div>"""
+    return page(None, search.form + overview_main(warned + body), msg, enhanced=True, nav=nav, wide=True)
 
 
 async def tick_todo(request: Request) -> Response:
@@ -913,16 +1242,19 @@ async def tick_todo(request: Request) -> Response:
 ITEM_KEY = re.compile(r"(?!\.+$)[A-Za-z0-9_.~:-]+")
 
 
+LIST_PATHS = ("/", "/info", "/past", "/search")  # the overview's pages a button may return to (besides an item's detail)
+
+
 def safe_back(back: str) -> str:
-    """Where a button may return to: the overview or an item's detail, as a path on this site (no scheme, no host,
-    nothing unprintable anywhere), with any query; anything else is the overview."""
+    """Where a button may return to: one of :data:`LIST_PATHS` or an item's detail, as a path on this site (no
+    scheme, no host, nothing unprintable anywhere), with any query; anything else is the front page."""
     parts = urlsplit(back)
-    key = parts.path.removeprefix("/overblik/item/")
+    key = parts.path.removeprefix("/item/")
     on_site = (
         back.isprintable() and not parts.scheme and not parts.netloc and not parts.fragment
-        and (parts.path == "/overblik" or (key != parts.path and ITEM_KEY.fullmatch(key) is not None))
+        and (parts.path in LIST_PATHS or (key != parts.path and ITEM_KEY.fullmatch(key) is not None))
     )
-    return back if on_site else "/overblik"
+    return back if on_site else "/"
 
 
 # ----------------------------------------------------------------------------- the detail of one item
@@ -941,7 +1273,7 @@ def item_text(body: str) -> str:
 
 def file_url(item_key: str, attachment_id: str) -> str:
     """Where the file route hands out one of an item's files: by item key and attachment id, never a path."""
-    return f"{store.item_path(item_key)}/fil/{quote(attachment_id, safe=':')}"
+    return f"{store.item_path(item_key)}/file/{quote(attachment_id, safe=':')}"
 
 
 # What the browser may show itself, by the file name's suffix (never by the kind Aula gave it): an SVG or HTML
@@ -1048,9 +1380,9 @@ def detail_html(d: Detail, *, hide: bool) -> str:
     rows.append(todo_detail(d, hide=hide))
     if hide:
         rows.append('<p><a href="?show=1" class="btn">Vis teksten</a></p>')
-        return f"<h2>{e(item_title(item))}</h2>{''.join(rows)}"
+        return f'<h2 class="title">{e(item_title(item))}</h2>{"".join(rows)}'
     rows += [item_text(latest.body), files_html(item), versions_html(item), calendar_html(d), thread_html(d)]
-    return f"<h2>{e(latest.title or '(uden titel)')}</h2>{''.join(rows)}"
+    return f'<h2 class="title">{e(latest.title or "(uden titel)")}</h2>{"".join(rows)}'
 
 
 def todo_detail(d: Detail, *, hide: bool) -> str:
@@ -1070,18 +1402,20 @@ def todo_detail(d: Detail, *, hide: bool) -> str:
     due = f" · senest {e(fmt_date(t.due.isoformat()))}" if t.due else ""
     text = "Skal gøres" if hide else f'<span class="todo">{e(t.text)}</span>'
     return (
-        f'<ul class="list"><li><span class="grow">✓ {text}<br><span class="mut">{status}{due}</span></span>'
+        f'<ul class="list"><li {todo_ref(t)}><span class="grow">✓ {text}<br><span class="mut">{status}{due}</span></span>'
         f'<span class="acts">{todo_button(t, checked=checked, back=store.item_path(t.item.key))}</span></li></ul>'
     )
 
 
 def calendar_html(d: Detail) -> str:
-    """ "Blev til i kalenderen": each event the item changed, with its whole history and whom the user removed it for."""
+    """ "Blev til i kalenderen": each event the item changed, with its whole history, whom the user removed it for,
+    and a button for each child who still has it coming up."""
     if not d.events:
         return '<h3>Blev til i kalenderen</h3><p class="mut">Intet i kalenderen.</p>'
+    upcoming = {u.key: u.child_ids for u in d.ledger.upcoming(d.today.isoformat())}  # who can still have it removed
     rows = []
     for h in d.events:
-        when = fmt_date(h.start) + (f"–{fmt_date(h.end)}" if h.end and h.end != h.start else "")
+        when = fmt_span(h.start, h.end)
         flag = ' <b class="bad">aflyst</b>' if h.cancelled else ""
         lines = []
         for line in h.lines:
@@ -1091,15 +1425,31 @@ def calendar_html(d: Detail) -> str:
                 other = d.others.get(line.item)
                 who = f'<a href="{e(store.item_path(line.item))}">{e(item_title(other))}</a>' if other else e(item_title(None))
             lines.append(f"{HISTORY_ACTIONS[line.action]} af {who}" + (f" {e(fmt_when(line.at))}" if line.at else ""))
-        removed = [c for c in map(int, d.cfg["children"]) if d.ledger.is_removed(h.key, c)]
+        removed = [c for c in Children.of(d.cfg).names if d.ledger.is_removed(h.key, c)]
         if removed:
             lines.append(f"fjernet af dig for {e(child_names(removed, d.cfg))}")
+        buttons = "".join(
+            remove_button(h.key, h.title, c, d.cfg, back=store.item_path(d.item.key)) for c in upcoming.get(h.key, [])
+        )
         rows.append(
             f'<li><span class="date">{e(when)}</span><span class="grow">{e(h.title)}{flag}'
             f'<br><span class="mut">{e(child_names(h.child_ids, d.cfg))}</span>'
-            f'<br><span class="mut">{"<br>".join(lines)}</span></span></li>'
+            f'<br><span class="mut">{"<br>".join(lines)}</span></span><span class="acts">{buttons}</span></li>'
         )
     return f'<h3>Blev til i kalenderen</h3><ul class="list">{"".join(rows)}</ul>'
+
+
+def remove_button(key: str, title: str, child_id: int, cfg: dict[str, Any], *, back: str) -> str:
+    """ "Fjern for <fornavn>" ("Fjern" with one child): to the confirmation (:func:`remove_confirm_page`), which
+    the overview's script asks in a dialog instead (``data-confirm``) and then posts the form itself."""
+    name = child_first_name(cfg["children"].get(str(child_id)))
+    label = f"Fjern for {name}" if len(cfg["children"]) > 1 else "Fjern"
+    question = f"Fjern »{title}« fra kalenderen for {name}? Den bliver ikke oprettet igen."
+    return (
+        f'<form class="inline" method="get" action="/events/remove" data-confirm="{e(question)}">'
+        f'<input type="hidden" name="key" value="{e(key)}"><input type="hidden" name="child_id" value="{child_id}">'
+        f'<input type="hidden" name="back" value="{e(back)}"><button class="small">{e(label)}</button></form>'
+    )
 
 
 def thread_html(d: Detail) -> str:
@@ -1140,14 +1490,18 @@ async def item_detail(request: Request) -> Response:
     nav = tabs(None)
     if d is None:
         body = overview_main('<p class="mut">Det findes ikke i arkivet.</p>')
-        return page("Findes ikke", nav + body, status_code=404, enhanced=True)
+        return page("Findes ikke", body, status_code=404, enhanced=True, nav=nav)
     hide = d.item.sensitive and request.query_params.get("show") != "1"
-    title = "Overblik" if hide else d.item.latest.title or "Overblik"
-    return page(title, nav + overview_main(detail_html(d, hide=hide)), request.query_params.get("msg"), enhanced=True)
+    title = None if hide else d.item.latest.title or None
+    return page(title, overview_main(detail_html(d, hide=hide)), request.query_params.get("msg"), enhanced=True, nav=nav)
 
 
 STATIC_DIR = Path(__file__).parent / "static"
-STATIC_FILES = {"overblik.js": "text/javascript; charset=utf-8"}  # what /static/ hands out, by name; nothing else
+STATIC_FILES = {  # what /static/ hands out, by name; nothing else
+    "overblik.js": "text/javascript; charset=utf-8",
+    # The app's icon. The PNGs are made from the SVG: uvx cairosvg icon.svg -W 192 -H 192 -o icon-192.png (and 512)
+    "icon.svg": "image/svg+xml", "icon-192.png": "image/png", "icon-512.png": "image/png",
+}
 
 
 async def static_file(request: Request) -> Response:
@@ -1156,6 +1510,21 @@ async def static_file(request: Request) -> Response:
     if name not in STATIC_FILES:
         return PlainTextResponse("Findes ikke.", status_code=404)
     return FileResponse(str(STATIC_DIR / name), media_type=STATIC_FILES[name], headers={"Cache-Control": "no-cache"})
+
+
+async def manifest(request: Request) -> Response:
+    """What a phone needs to put the page on the home screen as an app (no service worker: it is online only)."""
+    name = web_config()["app_name"]
+    icons = [
+        {"src": "/static/icon.svg", "type": "image/svg+xml", "sizes": "any"},
+        {"src": "/static/icon-192.png", "type": "image/png", "sizes": "192x192"},
+        {"src": "/static/icon-512.png", "type": "image/png", "sizes": "512x512"},
+    ]
+    body = {
+        "name": name, "short_name": name, "lang": "da", "start_url": "/", "scope": "/", "display": "standalone",
+        "theme_color": THEME_COLOR, "background_color": "#ffffff", "icons": icons,
+    }
+    return JSONResponse(body, media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
 
 
 async def item_file(request: Request) -> Response:
@@ -1188,14 +1557,43 @@ async def item_file(request: Request) -> Response:
     )
 
 
+def remove_fields(fields) -> tuple[str, int | None, str]:
+    """What a "Fjern" button sends: the event's key, the child (None: from a page before removal was per child:
+    every child) and the page to return to (:func:`safe_back`: else the front page)."""
+    raw_child = str(fields.get("child_id") or "")
+    return str(fields.get("key") or ""), int(raw_child) if raw_child.isdigit() else None, safe_back(str(fields.get("back") or ""))
+
+
+async def remove_confirm_page(request: Request) -> Response:
+    """The confirmation before a "Fjern" without the overview's script: what is removed for whom, and the button."""
+    key, child_id, back = remove_fields(request.query_params)
+    cfg, ledger = store.load_config(), Ledger.load()
+    entries = [x for x in ledger.entries(key) if child_id is None or child_id in x.child_ids]
+    if not entries:
+        body = f'<p>Begivenheden findes ikke længere.</p><p><a href="{e(back)}" class="btn">Tilbage</a></p>'
+        return page("Fjern fra kalenderen", overview_main(body), enhanced=True, nav=tabs(None))
+    first = entries[0]
+    children = [child_id] if child_id is not None else sorted({c for x in entries for c in x.child_ids})
+    when = fmt_span(first.start, first.end)
+    fields = f'<input type="hidden" name="key" value="{e(key)}">'
+    if child_id is not None:
+        fields += f'<input type="hidden" name="child_id" value="{child_id}">'
+    fields += f'<input type="hidden" name="back" value="{e(back)}">'
+    body = (
+        f'<h2 class="title">Fjern fra kalenderen</h2>' f"<p>Fjern »{e(first.title)}« ({e(when)}) fra kalenderen for "
+        f"{e(child_names(children, cfg))}? Den bliver ikke oprettet igen.</p>"
+        f'<form method="post" action="/events/remove">{fields}<button class="primary">Fjern</button> '
+        f'<a href="{e(back)}" class="btn">Fortryd</a></form>'
+    )
+    return page("Fjern fra kalenderen", overview_main(body), enhanced=True, nav=tabs(None))
+
+
 async def remove_event(request: Request) -> Response:
+    """Remove an event for a child; back to the page the button was on (``back``), else the front page."""
     from .credentials import GoogleLoginRequired
     from .gcal import remove_event as do_remove
 
-    form = await request.form()
-    key = str(form.get("key") or "")
-    raw_child = str(form.get("child_id") or "")
-    child_id = int(raw_child) if raw_child.isdigit() else None  # a page from before removal was per child
+    key, child_id, back = remove_fields(await request.form())
 
     def work() -> int:
         with store.lock(wait=False):
@@ -1210,7 +1608,7 @@ async def remove_event(request: Request) -> Response:
         msg = "Begivenheden findes ikke længere."
     except GoogleLoginRequired:
         msg = "Google er ikke forbundet."
-    return go_home(msg)
+    return RedirectResponse(f"{back}{'&' if '?' in back else '?'}msg={quote(msg)}", status_code=303)
 
 
 LOGIN_JS = """
@@ -1228,7 +1626,7 @@ async function poll(){
   const texts={starting:'Starter MitID…',scan:'Scan koden med MitID-appen. Hold telefonen stille – koden består af to halvdele, der skifter.',
     approve:'Koden er læst. Godkend login i MitID-appen.',done:s.message,error:s.message};
   st.textContent=texts[s.status]||''; st.className=s.status==='error'?'bad':(s.status==='done'?'ok':'');
-  if(s.status==='done'){setTimeout(()=>location.href='/?msg='+encodeURIComponent(s.message),1500);return}
+  if(s.status==='done'){setTimeout(()=>location.href='/settings?msg='+encodeURIComponent(s.message),1500);return}
   if(s.status!=='error' && s.status!=='idle') setTimeout(poll,1000);
 }
 poll();
@@ -1241,7 +1639,7 @@ async def aula_login_page(request: Request) -> Response:
     login: MitIDLogin = request.app.state.mitid
     if login.running or (login.status in ("done", "error") and request.query_params.get("watch")):
         body = """<p id="status"></p><div class="qr" id="qr"></div><p class="mut" id="part"></p>
-<p class="otp" id="otp"></p><p><a href="/">Tilbage</a></p>""" + LOGIN_JS
+<p class="otp" id="otp"></p><p><a href="/settings">Tilbage</a></p>""" + LOGIN_JS
         return page("MitID-login", body)
     username = load_aula_config().get("mitid_username") or ""
     body = f"""<p>Log ind i Aula med MitID-appen. Åbn siden på en computer eller tablet,
@@ -1260,7 +1658,7 @@ async def aula_login_start(request: Request) -> Response:
     try:
         request.app.state.mitid.start(username)
     except RuntimeError as exc:
-        return page("MitID-login", f'<p class="bad">{e(exc)}</p><p><a href="/">Tilbage</a></p>')
+        return page("MitID-login", f'<p class="bad">{e(exc)}</p><p><a href="/settings">Tilbage</a></p>')
     return RedirectResponse("/aula/login?watch=1", status_code=303)
 
 
@@ -1268,8 +1666,27 @@ async def aula_login_state(request: Request) -> Response:
     return JSONResponse(request.app.state.mitid.snapshot(), headers={"Cache-Control": "no-store"})
 
 
-def go_home(msg: str) -> RedirectResponse:
-    return RedirectResponse(f"/?msg={quote(msg)}", status_code=303)
+def go_settings(msg: str) -> RedirectResponse:
+    """Back to the settings (the logins) with ``msg``."""
+    return RedirectResponse(f"/settings?msg={quote(msg)}", status_code=303)
+
+
+def moved(request: Request, path: str) -> RedirectResponse:
+    """An old address (before #50) sent on for good to ``path``, with its query."""
+    query = request.url.query
+    return RedirectResponse(path + (f"?{query}" if query else ""), status_code=301)
+
+
+async def old_overview(request: Request) -> Response:
+    return moved(request, list_path(request.query_params))
+
+
+async def old_item(request: Request) -> Response:
+    return moved(request, store.item_path(request.path_params["key"]))
+
+
+async def old_file(request: Request) -> Response:
+    return moved(request, file_url(request.path_params["key"], request.path_params["attachment"]))
 
 
 def redirect_uri() -> str:
@@ -1293,7 +1710,7 @@ async def google_page(request: Request) -> Response:
 <p><a class="btn primary" href="/google/connect">{'Forbind igen' if ok else 'Forbind Google'}</a></p>
 <p class="mut">aula-agent får kun adgang til de kalendere og filer, den selv opretter.</p>
 <details><summary class="mut">Udskift OAuth-nøgle</summary>{upload}</details>"""
-    return page("Google", body + '<p><a href="/">Tilbage</a></p>')
+    return page("Google", body + '<p><a href="/settings">Tilbage</a></p>')
 
 
 async def google_client_secret(request: Request) -> Response:
@@ -1322,14 +1739,14 @@ async def google_callback(request: Request) -> Response:
     code = request.query_params.get("code")
     pending = request.app.state.oauth_pending.pop(state, None)
     if request.query_params.get("error"):
-        return go_home(f"Google-adgang blev ikke givet ({request.query_params['error']}).")
+        return go_settings(f"Google-adgang blev ikke givet ({request.query_params['error']}).")
     if not code or not pending or time.monotonic() - pending[1] > 600:
-        return go_home("Google-login udløb. Prøv igen.")
+        return go_settings("Google-login udløb. Prøv igen.")
     try:
         await asyncio.to_thread(web_flow_finish, redirect_uri(), state, pending[0], code)
     except Exception as exc:
-        return go_home(f"Google-login fejlede: {exc}")
-    response = go_home("Google er forbundet.")
+        return go_settings(f"Google-login fejlede: {exc}")
+    response = go_settings("Google er forbundet.")
     # Logged after the response is sent: a running sync may hold the lock for a while.
     response.background = BackgroundTask(runs.record, "google-login", Outcome.OK, "Google forbundet")
     return response
@@ -1337,19 +1754,30 @@ async def google_callback(request: Request) -> Response:
 
 def create_app(
     *, verifier_factory=default_verifier_factory, mitid: MitIDLogin | None = None, google=None,
-    today: Callable[[], dt.date] = dt.date.today,
+    now: Callable[[], dt.datetime] = lambda: dt.datetime.now().astimezone(),
+    today: Callable[[], dt.date] | None = None,
 ) -> Starlette:
-    """``google`` makes the Calendar/Drive adapter (default: connect with the saved token);
-    ``today`` says which day it is (when a todo is overdue)."""
+    """``google`` makes the Calendar/Drive adapter (default: connect with the saved token); ``now`` says what time
+    it is (when a backup or the last fetch is too old), and ``today`` which day it is (default: ``now``'s; what
+    stands where on the timeline, when a todo is overdue)."""
     from . import gcal
 
     app = Starlette(
         routes=[
-            Route("/", home),
-            Route("/overblik", overview),
-            Route("/overblik/item/{key}", item_detail),
-            Route("/overblik/item/{key}/fil/{attachment:path}", item_file),
+            Route("/", overview),
+            Route("/search", overview),
+            Route("/info", overview),
+            Route("/past", overview),
+            Route("/settings", settings),
+            Route("/item/{key}", item_detail),
+            Route("/item/{key}/file/{attachment:path}", item_file),
+            # Calendar events from before #50 link to /overblik/item/…, and their descriptions stay: keep these.
+            Route("/overblik", old_overview),
+            Route("/overblik/item/{key}", old_item),
+            Route("/overblik/item/{key}/fil/{attachment:path}", old_file),
             Route("/static/{name}", static_file),
+            Route("/manifest.webmanifest", manifest),
+            Route("/events/remove", remove_confirm_page),
             Route("/events/remove", remove_event, methods=["POST"]),
             Route("/todos/{action}", tick_todo, methods=["POST"]),
             Route("/aula/login", aula_login_page),
@@ -1365,5 +1793,6 @@ def create_app(
     app.state.mitid = mitid or MitIDLogin()
     app.state.oauth_pending = {}
     app.state.google = google or gcal.Google.connect
-    app.state.today = today
+    app.state.now = now
+    app.state.today = today or (lambda: now().date())
     return app
