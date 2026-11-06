@@ -284,7 +284,7 @@ class Topic:
 class Current(StrEnum):
     """Why an item is current ("Gælder nu" on the overview)."""
 
-    SPAN = "span"  # a period whose span covers the day
+    SPAN = "span"  # a period (or an arrangement over several days) whose span covers the day
     IMPORTANT = "important"  # Aula marks the post as important on the day
     NOTICE = "notice"  # an orientering not past yet
 
@@ -348,7 +348,9 @@ class Item:
         c = self.classification
         if c is None:
             return None
-        if c.category == Category.PERIODE and c.span_start and c.span_start <= today <= (c.span_end or c.span_start):
+        several_days = c.span_end is not None and c.span_start is not None and c.span_end > c.span_start
+        spans = c.category == Category.PERIODE or (c.category == Category.ARRANGEMENT and several_days)
+        if spans and c.span_start and c.span_start <= today <= (c.span_end or c.span_start):
             return Current.SPAN
         if self.important_on(today):
             return Current.IMPORTANT

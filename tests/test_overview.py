@@ -262,3 +262,19 @@ def test_upcoming_is_from_today_earlier_is_until_yesterday_and_nothing_current_o
     earlier = section(html, "tidligere")
     assert list(weeks(earlier)) == ["2026-11-02"]  # this week until yesterday
     assert titles(earlier) == ["Husk madpakke", "Lus i klassen", "Teater onsdag", "Svømning i november"]
+
+
+def test_an_arrangement_over_several_days_under_way_today_is_current_with_its_event_shown_once():
+    with archive.open() as a:
+        a.save_post(post(1, "Lejrskole", publish="2026-10-20T08:00:00"))
+        a.save_post(post(2, "Bagedag", publish="2026-10-20T08:00:00"))
+        a.create_topic("lejrskole", "Lejrskole og ture med overnatning")
+        classify(a, "post:1", "arrangement", topics=["lejrskole"], start="2026-11-05", end="2026-11-07")
+        classify(a, "post:2", "arrangement", topics=["lejrskole"], start="2026-11-05")  # one day, yesterday
+    synced("post:1#1", "Lejrskole", "2026-11-05", end="2026-11-07", source="post:1")
+
+    html = overview()
+
+    now = section(html, "gaelder-nu")
+    assert titles(now) == ["Lejrskole"] and "gælder 05.11.2026–07.11.2026" in now
+    assert "Lejrskole" not in section(html, "kommende")
