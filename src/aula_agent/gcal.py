@@ -119,7 +119,7 @@ def _source_footer(item: dict[str, Any] | None) -> str:
         what = "besked (følsom tråd)" if item.get("sensitive") else f"besked »{item.get('subject') or ''}«"
         who, when = item.get("sender"), item.get("sent")
     parts = [f"Fra Aula: {what}"]
-    if who:
+    if who and not item.get("sensitive"):  # the detail page hides a sensitive thread's sender too
         parts.append(f"af {who}")
     if when:
         parts.append(f"({when[:10]})")

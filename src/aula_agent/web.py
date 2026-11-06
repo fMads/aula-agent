@@ -915,11 +915,12 @@ async def item_file(request: Request) -> Response:
     if not path.is_relative_to(data_dir) or not path.is_file():
         return PlainTextResponse("Findes ikke.", status_code=404)
     media_type = INLINE_TYPES.get(suffix(file.name))
+    headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+    if media_type != "application/pdf":  # Chrome's PDF viewer refuses to open under a CSP sandbox
+        headers["Content-Security-Policy"] = "sandbox"
     return FileResponse(
         path, media_type=media_type or "application/octet-stream", filename=file.name,
-        content_disposition_type="inline" if media_type else "attachment",
-        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
-                 "Content-Security-Policy": "sandbox"},
+        content_disposition_type="inline" if media_type else "attachment", headers=headers,
     )
 
 

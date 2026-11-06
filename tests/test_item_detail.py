@@ -133,7 +133,9 @@ def test_only_pdfs_and_plain_image_types_are_shown_inline_anything_else_register
     assert pdf.headers["content-type"] == "application/pdf" and pdf.headers["content-disposition"].startswith("inline")
     for r in (svg, page_, png, pdf):
         assert r.headers["x-content-type-options"] == "nosniff"
+    for r in (svg, page_, png):
         assert r.headers["content-security-policy"] == "sandbox"
+    assert "content-security-policy" not in pdf.headers  # Chrome's PDF viewer won't open under a sandbox
     files = detail[detail.index("<h3>Filer"):]
     assert '<img src="/overblik/item/post:1/fil/23"' in files
     assert '<img src="/overblik/item/post:1/fil/21"' not in files and '<img src="/overblik/item/post:1/fil/22"' not in files
