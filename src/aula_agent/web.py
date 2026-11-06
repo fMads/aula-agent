@@ -642,7 +642,7 @@ def upcoming_html(
 
 def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date) -> str:
     """Tidligere (:func:`timeline.earlier`), shown as usual (past or not), and "Vis ældre" when there is more."""
-    got = timeline.earlier(items, before)
+    got = timeline.earlier(items, before, today)
     weeks = weeks_html(got.weeks, today, "/overblik")
     older = ""
     if got.older:

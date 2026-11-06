@@ -61,7 +61,7 @@ def test_a_period_covering_today_is_current_and_replies_are_shown_nowhere():
 
 def weeks(html):
     """The weeks in a part of the timeline, by their Monday, in order: Monday -> what is in the week."""
-    parts = html.split('<div class="week" data-week="')[1:]
+    parts = html.split(' data-week="')[1:]
     return {p[:10]: p for p in parts}
 
 
@@ -237,3 +237,28 @@ def test_an_open_todo_with_due_stands_in_its_week_under_upcoming_too():
     assert list(upcoming) == ["2026-11-16"]
     assert "Bestil billeder" in upcoming["2026-11-16"] and "Køb badehætte" not in section(html, "kommende")
     assert "Bestil billeder" in section(html, "skal-goeres") and "Køb badehætte" in section(html, "skal-goeres")
+
+
+def test_upcoming_is_from_today_earlier_is_until_yesterday_and_nothing_current_or_without_a_span_is_upcoming():
+    with archive.open() as a:
+        a.save_post(post(1, "Teater onsdag", publish="2026-10-28T08:00:00"))
+        a.save_post(post(2, "Bagedag i dag", publish="2026-10-28T08:00:00"))
+        a.save_post(post(3, "Svømning i november", publish="2026-10-20T08:00:00"))
+        a.save_post(post(4, "Lus i klassen", publish="2026-11-05T08:00:00"))
+        a.save_post(post(5, "Ny ordning i garderoben", publish="2026-11-06T07:00:00"))
+        a.save_post(post(6, "Husk madpakke", publish="2026-11-06T07:30:00"))
+        a.create_topic("skole", "Skolens hverdag")
+        classify(a, "post:1", "arrangement", topics=["skole"], start="2026-11-04")
+        classify(a, "post:2", "arrangement", topics=["skole"], start="2026-11-06")
+        classify(a, "post:3", "periode", topics=["skole"], start="2026-11-02", end="2026-11-30")
+        classify(a, "post:4", "orientering", topics=["skole"])
+        classify(a, "post:5", "orientering", topics=["skole"])
+        classify(a, "post:6", "arrangement", topics=["skole"])  # no span, came today: neither upcoming nor lost
+
+    html = overview()
+
+    assert titles(section(html, "kommende")) == ["Bagedag i dag"]
+    assert titles(section(html, "gaelder-nu")) == ["Ny ordning i garderoben", "Lus i klassen", "Svømning i november"]
+    earlier = section(html, "tidligere")
+    assert list(weeks(earlier)) == ["2026-11-02"]  # this week until yesterday
+    assert titles(earlier) == ["Husk madpakke", "Lus i klassen", "Teater onsdag", "Svømning i november"]

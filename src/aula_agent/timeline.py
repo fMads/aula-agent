@@ -80,21 +80,29 @@ def weeks(lines: list[Line], *, newest_first: bool = False) -> list[Week]:
     return [Week(first, tuple(members)) for first, members in by_week.items()]
 
 
+def is_upcoming(item: archive.Item, today: dt.date) -> bool:
+    """Whether an item stands in Kommende: its span begins today or later, and it is not in Gælder nu."""
+    c = item.classification
+    return c.category != archive.Category.INFO and bool(c.span_start) and c.span_start >= today and item.current(today) is None
+
+
 def upcoming(
     items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date
 ) -> list[Week]:
-    """Kommende, week by week from this week: items whose span begins in the week, the events in it
-    (an event on the day its item's span begins is that item, shown once) and the open ``todos`` due in it."""
-    this_week = monday(today)
+    """Kommende, week by week from today: the items :func:`is_upcoming`, the events (an event that is its item,
+    on the day the item's span begins or while it stands in Gælder nu, is shown once: as the item) and the
+    open ``todos`` due today or later."""
     by_key = {i.key: i for i in items}
-    lines: list[Line] = [ItemLine(day, item) for day, item in in_weeks(items) if day >= this_week]
+    lines: list[Line] = [ItemLine(i.classification.span_start, i) for i in items if is_upcoming(i, today)]
     for ev in events:
         start = dt.date.fromisoformat(ev.start[:10])
         source = by_key.get(ev.source or "")
-        if source is not None and source.classification.span_start == start:
+        if source is not None and (
+            source.current(today) is not None or (is_upcoming(source, today) and source.classification.span_start == start)
+        ):
             continue
-        lines.append(EventLine(max(start, this_week), ev, source))
-    lines += [TodoLine(t.due, t) for t in todos if t.due is not None and t.due >= this_week]
+        lines.append(EventLine(max(start, today), ev, source))
+    lines += [TodoLine(t.due, t) for t in todos if t.due is not None and t.due >= today]
     return weeks(lines)
 
 
@@ -104,12 +112,18 @@ class Earlier:
     older: dt.date | None  # the ``before`` of "Vis ældre", when there is something before these weeks
 
 
-def earlier(items: list[archive.Item], before: dt.date) -> Earlier:
-    """Tidligere: the :data:`EARLIER_WEEKS` weeks before the week of ``before``, newest first."""
-    end = monday(before)
-    start = end - dt.timedelta(weeks=EARLIER_WEEKS)
+def earlier(items: list[archive.Item], before: dt.date, today: dt.date) -> Earlier:
+    """Tidligere: the days before ``before`` back to the Monday :data:`EARLIER_WEEKS` weeks before its week,
+    newest first. With ``before`` today, also today's items that are nowhere else (no span, not current)."""
+    start = monday(before) - dt.timedelta(weeks=EARLIER_WEEKS)
     placed = in_weeks(items)
-    lines = [ItemLine(day, item) for day, item in sorted(placed, key=lambda p: p[1].key, reverse=True) if start <= day < end]
+
+    def shown(day: dt.date, item: archive.Item) -> bool:
+        if day == today == before:
+            return not item.classification.span_start and item.current(today) is None
+        return start <= day < before
+
+    lines = [ItemLine(day, i) for day, i in sorted(placed, key=lambda p: p[1].key, reverse=True) if shown(day, i)]
     return Earlier(weeks(lines, newest_first=True), start if any(day < start for day, _ in placed) else None)
 
 
