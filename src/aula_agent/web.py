@@ -1088,9 +1088,11 @@ def todo_detail(d: Detail, *, hide: bool) -> str:
 
 
 def calendar_html(d: Detail) -> str:
-    """ "Blev til i kalenderen": each event the item changed, with its whole history and whom the user removed it for."""
+    """ "Blev til i kalenderen": each event the item changed, with its whole history, whom the user removed it for,
+    and a button for each child who still has it coming up."""
     if not d.events:
         return '<h3>Blev til i kalenderen</h3><p class="mut">Intet i kalenderen.</p>'
+    upcoming = {u.key: u.child_ids for u in d.ledger.upcoming(d.today.isoformat())}  # who can still have it removed
     rows = []
     for h in d.events:
         when = fmt_date(h.start) + (f"–{fmt_date(h.end)}" if h.end and h.end != h.start else "")
@@ -1106,12 +1108,28 @@ def calendar_html(d: Detail) -> str:
         removed = [c for c in map(int, d.cfg["children"]) if d.ledger.is_removed(h.key, c)]
         if removed:
             lines.append(f"fjernet af dig for {e(child_names(removed, d.cfg))}")
+        buttons = "".join(
+            remove_button(h.key, h.title, c, d.cfg, back=store.item_path(d.item.key)) for c in upcoming.get(h.key, [])
+        )
         rows.append(
             f'<li><span class="date">{e(when)}</span><span class="grow">{e(h.title)}{flag}'
             f'<br><span class="mut">{e(child_names(h.child_ids, d.cfg))}</span>'
-            f'<br><span class="mut">{"<br>".join(lines)}</span></span></li>'
+            f'<br><span class="mut">{"<br>".join(lines)}</span></span><span class="acts">{buttons}</span></li>'
         )
     return f'<h3>Blev til i kalenderen</h3><ul class="list">{"".join(rows)}</ul>'
+
+
+def remove_button(key: str, title: str, child_id: int, cfg: dict[str, Any], *, back: str) -> str:
+    """ "Fjern for <fornavn>" ("Fjern" with one child): to the confirmation (:func:`remove_confirm_page`), which
+    the overview's script asks in a dialog instead (``data-confirm``) and then posts the form itself."""
+    name = child_first_name(cfg["children"].get(str(child_id)))
+    label = f"Fjern for {name}" if len(cfg["children"]) > 1 else "Fjern"
+    question = f"Fjern »{title}« fra kalenderen for {name}? Den bliver ikke oprettet igen."
+    return (
+        f'<form class="inline" method="get" action="/events/remove" data-confirm="{e(question)}">'
+        f'<input type="hidden" name="key" value="{e(key)}"><input type="hidden" name="child_id" value="{child_id}">'
+        f'<input type="hidden" name="back" value="{e(back)}"><button class="small">{e(label)}</button></form>'
+    )
 
 
 def thread_html(d: Detail) -> str:
@@ -1200,14 +1218,46 @@ async def item_file(request: Request) -> Response:
     )
 
 
+def remove_fields(fields) -> tuple[str, int | None, str | None]:
+    """What a "Fjern" button sends: the event's key, the child (None: from a page before removal was per child:
+    every child) and the page to return to (None: the settings)."""
+    raw_child = str(fields.get("child_id") or "")
+    back = str(fields.get("back") or "")
+    return str(fields.get("key") or ""), int(raw_child) if raw_child.isdigit() else None, safe_back(back) if back else None
+
+
+async def remove_confirm_page(request: Request) -> Response:
+    """The confirmation before a "Fjern" without the overview's script: what is removed for whom, and the button."""
+    key, child_id, back = remove_fields(request.query_params)
+    cfg, ledger = store.load_config(), Ledger.load()
+    entries = [x for x in ledger.entries(key) if child_id is None or child_id in x.child_ids]
+    back_url = back or "/settings"
+    if not entries:
+        body = f'<p>Begivenheden findes ikke længere.</p><p><a href="{e(back_url)}" class="btn">Tilbage</a></p>'
+        return page("Fjern fra kalenderen", tabs(None) + overview_main(body), enhanced=True)
+    first = entries[0]
+    children = [child_id] if child_id is not None else sorted({c for x in entries for c in x.child_ids})
+    when = fmt_date(first.start) + (f"–{fmt_date(first.end)}" if first.end and first.end != first.start else "")
+    fields = f'<input type="hidden" name="key" value="{e(key)}">'
+    if child_id is not None:
+        fields += f'<input type="hidden" name="child_id" value="{child_id}">'
+    if back:
+        fields += f'<input type="hidden" name="back" value="{e(back)}">'
+    body = (
+        f"<h2>Fjern fra kalenderen</h2><p>Fjern »{e(first.title)}« ({e(when)}) fra kalenderen for "
+        f"{e(child_names(children, cfg))}? Den bliver ikke oprettet igen.</p>"
+        f'<form method="post" action="/events/remove">{fields}<button class="primary">Fjern</button> '
+        f'<a href="{e(back_url)}" class="btn">Fortryd</a></form>'
+    )
+    return page("Fjern fra kalenderen", tabs(None) + overview_main(body), enhanced=True)
+
+
 async def remove_event(request: Request) -> Response:
+    """Remove an event for a child; back to the page the button was on (``back``), else the settings."""
     from .credentials import GoogleLoginRequired
     from .gcal import remove_event as do_remove
 
-    form = await request.form()
-    key = str(form.get("key") or "")
-    raw_child = str(form.get("child_id") or "")
-    child_id = int(raw_child) if raw_child.isdigit() else None  # a page from before removal was per child
+    key, child_id, back = remove_fields(await request.form())
 
     def work() -> int:
         with store.lock(wait=False):
@@ -1222,7 +1272,9 @@ async def remove_event(request: Request) -> Response:
         msg = "Begivenheden findes ikke længere."
     except GoogleLoginRequired:
         msg = "Google er ikke forbundet."
-    return go_home(msg)
+    if back is None:
+        return go_home(msg)
+    return RedirectResponse(f"{back}{'&' if '?' in back else '?'}msg={quote(msg)}", status_code=303)
 
 
 LOGIN_JS = """
@@ -1386,6 +1438,7 @@ def create_app(
             Route("/overblik/item/{key}", old_item),
             Route("/overblik/item/{key}/fil/{attachment:path}", old_file),
             Route("/static/{name}", static_file),
+            Route("/events/remove", remove_confirm_page),
             Route("/events/remove", remove_event, methods=["POST"]),
             Route("/todos/{action}", tick_todo, methods=["POST"]),
             Route("/aula/login", aula_login_page),
