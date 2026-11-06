@@ -114,6 +114,7 @@ def test_upcoming_begins_after_tomorrow_has_no_empty_days_and_a_week_line_when_t
             a.save_post(post(pid, title, publish="2026-11-01T08:00:00"))
             classify(a, f"post:{pid}", "arrangement", start=start)
     synced("post:9#1", "Forældremøde", "2026-11-11T19:00", source="post:9")
+    synced("post:9#2", "Lejrtur", "2026-11-17", source="post:9", end="2026-11-19")
 
     upcoming = section(overview(), "kommende")
 
@@ -125,6 +126,7 @@ def test_upcoming_begins_after_tomorrow_has_no_empty_days_and_a_week_line_when_t
     on = days(upcoming)
     assert "Søndag 8/11" in on["2026-11-08"] and "Mandag 9/11" in on["2026-11-09"] and "Tirsdag 17/11" in on["2026-11-17"]
     assert titles(on["2026-11-11"]) == ["Museum"] and "Forældremøde" in on["2026-11-11"] and ">19:00<" in on["2026-11-11"]
+    assert "Lejrtur</span> til tor 19/11" in on["2026-11-17"]  # the same dates as the day's heading
 
 
 def test_today_and_tomorrow_are_shown_with_nothing_on_them():
@@ -183,6 +185,7 @@ def test_earlier_weeks_are_newest_first_for_eight_weeks_and_then_vis_aeldre():
     assert titles(earlier) == ["Lus i klassen", "Motionsdag", "Forældremøde"]
     assert 'class="row past"' not in earlier  # shown as usual, not dimmed
     assert 'href="/past?before=2026-09-07"' in earlier
+    assert ">fre 9/10<" in earlier and "5/10–11/10" in earlier  # dates as on the front page's days ("Fredag 9/10")
 
     older = section(past(before="2026-09-07"), "tidligere")
     assert list(weeks(older)) == ["2026-08-10"] and titles(older) == ["Skolestart"]

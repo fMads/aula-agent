@@ -462,6 +462,11 @@ def fmt_date(value: str | None) -> str:
         return value
 
 
+def fmt_span(start: str | None, end: str | None) -> str:
+    """An event's dates (:func:`fmt_date`): its start, and "–" its end when it ends on another."""
+    return fmt_date(start) + (f"–{fmt_date(end)}" if end and end != start else "")
+
+
 def fmt_when(value: str | None) -> str:
     if not value:
         return "aldrig"
@@ -705,13 +710,7 @@ def todo_button(t: archive.ItemTodo, *, checked: bool, back: str | None = None, 
 
 def due_text(due: dt.date, today: dt.date) -> str:
     """When a todo is due, as the lists say it: "i dag", "i morgen" or the weekday and date ("fre 20/11")."""
-    near = {0: "i dag", 1: "i morgen"}.get((due - today).days)
-    return near or f"{WEEKDAYS[due.weekday()]} {short_date(due, today)}"
-
-
-def short_date(day: dt.date, today: dt.date) -> str:
-    """ "20/11", with the year when it is not this year's."""
-    return f"{day.day}/{day.month}" + (f" {day.year}" if day.year != today.year else "")
+    return near_name(due, today) or fmt_day(due, today)
 
 
 def todo_item(
@@ -760,32 +759,49 @@ def item_row(
     A sensitive thread shows only its category (the page may stand open on a screen).
     """
     c = item.classification
-    summary = "" if item.sensitive or not c.summary else f'<span class="sum">{e(c.summary)}</span>'
     return (
         f'<li class="row" data-key="{e(item.key)}">{day_cell(day)}<span class="grow">'
         f'<span class="label">{e(CATEGORY_NAMES[c.category])}</span>'
         f'<a class="item-link" href="{e(store.item_path(item.key))}">{e(item_title(item))}</a>'
-        f'{summary}<span class="meta">{kids.mark(item.child_ids)}</span>{extra}</span></li>'
+        f'{summary_html(item)}<span class="meta">{kids.mark(item.child_ids)}</span>{extra}</span></li>'
     )
+
+
+def summary_html(item: archive.Item) -> str:
+    """An item's summary on a line or a card; none for a sensitive thread (the page may stand open on a screen)."""
+    summary = item.classification.summary
+    return "" if item.sensitive or not summary else f'<span class="sum">{e(summary)}</span>'
 
 
 def now_card(item: archive.Item, why: archive.Current, kids: Children = NOBODY) -> str:
     """An item in Gælder nu, as a card: its category, title, why it holds now, its summary and whose it is."""
     c = item.classification
-    summary = "" if item.sensitive or not c.summary else f'<span class="sum">{e(c.summary)}</span>'
     reason = f'<span class="why">{e(text)}</span>' if (text := why_current(item, why)) else ""
     return (
         f'<li class="now-card" data-key="{e(item.key)}"><span class="label">{e(CATEGORY_NAMES[c.category])}</span>'
-        f'<a class="item-link" href="{e(store.item_path(item.key))}">{e(item_title(item))}</a>{reason}{summary}'
+        f'<a class="item-link" href="{e(store.item_path(item.key))}">{e(item_title(item))}</a>{reason}{summary_html(item)}'
         f'<span class="meta">{kids.mark(item.child_ids)}</span></li>'
     )
 
 
-WEEKDAYS = ("man", "tir", "ons", "tor", "fre", "lør", "søn")
+WEEKDAYS = ("mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag")  # short: the first three letters
+NEAR_DAYS = {0: "i dag", 1: "i morgen"}  # what the lists call today and tomorrow
 
 
-def fmt_day(day: dt.date) -> str:
-    return f"{WEEKDAYS[day.weekday()]} {day:%d.%m}"
+def near_name(day: dt.date, today: dt.date) -> str | None:
+    """ "i dag" or "i morgen", else None."""
+    return NEAR_DAYS.get((day - today).days)
+
+
+def short_date(day: dt.date, today: dt.date | None = None) -> str:
+    """A date as the timeline's lists write it: "20/11", with the year when it is not ``today``'s."""
+    return f"{day.day}/{day.month}" + (f" {day.year}" if today and day.year != today.year else "")
+
+
+def fmt_day(day: dt.date, today: dt.date | None = None, *, long: bool = False) -> str:
+    """ "fre 20/11" (``long``: "Fredag 20/11"), with the year when it is not ``today``'s."""
+    name = WEEKDAYS[day.weekday()]
+    return f"{name.capitalize() if long else name[:3]} {short_date(day, today)}"
 
 
 def day_cell(day: dt.date | None) -> str:
@@ -829,7 +845,7 @@ def week_html(first: dt.date, rows: list[str], today: dt.date) -> str:
     label = f"Uge {first.isocalendar().week}" + (" · denne uge" if this else "")
     return (
         f'<div class="week{" cur" if this else ""}" data-week="{first.isoformat()}"><h3><span>{e(label)}</span>'
-        f' <span class="mut">{first:%d.%m}–{first + dt.timedelta(days=6):%d.%m}</span></h3>'
+        f' <span class="mut">{short_date(first)}–{short_date(first + dt.timedelta(days=6))}</span></h3>'
         f'<ul class="list">{"".join(rows)}</ul></div>'
     )
 
@@ -859,13 +875,10 @@ def weeks_html(weeks: list[timeline.Week], today: dt.date, back: str, kids: Chil
     )
 
 
-WEEKDAY_NAMES = ("Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag")
-
-
 def day_html(d: timeline.Day, today: dt.date, back: str, kids: Children = NOBODY) -> str:
     """One day with its lines under a heading ("Mandag 9/11"; "I dag · fredag 6/11"), or "Intet i dag/i morgen"."""
-    date = f"{WEEKDAY_NAMES[d.day.weekday()]} {d.day.day}/{d.day.month}"
-    near = {0: "i dag", 1: "i morgen"}.get((d.day - today).days)
+    date = fmt_day(d.day, today, long=True)
+    near = near_name(d.day, today)
     heading = f"{near.capitalize()} · {date.lower()}" if near else date
     rows = "".join(line_html(line, today, back, dated=False, kids=kids) for line in d.lines) or f'<li class="mut">Intet {near}.</li>'
     return (
@@ -926,7 +939,7 @@ def why_current(item: archive.Item, why: archive.Current) -> str:
         case archive.Current.SPAN:
             c = item.classification
             end = c.span_end if c.span_end and c.span_end != c.span_start else None
-            return f"gælder {c.span_start.day}/{c.span_start.month}" + (f"–{end.day}/{end.month}" if end else "")
+            return f"gælder {short_date(c.span_start)}" + (f"–{short_date(end)}" if end else "")
         case archive.Current.IMPORTANT:
             return "markeret vigtig i Aula"
     return ""
@@ -1393,7 +1406,7 @@ def calendar_html(d: Detail) -> str:
     upcoming = {u.key: u.child_ids for u in d.ledger.upcoming(d.today.isoformat())}  # who can still have it removed
     rows = []
     for h in d.events:
-        when = fmt_date(h.start) + (f"–{fmt_date(h.end)}" if h.end and h.end != h.start else "")
+        when = fmt_span(h.start, h.end)
         flag = ' <b class="bad">aflyst</b>' if h.cancelled else ""
         lines = []
         for line in h.lines:
@@ -1554,7 +1567,7 @@ async def remove_confirm_page(request: Request) -> Response:
         return page("Fjern fra kalenderen", overview_main(body), enhanced=True, nav=tabs(None))
     first = entries[0]
     children = [child_id] if child_id is not None else sorted({c for x in entries for c in x.child_ids})
-    when = fmt_date(first.start) + (f"–{fmt_date(first.end)}" if first.end and first.end != first.start else "")
+    when = fmt_span(first.start, first.end)
     fields = f'<input type="hidden" name="key" value="{e(key)}">'
     if child_id is not None:
         fields += f'<input type="hidden" name="child_id" value="{child_id}">'
