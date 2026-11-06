@@ -5,12 +5,13 @@ it, the way only :mod:`aula_agent.ledger` touches ``state.json``. Callers talk i
 domain terms (save a post, save its files, how much is archived); the schema,
 the versioning rule and where files are placed stay in here.
 
-The archive fills up independently of intake and cutoff, and never forgets:
-nothing is cleaned up or marked as gone from Aula.
+The archive fills up independently of intake and cutoff, and never forgets
+what came from Aula: no item, version or file is cleaned up or marked as gone from Aula.
 
 Besides what came from Aula, it keeps the agent's classification of each item
 version (with its todo, if any) and the topics they use (ADR 0003). An item version keeps its
-classification; a new version has none until the agent gives it one.
+classification until the agent gives it a new one or ``reclassify`` deletes them all
+(:meth:`Archive.forget_classifications`); a new version has none until the agent gives it one.
 
 Version rule: an item gets a new item version only when its title, its text or
 the set of its attachment ids changes. Signed URLs, comment counts, bookmarks
@@ -539,7 +540,8 @@ class Archive:
         return True
 
     def forget_classifications(self) -> int:
-        """Delete every classification (``reclassify``), so every item is unclassified again; the topics stay.
+        """Delete every classification (``reclassify``), so every item is unclassified again; the topics stay,
+        and so does when each version was first classified (whether its todo was current).
 
         Returns how many there were.
         """
