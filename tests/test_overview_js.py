@@ -95,3 +95,36 @@ def test_the_script_opens_the_addresses_the_pages_link_to():
     assert '"/#q"' in script  # "/" from a detail as a whole page
     assert 'href="/info"' in html and 'href="/past"' in html
     assert "/overblik" not in script.replace("/static/overblik.js", "")
+
+
+def no_inline_script(r):
+    assert re.findall(r"<script[^>]*>", r.text) == ['<script src="/static/overblik.js" defer>']
+    assert not re.search(r"\son[a-z]+=", r.text)
+    assert "script-src 'self'" in r.headers["content-security-policy"]
+
+
+def test_fjern_on_the_detail_asks_through_the_script_or_a_confirmation_page_both_without_inline_script():
+    from aula_agent import store, web
+    from aula_agent.ledger import Ledger, SyncedEntry
+
+    archive_with_a_post()
+    cfg = store.load_config()
+    cfg["children"] = {"1": {"name": "Emma Test"}, "2": {"name": "Oscar Test"}}
+    store.save_config(cfg)
+    ledger = Ledger()
+    ledger.record(SyncedEntry("post:1#1", [1, 2], "joint", "e1", "Skovtur", "2026-11-20", "2026-11-20", source="post:1"))
+    ledger.add_history("post:1#1", "created", "post:1", title="Skovtur", start="2026-11-20", end="2026-11-20")
+    ledger.save()
+
+    detail = get("/item/post:1")
+    no_inline_script(detail)
+    forms = re.findall(r'<form\b[^>]*action="/events/remove"[^>]*>', detail.text)
+    assert len(forms) == 2 and all('method="get"' in f and "data-confirm=" in f for f in forms)
+    assert "Fjern »Skovtur« fra kalenderen for Emma?" in forms[0]
+
+    confirmation = get("/events/remove", key="post:1#1", child_id="1", back="/item/post:1")
+    no_inline_script(confirmation)
+    assert re.search(r'<form method="post" action="/events/remove">', confirmation.text)
+
+    script = (web.STATIC_DIR / "overblik.js").read_text(encoding="utf-8")
+    assert "data-confirm" in script and "confirm(" in script

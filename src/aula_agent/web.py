@@ -35,6 +35,9 @@ from .runs import Outcome
 # ----------------------------------------------------------------------------- config
 
 
+DEFAULT_APP_NAME = "Overblik"  # never "Aula": not to be mistaken for Aula's own app
+
+
 def web_config() -> dict[str, Any]:
     web = store.load_config().get("web") or {}
     return {
@@ -42,6 +45,7 @@ def web_config() -> dict[str, Any]:
         "allowed_emails": [e.lower() for e in web.get("allowed_emails") or []],
         "access_team_domain": web.get("access_team_domain"),  # e.g. "myteam.cloudflareaccess.com"
         "access_aud": web.get("access_aud"),  # Application Audience (AUD) tag
+        "app_name": (web.get("app_name") or "").strip() or DEFAULT_APP_NAME,  # on the home screen and every page
     }
 
 
@@ -306,10 +310,15 @@ OVERVIEW_CSP = (
     "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 )
 OVERVIEW_SCRIPT = '<script src="/static/overblik.js" defer></script>'
+THEME_COLOR = "#2156c9"  # the browser's bar on a phone and the background of static/icon.svg
 
 
-def page(title: str, body: str, flash: str | None = None, *, status_code: int = 200, enhanced: bool = False) -> HTMLResponse:
-    """A page; ``enhanced`` (the overview and the detail): with :data:`OVERVIEW_SCRIPT` under :data:`OVERVIEW_CSP`."""
+def page(
+    title: str | None, body: str, flash: str | None = None, *, status_code: int = 200, enhanced: bool = False,
+) -> HTMLResponse:
+    """A page under the app's name (``web.app_name``), which is also its title when ``title`` is None; ``enhanced``
+    (the overview and the detail): with :data:`OVERVIEW_SCRIPT` under :data:`OVERVIEW_CSP`."""
+    app_name = web_config()["app_name"]
     flash_html = f'<div class="flash">{e(flash)}</div>' if flash else ""
     headers = {"Cache-Control": "no-store"}
     if enhanced:
@@ -318,9 +327,11 @@ def page(title: str, body: str, flash: str | None = None, *, status_code: int = 
         status_code=status_code,
         content=
         f"""<!doctype html><html lang="da"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)}</title>
-<meta name="robots" content="noindex"><style>{CSS}</style>{OVERVIEW_SCRIPT if enhanced else ""}</head><body>
-<h1><a href="/" style="color:inherit;text-decoration:none">Aula → Kalender</a></h1>{flash_html}{body}</body></html>""",
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title or app_name)}</title>
+<meta name="robots" content="noindex"><link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/static/icon-192.png">
+<meta name="theme-color" content="{THEME_COLOR}"><style>{CSS}</style>{OVERVIEW_SCRIPT if enhanced else ""}</head><body>
+<h1><a href="/" style="color:inherit;text-decoration:none">{e(app_name)}</a></h1>{flash_html}{body}</body></html>""",
         headers=headers,
     )
 
@@ -466,7 +477,7 @@ async def home(request: Request) -> Response:
 <h2>Børn og kalendere</h2><ul class="list">{children_html}</ul>
 <h2>Seneste kørsler</h2><ul class="list">{runs_html}</ul>
 <p class="mut" style="margin-top:2rem">Logget ind som {e(getattr(request.state, "email", ""))}</p>"""
-    return page("Aula → Kalender", body, request.query_params.get("msg"))
+    return page(None, body, request.query_params.get("msg"))
 
 
 SENSITIVE = "🔒 Følsom tråd"  # what a sensitive thread is called on a page that may stand open on a screen
@@ -878,7 +889,7 @@ async def overview(request: Request) -> Response:
     got = await asyncio.to_thread(read)
     if got is None or search is None:
         body = overview_main('<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>')
-        return page("Overblik", nav + body, enhanced=True)
+        return page(None, nav + body, enhanced=True)
     items, unclassified, todos, sources = got
     todos = [t for t in todos if for_child(t.item.child_ids, child)]
     shown = [
@@ -903,7 +914,7 @@ async def overview(request: Request) -> Response:
 <section id="gaelder-nu"><h2>Gælder nu</h2><ul class="list now">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>
 {upcoming_html(shown, events, open_, today, back, sources)}
 <p class="mut" id="ikke-inddelt">{unclassified} endnu ikke inddelt</p>"""
-    return page("Overblik", nav + search.form + overview_main(body), msg, enhanced=True)
+    return page(None, nav + search.form + overview_main(body), msg, enhanced=True)
 
 
 async def tick_todo(request: Request) -> Response:
@@ -1105,9 +1116,11 @@ def todo_detail(d: Detail, *, hide: bool) -> str:
 
 
 def calendar_html(d: Detail) -> str:
-    """ "Blev til i kalenderen": each event the item changed, with its whole history and whom the user removed it for."""
+    """ "Blev til i kalenderen": each event the item changed, with its whole history, whom the user removed it for,
+    and a button for each child who still has it coming up."""
     if not d.events:
         return '<h3>Blev til i kalenderen</h3><p class="mut">Intet i kalenderen.</p>'
+    upcoming = {u.key: u.child_ids for u in d.ledger.upcoming(d.today.isoformat())}  # who can still have it removed
     rows = []
     for h in d.events:
         when = fmt_date(h.start) + (f"–{fmt_date(h.end)}" if h.end and h.end != h.start else "")
@@ -1123,12 +1136,28 @@ def calendar_html(d: Detail) -> str:
         removed = [c for c in map(int, d.cfg["children"]) if d.ledger.is_removed(h.key, c)]
         if removed:
             lines.append(f"fjernet af dig for {e(child_names(removed, d.cfg))}")
+        buttons = "".join(
+            remove_button(h.key, h.title, c, d.cfg, back=store.item_path(d.item.key)) for c in upcoming.get(h.key, [])
+        )
         rows.append(
             f'<li><span class="date">{e(when)}</span><span class="grow">{e(h.title)}{flag}'
             f'<br><span class="mut">{e(child_names(h.child_ids, d.cfg))}</span>'
-            f'<br><span class="mut">{"<br>".join(lines)}</span></span></li>'
+            f'<br><span class="mut">{"<br>".join(lines)}</span></span><span class="acts">{buttons}</span></li>'
         )
     return f'<h3>Blev til i kalenderen</h3><ul class="list">{"".join(rows)}</ul>'
+
+
+def remove_button(key: str, title: str, child_id: int, cfg: dict[str, Any], *, back: str) -> str:
+    """ "Fjern for <fornavn>" ("Fjern" with one child): to the confirmation (:func:`remove_confirm_page`), which
+    the overview's script asks in a dialog instead (``data-confirm``) and then posts the form itself."""
+    name = child_first_name(cfg["children"].get(str(child_id)))
+    label = f"Fjern for {name}" if len(cfg["children"]) > 1 else "Fjern"
+    question = f"Fjern »{title}« fra kalenderen for {name}? Den bliver ikke oprettet igen."
+    return (
+        f'<form class="inline" method="get" action="/events/remove" data-confirm="{e(question)}">'
+        f'<input type="hidden" name="key" value="{e(key)}"><input type="hidden" name="child_id" value="{child_id}">'
+        f'<input type="hidden" name="back" value="{e(back)}"><button class="small">{e(label)}</button></form>'
+    )
 
 
 def thread_html(d: Detail) -> str:
@@ -1171,12 +1200,16 @@ async def item_detail(request: Request) -> Response:
         body = overview_main('<p class="mut">Det findes ikke i arkivet.</p>')
         return page("Findes ikke", nav + body, status_code=404, enhanced=True)
     hide = d.item.sensitive and request.query_params.get("show") != "1"
-    title = "Overblik" if hide else d.item.latest.title or "Overblik"
+    title = None if hide else d.item.latest.title or None
     return page(title, nav + overview_main(detail_html(d, hide=hide)), request.query_params.get("msg"), enhanced=True)
 
 
 STATIC_DIR = Path(__file__).parent / "static"
-STATIC_FILES = {"overblik.js": "text/javascript; charset=utf-8"}  # what /static/ hands out, by name; nothing else
+STATIC_FILES = {  # what /static/ hands out, by name; nothing else
+    "overblik.js": "text/javascript; charset=utf-8",
+    # The app's icon. The PNGs are made from the SVG: uvx cairosvg icon.svg -W 192 -H 192 -o icon-192.png (and 512)
+    "icon.svg": "image/svg+xml", "icon-192.png": "image/png", "icon-512.png": "image/png",
+}
 
 
 async def static_file(request: Request) -> Response:
@@ -1185,6 +1218,21 @@ async def static_file(request: Request) -> Response:
     if name not in STATIC_FILES:
         return PlainTextResponse("Findes ikke.", status_code=404)
     return FileResponse(str(STATIC_DIR / name), media_type=STATIC_FILES[name], headers={"Cache-Control": "no-cache"})
+
+
+async def manifest(request: Request) -> Response:
+    """What a phone needs to put the page on the home screen as an app (no service worker: it is online only)."""
+    name = web_config()["app_name"]
+    icons = [
+        {"src": "/static/icon.svg", "type": "image/svg+xml", "sizes": "any"},
+        {"src": "/static/icon-192.png", "type": "image/png", "sizes": "192x192"},
+        {"src": "/static/icon-512.png", "type": "image/png", "sizes": "512x512"},
+    ]
+    body = {
+        "name": name, "short_name": name, "lang": "da", "start_url": "/", "scope": "/", "display": "standalone",
+        "theme_color": THEME_COLOR, "background_color": "#ffffff", "icons": icons,
+    }
+    return JSONResponse(body, media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
 
 
 async def item_file(request: Request) -> Response:
@@ -1217,14 +1265,46 @@ async def item_file(request: Request) -> Response:
     )
 
 
+def remove_fields(fields) -> tuple[str, int | None, str | None]:
+    """What a "Fjern" button sends: the event's key, the child (None: from a page before removal was per child:
+    every child) and the page to return to (None: the settings)."""
+    raw_child = str(fields.get("child_id") or "")
+    back = str(fields.get("back") or "")
+    return str(fields.get("key") or ""), int(raw_child) if raw_child.isdigit() else None, safe_back(back) if back else None
+
+
+async def remove_confirm_page(request: Request) -> Response:
+    """The confirmation before a "Fjern" without the overview's script: what is removed for whom, and the button."""
+    key, child_id, back = remove_fields(request.query_params)
+    cfg, ledger = store.load_config(), Ledger.load()
+    entries = [x for x in ledger.entries(key) if child_id is None or child_id in x.child_ids]
+    back_url = back or "/settings"
+    if not entries:
+        body = f'<p>Begivenheden findes ikke længere.</p><p><a href="{e(back_url)}" class="btn">Tilbage</a></p>'
+        return page("Fjern fra kalenderen", tabs(None) + overview_main(body), enhanced=True)
+    first = entries[0]
+    children = [child_id] if child_id is not None else sorted({c for x in entries for c in x.child_ids})
+    when = fmt_date(first.start) + (f"–{fmt_date(first.end)}" if first.end and first.end != first.start else "")
+    fields = f'<input type="hidden" name="key" value="{e(key)}">'
+    if child_id is not None:
+        fields += f'<input type="hidden" name="child_id" value="{child_id}">'
+    if back:
+        fields += f'<input type="hidden" name="back" value="{e(back)}">'
+    body = (
+        f"<h2>Fjern fra kalenderen</h2><p>Fjern »{e(first.title)}« ({e(when)}) fra kalenderen for "
+        f"{e(child_names(children, cfg))}? Den bliver ikke oprettet igen.</p>"
+        f'<form method="post" action="/events/remove">{fields}<button class="primary">Fjern</button> '
+        f'<a href="{e(back_url)}" class="btn">Fortryd</a></form>'
+    )
+    return page("Fjern fra kalenderen", tabs(None) + overview_main(body), enhanced=True)
+
+
 async def remove_event(request: Request) -> Response:
+    """Remove an event for a child; back to the page the button was on (``back``), else the settings."""
     from .credentials import GoogleLoginRequired
     from .gcal import remove_event as do_remove
 
-    form = await request.form()
-    key = str(form.get("key") or "")
-    raw_child = str(form.get("child_id") or "")
-    child_id = int(raw_child) if raw_child.isdigit() else None  # a page from before removal was per child
+    key, child_id, back = remove_fields(await request.form())
 
     def work() -> int:
         with store.lock(wait=False):
@@ -1239,7 +1319,9 @@ async def remove_event(request: Request) -> Response:
         msg = "Begivenheden findes ikke længere."
     except GoogleLoginRequired:
         msg = "Google er ikke forbundet."
-    return go_home(msg)
+    if back is None:
+        return go_home(msg)
+    return RedirectResponse(f"{back}{'&' if '?' in back else '?'}msg={quote(msg)}", status_code=303)
 
 
 LOGIN_JS = """
@@ -1405,6 +1487,8 @@ def create_app(
             Route("/overblik/item/{key}", old_item),
             Route("/overblik/item/{key}/fil/{attachment:path}", old_file),
             Route("/static/{name}", static_file),
+            Route("/manifest.webmanifest", manifest),
+            Route("/events/remove", remove_confirm_page),
             Route("/events/remove", remove_event, methods=["POST"]),
             Route("/todos/{action}", tick_todo, methods=["POST"]),
             Route("/aula/login", aula_login_page),

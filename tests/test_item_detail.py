@@ -342,3 +342,91 @@ def test_an_upcoming_event_from_a_sensitive_thread_shows_its_source_only_as_sens
 
     store.path("ARCHIVE_FILE").unlink()  # no archive to look it up in: as before
     assert '<a href="/item/message:5:a">Samtale om skoledagen</a>' in upcoming()
+
+
+# ------------------------------------------------------------------ "Fjern for <barn>" under "Blev til i kalenderen"
+
+
+def remove_forms(html):
+    """The forms under "Blev til i kalenderen" that remove an event: (the button's text, the form's fields)."""
+    import re
+
+    found = []
+    for form in re.findall(r'<form\b[^>]*action="/events/remove"[^>]*>.*?</form>', calendar(html), re.S):
+        button = re.search(r"<button[^>]*>(.*?)</button>", form, re.S)[1]
+        found.append((button, dict(re.findall(r'name="(\w+)" value="([^"]*)"', form))))
+    return found
+
+
+def remove_without_script(html, button):
+    """Press ``button`` on the detail as a browser without script does: its confirmation, then "Fjern" there.
+    Returns the confirmation page and where the removal led back to."""
+    import re
+
+    fields = dict(remove_forms(html))[button]
+    configure()
+    with make_client(today=lambda: TODAY) as c:  # Google is the aula fixture's
+        confirm = c.get("/events/remove", params=fields, headers=auth())
+        assert confirm.status_code == 200
+        form = re.search(r'<form\b[^>]*method="post"[^>]*action="/events/remove"[^>]*>.*?</form>', confirm.text, re.S)[0]
+        data = dict(re.findall(r'name="(\w+)" value="([^"]*)"', form))
+        r = c.post("/events/remove", data=data, headers={**auth(), "Origin": "https://aula.example.dk"}, follow_redirects=False)
+    assert r.status_code == 303
+    return confirm, r.headers["location"]
+
+
+
+def two_children_on_a_trip(aula, start="2099-12-04"):
+    aula["client"] = FakeAula([child(1, "Emma Test"), child(2, "Oscar Test")], [post(1, "Skovtur", 2)], [], {})
+    run_fetch()
+    apply({"processed": ["post:1"], "events": [trip_event("post:1", start=start)], "new_topics": TOPICS,
+           "classifications": [classify("post:1")]})
+
+
+def test_an_upcoming_event_for_two_children_has_a_button_per_child_which_after_a_confirmation_removes_it_for_that_child(aula):
+    two_children_on_a_trip(aula)
+
+    html = get("/item/post:1").text
+    assert [b for b, _ in remove_forms(html)] == ["Fjern for Emma", "Fjern for Oscar"]
+
+    confirm, back = remove_without_script(html, "Fjern for Oscar")
+    assert "Skovtur" in confirm.text and "Oscar" in confirm.text and "Emma" not in confirm.text
+    assert back.startswith("/item/post:1?msg=")
+
+    html = get("/item/post:1").text
+    assert "fjernet af dig for Oscar" in calendar(html)
+    assert [b for b, _ in remove_forms(html)] == ["Fjern for Emma"]
+
+
+def test_an_event_that_is_over_has_no_button(aula):
+    two_children_on_a_trip(aula, start="2026-11-05")
+    html = get("/item/post:1").text
+    assert "Skovtur" in calendar(html) and remove_forms(html) == []
+    assert len(remove_forms(get("/item/post:1", today=dt.date(2026, 11, 4)).text)) == 2
+
+
+def test_with_one_child_the_button_just_says_fjern(aula):
+    aula["client"] = FakeAula([child(1, "Emma Test")], [post(1, "Skovtur", 1)], [], {})
+    run_fetch()
+    apply({"processed": ["post:1"], "events": [{**trip_event("post:1"), "child_ids": [1]}], "new_topics": TOPICS,
+           "classifications": [classify("post:1")]})
+    html = get("/item/post:1").text
+    assert [b for b, _ in remove_forms(html)] == ["Fjern"]
+    confirm, back = remove_without_script(html, "Fjern")
+    assert "Emma" in confirm.text and back.startswith("/item/post:1?msg=")
+    assert "fjernet af dig for Emma" in calendar(get("/item/post:1").text)
+
+
+def test_fjern_only_leads_back_to_a_page_on_the_site_and_without_back_to_the_settings(aula):
+    two_children_on_a_trip(aula)
+    configure()
+    origin = {**auth(), "Origin": "https://aula.example.dk"}
+    with make_client(today=lambda: TODAY) as c:
+        evil = c.post("/events/remove", data={"key": "post:1#1", "child_id": "1", "back": "https://evil.example/"},
+                      headers=origin, follow_redirects=False)
+        none = c.post("/events/remove", data={"key": "post:1#1", "child_id": "2"}, headers=origin, follow_redirects=False)
+        page = c.get("/events/remove", params={"key": "post:1#1", "child_id": "1", "back": "https://evil.example/"},
+                     headers=auth())
+    assert evil.headers["location"].startswith("/?msg=")
+    assert none.headers["location"].startswith("/settings?msg=")
+    assert "Begivenheden findes ikke længere." in page.text and "evil.example" not in page.text
