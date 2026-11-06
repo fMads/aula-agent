@@ -1,4 +1,5 @@
-"""The overview's timeline on the front page (trin 2): Gælder nu, Kommende week by week, Stående info, Tidligere."""
+"""The overview's timeline on the front page (trin 2, #54): I dag og i morgen, Gælder nu, Kommende day by day,
+Stående info, Tidligere week by week."""
 
 import datetime as dt
 import re
@@ -71,7 +72,7 @@ def synced(key, title, start, *, source, child_ids=(1,), end=None):
     ledger.save()
 
 
-def test_upcoming_is_week_by_week_with_a_deadline_in_its_own_week_and_events_linked_to_their_item():
+def test_upcoming_is_day_by_day_with_a_deadline_on_its_own_day_and_events_linked_to_their_item():
     with archive.open() as a:
         a.save_post(post(3, "Juleklip", publish="2026-10-28T08:00:00"))
         a.save_post(post(4, "Trivselsundersøgelse", publish="2026-10-29T08:00:00"))
@@ -81,15 +82,52 @@ def test_upcoming_is_week_by_week_with_a_deadline_in_its_own_week_and_events_lin
     synced("post:3#1", "Juleklip", "2026-12-04T10:00", end="2026-12-04T12:00", source="post:3")
     synced("post:3#2", "Frist: tilmelding juleklip", "2026-11-20", source="post:3")
 
-    upcoming = weeks(section(overview(), "kommende"))
+    upcoming = days(section(overview(), "kommende"))
 
-    assert list(upcoming) == ["2026-11-09", "2026-11-16", "2026-11-30"]
-    assert titles(upcoming["2026-11-09"]) == ["Trivselsundersøgelse"]
-    deadline = upcoming["2026-11-16"]
-    assert "Frist: tilmelding juleklip" in deadline and 'href="/item/post:3"' in deadline
-    assert "Uge 47" in deadline
-    december = upcoming["2026-11-30"]
+    assert list(upcoming) == ["2026-11-15", "2026-11-20", "2026-12-04"]
+    assert titles(upcoming["2026-11-15"]) == ["Trivselsundersøgelse"] and "Søndag 15/11" in upcoming["2026-11-15"]
+    deadline = upcoming["2026-11-20"]
+    assert "Fredag 20/11" in deadline
+    assert "Frist: tilmelding juleklip" in deadline and 'href="/item/post:3"' in deadline and "hele dagen" in deadline
+    december = upcoming["2026-12-04"]
     assert titles(december) == ["Juleklip"] and december.count("Juleklip") == 1  # the event on the span's day: once
+
+
+def kommende_order(html):
+    """What Kommende has, in order: ("Uge 46", None) for a week line, the date for a day."""
+    return [(f"Uge {dt.date.fromisoformat(v).isocalendar().week}", None) if k == "week" else (None, v)
+            for k, v in re.findall(r'data-(week|day)="([^"]+)"', html)]
+
+
+def test_upcoming_begins_after_tomorrow_has_no_empty_days_and_a_week_line_when_the_week_changes():
+    with archive.open() as a:
+        for pid, title, start in ((1, "Teater", "2026-11-08"), (2, "Bagedag", "2026-11-09"),
+                                  (3, "Museum", "2026-11-11"), (4, "Motionsdag", "2026-11-17")):
+            a.save_post(post(pid, title, publish="2026-11-01T08:00:00"))
+            classify(a, f"post:{pid}", "arrangement", start=start)
+    synced("post:9#1", "Forældremøde", "2026-11-11T19:00", source="post:9")
+
+    upcoming = section(overview(), "kommende")
+
+    assert kommende_order(upcoming) == [
+        (None, "2026-11-08"),  # Sunday: still week 45, as today and tomorrow
+        ("Uge 46", None), (None, "2026-11-09"), (None, "2026-11-11"),
+        ("Uge 47", None), (None, "2026-11-17"),
+    ]
+    on = days(upcoming)
+    assert "Søndag 8/11" in on["2026-11-08"] and "Mandag 9/11" in on["2026-11-09"] and "Tirsdag 17/11" in on["2026-11-17"]
+    assert titles(on["2026-11-11"]) == ["Museum"] and "Forældremøde" in on["2026-11-11"] and "kl. 19:00" in on["2026-11-11"]
+
+
+def test_today_and_tomorrow_are_shown_with_nothing_on_them():
+    with archive.open() as a:
+        a.create_topic("skole", "Institutionens hverdag")  # an archive, with nothing on the days
+
+    html = overview()
+
+    near = days(section(html, "i-dag-og-i-morgen"))
+    assert "Intet i dag." in near["2026-11-06"] and "Intet i morgen." in near["2026-11-07"]
+    assert "Intet kommende." in section(html, "kommende")
 
 
 def topics_in(html):
@@ -222,7 +260,7 @@ def test_a_sensitive_thread_shows_only_its_date_source_and_category_and_the_uncl
     assert html.rindex("2 endnu ikke inddelt") > html.index('<section id="tidligere"')
 
 
-def test_an_open_todo_with_due_stands_in_its_week_under_upcoming_too():
+def test_an_open_todo_with_due_stands_on_its_day_under_upcoming_too():
     with archive.open(at=dt.datetime(2026, 11, 2, 9, tzinfo=dt.UTC)) as a:
         a.save_post(post(1, "Skolefoto", publish="2026-11-02T08:00:00"))
         a.save_post(post(2, "Svømning", publish="2026-11-02T08:00:00"))
@@ -233,13 +271,13 @@ def test_an_open_todo_with_due_stands_in_its_week_under_upcoming_too():
 
     html = overview()
 
-    upcoming = weeks(section(html, "kommende"))
-    assert list(upcoming) == ["2026-11-16"]
-    assert "Bestil billeder" in upcoming["2026-11-16"] and "Køb badehætte" not in section(html, "kommende")
+    upcoming = days(section(html, "kommende"))
+    assert list(upcoming) == ["2026-11-18"]
+    assert "Bestil billeder" in upcoming["2026-11-18"] and "Køb badehætte" not in section(html, "kommende")
     assert "Bestil billeder" in section(html, "skal-goeres") and "Køb badehætte" in section(html, "skal-goeres")
 
 
-def test_upcoming_is_from_today_earlier_is_until_yesterday_and_nothing_current_or_without_a_span_is_upcoming():
+def test_today_is_from_today_earlier_is_until_yesterday_and_nothing_current_or_without_a_span_is_on_the_days():
     with archive.open() as a:
         a.save_post(post(1, "Teater onsdag", publish="2026-10-28T08:00:00"))
         a.save_post(post(2, "Bagedag i dag", publish="2026-10-28T08:00:00"))
@@ -257,7 +295,7 @@ def test_upcoming_is_from_today_earlier_is_until_yesterday_and_nothing_current_o
 
     html = overview()
 
-    assert titles(section(html, "kommende")) == ["Bagedag i dag"]
+    assert titles(section(html, "i-dag-og-i-morgen")) == ["Bagedag i dag"] and titles(section(html, "kommende")) == []
     assert titles(section(html, "gaelder-nu")) == ["Ny ordning i garderoben", "Lus i klassen", "Svømning i november"]
     earlier = section(html, "tidligere")
     assert list(weeks(earlier)) == ["2026-11-02"]  # this week until yesterday
@@ -277,7 +315,7 @@ def test_an_arrangement_over_several_days_under_way_today_is_current_with_its_ev
 
     now = section(html, "gaelder-nu")
     assert titles(now) == ["Lejrskole"] and "gælder 05.11.2026–07.11.2026" in now
-    assert "Lejrskole" not in section(html, "kommende")
+    assert "Lejrskole" not in section(html, "kommende") + section(html, "i-dag-og-i-morgen")
 
 
 def test_aulas_important_mark_with_a_from_but_no_to_holds_for_fourteen_days_from_the_from():
@@ -326,9 +364,9 @@ def test_a_todo_due_on_the_day_its_item_stands_in_upcoming_is_on_the_items_line_
                                  ("post:2", dt.date(2026, 11, 20), archive.Todo("Bestil billeder", dt.date(2026, 11, 17)))):
             a.classify(key, archive.Classification(archive.Category.ARRANGEMENT, start, topics=("skole",), todo=todo))
 
-    week = weeks(section(overview(), "kommende"))["2026-11-16"]
+    upcoming = section(overview(), "kommende")
 
-    lines = week.split("<li")[1:]
+    lines = upcoming.split("<li")[1:]
     assert len(lines) == 3  # Bestil billeder (17/11, its own line), Juleklip (18/11), Skolefoto (20/11)
     assert "todo-row" in lines[0] and "Bestil billeder" in lines[0]
     assert 'data-key="post:1"' in lines[1] and "Medbring saks" in lines[1] and 'action="/todos/check"' in lines[1]
@@ -350,3 +388,49 @@ def test_vis_aeldre_keeps_the_child_and_the_child_filter_on_an_earlier_page_keep
     chips = html.split('id="barn-filter"', 1)[1].split("</nav>", 1)[0]
     assert 'href="/?before=2026-09-07&amp;child=2"' in chips and 'href="/?before=2026-09-07"' in chips
     assert titles(section(html, "tidligere")) == ["Skolestart"]
+
+
+def days(html):
+    """The days in a day list, by their date, in order: date -> what is on the day (its heading first)."""
+    parts = html.split(' data-day="')[1:]
+    return {p[:10]: p for p in parts}
+
+
+def test_today_and_tomorrow_have_an_event_today_and_a_todo_due_tomorrow_and_upcoming_has_neither():
+    with archive.open(at=dt.datetime(2026, 11, 2, 9, tzinfo=dt.UTC)) as a:
+        a.save_post(post(1, "Skolefoto", publish="2026-11-02T08:00:00"))
+        a.create_topic("skole", "Institutionens hverdag")
+        a.classify("post:1", archive.Classification(
+            archive.Category.INFO, topics=("skole",), todo=archive.Todo("Bestil billeder", dt.date(2026, 11, 7))))
+    synced("post:9#1", "Morgensang", "2026-11-06T08:15", end="2026-11-06T09:00", source="post:9")
+    synced("post:9#2", "Fodboldstævne", "2026-11-07", source="post:9", child_ids=(1, 2))
+
+    html = overview()
+
+    near = days(section(html, "i-dag-og-i-morgen"))
+    assert list(near) == ["2026-11-06", "2026-11-07"]
+    assert "I dag" in near["2026-11-06"] and "Morgensang" in near["2026-11-06"] and "08:15" in near["2026-11-06"]
+    tomorrow = near["2026-11-07"]
+    assert "I morgen" in tomorrow and "Fodboldstævne" in tomorrow and "hele dagen" in tomorrow
+    assert "Bestil billeder" in tomorrow and 'action="/todos/check"' in tomorrow
+    upcoming = section(html, "kommende")
+    for elsewhere in ("Morgensang", "Fodboldstævne", "Bestil billeder"):
+        assert elsewhere not in upcoming
+
+
+def test_an_event_today_on_its_items_day_stands_once_and_a_sensitive_thread_is_hidden_on_the_days():
+    with archive.open(at=dt.datetime(2026, 11, 2, 9, tzinfo=dt.UTC)) as a:
+        a.save_post(post(1, "Bagedag", publish="2026-11-02T08:00:00"))
+        save_message(a, message("9", "m1", "2026-11-02T08:00:00", "Samtale om dagen", sensitive=True))
+        a.create_topic("skole", "Institutionens hverdag")
+        classify(a, "post:1", "arrangement", topics=["skole"], start="2026-11-06")
+        a.classify("message:9:m1", archive.Classification(
+            archive.Category.ORIENTERING, todo=archive.Todo("Ring til personalet", dt.date(2026, 11, 7))))
+    synced("post:1#1", "Bagedag", "2026-11-06T09:00", source="post:1")
+
+    near = section(overview(), "i-dag-og-i-morgen")
+
+    assert near.count("Bagedag") == 1 and titles(near) == ["Bagedag"]
+    tomorrow = days(near)["2026-11-07"]
+    assert "🔒 Følsom tråd" in tomorrow
+    assert "Ring til personalet" not in tomorrow and "Samtale om dagen" not in tomorrow

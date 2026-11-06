@@ -273,7 +273,9 @@ ul.list li.row{padding:.75rem 0}.row .grow>.item-link{font-weight:500;display:in
 @media (prefers-color-scheme:dark){.cat-arrangement,.cat-frist,.cat-periode,.cat-info{background:transparent}}
 ul.now{border:1px solid var(--line);border-radius:12px;padding:0 .9rem;background:var(--soft)}ul.now li:first-child{border-top:0}
 .week{margin-top:1.2rem}.week h3{display:flex;justify-content:space-between;gap:.5rem;border-bottom:2px solid var(--line);padding-bottom:.2rem;margin:0}
-.week.cur h3{border-color:var(--acc)}.ev{font-weight:500}.topic h3{margin:1rem 0 .2rem}
+.week.cur h3{border-color:var(--acc)}.ev{font-weight:500}
+.day{margin-top:1rem}.day h3{margin:0 0 .1rem}.day.today h3{color:var(--acc)}
+.week-line{margin:1.4rem 0 0;padding-bottom:.15rem;border-bottom:1px solid var(--line);font-size:.8rem;color:var(--mut)}.topic h3{margin:1rem 0 .2rem}
 #ikke-inddelt{margin-top:2.5rem}
 .thumbs{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem}.thumb{width:7rem;height:7rem;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 form.search select{flex:1 1 7rem;min-width:0;min-height:2.5rem}form.search button{min-height:2.5rem}
@@ -600,18 +602,23 @@ def day_param(value: str | None) -> dt.date | None:
         return None
 
 
-def event_row(line: timeline.EventLine) -> str:
-    """An event in the calendar (on the day it begins), with a link to the item it came from."""
+def event_row(line: timeline.EventLine, *, dated: bool = True) -> str:
+    """An event in the calendar, with a link to the item it came from; ``dated``: with the day it begins (in the
+    weeks), else on a day of its own (under its heading) with its time or "hele dagen" instead."""
     ev, source, start = line.event, line.source, line.start
     end = dt.date.fromisoformat((ev.end or ev.start)[:10])
-    when = [f"kl. {ev.start[11:16]}"] if len(ev.start) > 10 else []
+    time = f"kl. {ev.start[11:16]}" if len(ev.start) > 10 else ""
+    when = [time] if time and dated else []
+    if not dated and start < line.day:
+        when.append(f"fra {fmt_day(start)}")
     if end != start:
         when.append(f"til {fmt_day(end)}")
     src = ""
     if ev.source and source is not None:
         src = f' · fra <a class="item-link event-src" href="{e(store.item_path(ev.source))}">{e(item_title(source))}</a>'
+    cell = day_cell(start) if dated else f'<span class="date time">{e(time or "hele dagen")}</span>'
     return (
-        f'<li class="row event" data-event="{e(ev.key)}">{day_cell(start)}<span class="grow">'
+        f'<li class="row event" data-event="{e(ev.key)}">{cell}<span class="grow">'
         f'<span class="ev">📅 {e(ev.title)}</span>{" " + e(" ".join(when)) if when else ""}'
         f'<br><span class="mut">i kalenderen{src}</span></span></li>'
     )
@@ -628,30 +635,56 @@ def week_html(first: dt.date, rows: list[str], today: dt.date) -> str:
     )
 
 
-def line_html(line: timeline.Line, today: dt.date, back: str) -> str:
+def line_html(line: timeline.Line, today: dt.date, back: str, *, dated: bool = True) -> str:
+    """One line on the timeline; ``dated``: with its day (in the weeks), else under its day's heading."""
+    day = line.day if dated else None
     match line:
         case timeline.ItemLine(todo=None):
-            return item_row(line.item, day=line.day)
+            return item_row(line.item, day=day)
         case timeline.ItemLine(todo=t):
             what = "" if t.item.sensitive else f'<span class="meta">✓ <span class="todo">{e(t.text)}</span></span>'
-            return item_row(line.item, what, day=line.day, acts=todo_button(t, checked=False, back=back))
+            return item_row(line.item, what, day=day, acts=todo_button(t, checked=False, back=back))
         case timeline.EventLine():
-            return event_row(line)
+            return event_row(line, dated=dated)
         case timeline.TodoLine():
-            return todo_item(line.todo, today=today, checked=False, day=line.day, back=back)
+            return todo_item(line.todo, today=today, checked=False, day=day, back=back)
 
 
 def weeks_html(weeks: list[timeline.Week], today: dt.date, back: str) -> str:
     return "".join(week_html(w.monday, [line_html(line, today, back) for line in w.lines], today) for w in weeks)
 
 
-def upcoming_html(
-    items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date, back: str,
-    sources: dict[str, archive.Item],
-) -> str:
-    """Kommende (:func:`timeline.upcoming`)."""
-    weeks = weeks_html(timeline.upcoming(items, events, todos, today, sources), today, back)
-    return f'<section id="kommende"><h2>Kommende</h2>{weeks or "<p class=\"mut\">Intet kommende.</p>"}</section>'
+WEEKDAY_NAMES = ("Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag")
+
+
+def day_html(d: timeline.Day, today: dt.date, back: str) -> str:
+    """One day with its lines under a heading ("Mandag 9/11"; "I dag · fredag 6/11"), or "Intet i dag/i morgen"."""
+    date = f"{WEEKDAY_NAMES[d.day.weekday()]} {d.day.day}/{d.day.month}"
+    near = {0: "i dag", 1: "i morgen"}.get((d.day - today).days)
+    heading = f"{near.capitalize()} · {date.lower()}" if near else date
+    rows = "".join(line_html(line, today, back, dated=False) for line in d.lines) or f'<li class="mut">Intet {near}.</li>'
+    return (
+        f'<div class="day{" today" if d.day == today else ""}" data-day="{d.day.isoformat()}"><h3>{e(heading)}</h3>'
+        f'<ul class="list">{rows}</ul></div>'
+    )
+
+
+def near_html(coming: timeline.Upcoming, today: dt.date, back: str) -> str:
+    """I dag og i morgen (:func:`timeline.upcoming`), also when there is nothing on them."""
+    days = "".join(day_html(d, today, back) for d in coming.near)
+    return f'<section id="i-dag-og-i-morgen"><h2>I dag og i morgen</h2>{days}</section>'
+
+
+def upcoming_html(coming: timeline.Upcoming, today: dt.date, back: str) -> str:
+    """Kommende (:func:`timeline.upcoming`): the days with something on them, and a line when the week changes
+    (from the week of tomorrow, the last day above)."""
+    parts, week = [], timeline.monday(coming.near[-1].day)
+    for d in coming.later:
+        if (first := timeline.monday(d.day)) != week:
+            parts.append(f'<p class="week-line" data-week="{first.isoformat()}">Uge {first.isocalendar().week}</p>')
+            week = first
+        parts.append(day_html(d, today, back))
+    return f'<section id="kommende"><h2>Kommende</h2>{"".join(parts) or "<p class=\"mut\">Intet kommende.</p>"}</section>'
 
 
 def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date, params) -> str:
@@ -836,9 +869,9 @@ def search_part(params, today: dt.date) -> SearchPart | None:
 
 
 async def overview(request: Request) -> Response:
-    """The front page: the timeline (Skal gøres, Gælder nu, Kommende week by week, Stående info, Tidligere) under the
-    search field; on /search the search results instead of it (either sends on to the other when it is asked for
-    what the other shows)."""
+    """The front page: the timeline (Skal gøres, I dag og i morgen, Gælder nu, Kommende day by day, Stående info,
+    Tidligere) under the search field; on /search the search results instead of it (either sends on to the other
+    when it is asked for what the other shows)."""
     if request.url.path != list_path(request.query_params):
         return RedirectResponse(overview_url(request.query_params), status_code=302)
     ledger = Ledger.load()
@@ -875,14 +908,16 @@ async def overview(request: Request) -> Response:
         return page("Tidligere", nav + search.form + overview_main(earlier_html(shown, before, today, params) + back), enhanced=True)
     back = overview_url(params)  # where "Klaret" returns to: this view
     open_, checked = todo_lists(todos, ledger)
+    coming = timeline.upcoming(shown, events, open_, today, sources)
     now_html = "".join(
         item_row(i, f'<span class="mut meta">{e(why)}</span>' if (why := why_current(i, reason)) else "")
         for i, reason in timeline.now(shown, today)
     )
     body = f"""
 <section id="skal-goeres">{todos_html(open_, checked, ledger, today, back)}</section>
+{near_html(coming, today, back)}
 <section id="gaelder-nu"><h2>Gælder nu</h2><ul class="list now">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>
-{upcoming_html(shown, events, open_, today, back, sources)}
+{upcoming_html(coming, today, back)}
 {standing_html([i for i in shown if i.classification.category == archive.Category.INFO])}
 {earlier_html(shown, today, today, params)}
 <p class="mut" id="ikke-inddelt">{unclassified} endnu ikke inddelt</p>"""
