@@ -181,6 +181,13 @@ def demo_app():
                 await PlainTextResponse("Ikke i demoen.", status_code=403)(scope, receive, send)
                 return
             scope = {**scope, "headers": [*scope["headers"], (b"cf-access-jwt-assertion", b"demo")]}
+            if scope["path"] == "/forside":  # PROTOTYPE (#34) – smides væk
+                from starlette.requests import Request
+
+                from . import forside_prototype
+
+                await (await forside_prototype.forside(Request(scope, receive)))(scope, receive, send)
+                return
         await app(scope, receive, send)
 
     return asgi
