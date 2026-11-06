@@ -5,7 +5,7 @@
 // - "Klaret"/"Fortryd" uden genindlæsning: linjen bliver stående og markeres som klaret (eller åben) alle steder
 //   på siden, så et fejltryk kan fortrydes med samme knap,
 // - "Fjern for <barn>" spørger i en dialog i stedet for på bekræftelsessiden.
-// Siderne hentes som almindelig HTML, og kun <main id="overblik-main"> (og toppen og fanerne) skiftes ud.
+// Siderne hentes som almindelig HTML, og kun <main id="overblik-main"> (og toppen, fanerne og bredden) skiftes ud.
 // Går noget galt (fx Cloudflare Access vil have et nyt login), så navigeres der helt almindeligt.
 (() => {
   "use strict";
@@ -60,6 +60,12 @@
     return content;
   }
 
+  // Sidens <main> (med advarselslinjen, kun på forsiden) og dens bredde (forsiden har to kolonner) i stedet for den viste.
+  function swapMain(doc) {
+    main().replaceWith(mainOf(doc));
+    document.body.classList.toggle("wide", doc.body.classList.contains("wide"));
+  }
+
   function sameList(a, b) {
     const u = new URL(a, location.href), v = new URL(b, location.href);
     u.searchParams.delete("msg");
@@ -94,7 +100,7 @@
       const mine = document.getElementById("barn-filter");
       if (chips && mine) mine.replaceWith(chips);
     }
-    main().replaceWith(mainOf(doc));
+    swapMain(doc);
     const tabs = doc.getElementById("faner"), mine = document.getElementById("faner");
     if (tabs && mine) mine.replaceWith(tabs); // den aktive fane følger med
     document.title = doc.title;
@@ -307,7 +313,7 @@
       showList(listUrl, { keepScroll: true });
     } else {
       document.querySelectorAll("body > .flash").forEach((el) => el.remove());
-      main().replaceWith(mainOf(got.doc));
+      swapMain(got.doc);
       markChosen(isOpen() ? drawer.body.dataset.url : null);
     }
   }

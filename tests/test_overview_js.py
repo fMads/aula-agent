@@ -65,6 +65,25 @@ def test_the_pages_and_the_script_agree_on_the_ids_the_script_swaps_and_listens_
             assert f'"{id_}"' in script or f"#{id_}" in script, id_
 
 
+def test_what_differs_between_the_lists_is_in_what_the_script_swaps_the_warning_line_and_the_width(monkeypatch, tmp_path):
+    """The script swaps the top, the main part and the tabs, and the body's width: the warning line (only on the front
+    page) is in the main part, and only the front page is wide, so neither stays behind on another list or is missing
+    after one."""
+    from aula_agent import web
+
+    monkeypatch.setattr("aula.config.DEFAULT_TOKEN_FILE", tmp_path / "no-aula-session.json")  # Aula login missing
+    archive_with_a_post()
+    script = (web.STATIC_DIR / "overblik.js").read_text(encoding="utf-8")
+    front = get("/").text
+    main = front.split('<main id="overblik-main">', 1)[1]
+    assert 'id="advarsler"' in main and 'id="advarsler"' not in front.split('<main id="overblik-main">', 1)[0]
+    assert re.search(r'<body class="wide">', front)
+    for path, params in (("/info", {}), ("/past", {}), ("/search", {"q": "skov"})):
+        html = get(path, **params).text
+        assert 'id="advarsler"' not in html and re.search(r"<body>", html), path
+    assert '"wide"' in script and "doc.body" in script  # the width follows the page it swaps in
+
+
 def search_form(html):
     return html.split('<form id="search"', 1)[1].split("</form>", 1)[0]
 

@@ -418,7 +418,8 @@ def page(
 
 
 def overview_main(content: str) -> str:
-    """What the overview's script swaps: everything under the tabs and the search field."""
+    """What the overview's script swaps: everything under the tabs and the search field (the front page's warning
+    line too), as it swaps the top, the tabs and the body's width (``wide``)."""
     return f'<main id="overblik-main">{content}</main>'
 
 
@@ -1157,8 +1158,8 @@ async def overview_page(request: Request, params: QueryParams) -> Response:
     got = await asyncio.to_thread(read)
     warned = warnings_html(ledger) if path == "/" else ""
     if got is None or search is None:
-        body = overview_main('<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>')
-        return page(None, warned + body, enhanced=True, nav=nav)
+        body = overview_main(warned + '<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>')
+        return page(None, body, enhanced=True, nav=nav)
     items, todos, sources = got
     todos = [t for t in todos if for_child(t.item.child_ids, child)]
     shown = [
@@ -1185,7 +1186,7 @@ async def overview_page(request: Request, params: QueryParams) -> Response:
 {near_html(coming, today, back, kids)}
 {upcoming_html(coming, today, back, kids)}
 </div></div>"""
-    return page(None, search.form + warned + overview_main(body), msg, enhanced=True, nav=nav, wide=True)
+    return page(None, search.form + overview_main(warned + body), msg, enhanced=True, nav=nav, wide=True)
 
 
 async def tick_todo(request: Request) -> Response:
