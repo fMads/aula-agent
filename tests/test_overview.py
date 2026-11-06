@@ -315,3 +315,21 @@ def test_an_upcoming_event_links_to_its_item_whenever_the_archive_has_it():
         "post:6": "Tur for Oscar",
     }
     assert "Samtale om skoledagen" not in upcoming and "Uden kilde i arkivet" in upcoming
+
+
+def test_a_todo_due_on_the_day_its_item_stands_in_upcoming_is_on_the_items_line_not_a_line_of_its_own():
+    with archive.open(at=dt.datetime(2026, 11, 2, 9, tzinfo=dt.UTC)) as a:
+        a.save_post(post(1, "Juleklip", publish="2026-11-02T08:00:00"))
+        a.save_post(post(2, "Skolefoto", publish="2026-11-02T08:00:00"))
+        a.create_topic("skole", "Skolens hverdag")
+        for key, start, todo in (("post:1", dt.date(2026, 11, 18), archive.Todo("Medbring saks", dt.date(2026, 11, 18))),
+                                 ("post:2", dt.date(2026, 11, 20), archive.Todo("Bestil billeder", dt.date(2026, 11, 17)))):
+            a.classify(key, archive.Classification(archive.Category.ARRANGEMENT, start, topics=("skole",), todo=todo))
+
+    week = weeks(section(overview(), "kommende"))["2026-11-16"]
+
+    lines = week.split("<li")[1:]
+    assert len(lines) == 3  # Bestil billeder (17/11, its own line), Juleklip (18/11), Skolefoto (20/11)
+    assert "todo-row" in lines[0] and "Bestil billeder" in lines[0]
+    assert 'data-key="post:1"' in lines[1] and "Medbring saks" in lines[1] and 'action="/todos/check"' in lines[1]
+    assert "Medbring saks" not in lines[0] + lines[2]

@@ -35,10 +35,11 @@ def in_weeks(items: list[archive.Item]) -> list[tuple[dt.date, archive.Item]]:
 
 @dataclass(frozen=True)
 class ItemLine:
-    """An item on its day."""
+    """An item on its day; ``todo``: its open todo, when it is due that same day (then not a line of its own)."""
 
     day: dt.date
     item: archive.Item
+    todo: archive.ItemTodo | None = None
 
 
 @dataclass(frozen=True)
@@ -94,14 +95,20 @@ def upcoming(
     item's span begins is that item, shown once: in Kommende or Gælder nu) and the
     open ``todos`` due today or later. ``sources``: the events' items in the archive (shown or not), by key."""
     by_key = {i.key: i for i in items}
-    lines: list[Line] = [ItemLine(i.classification.span_start, i) for i in items if is_upcoming(i, today)]
+    due = {t.item.key: t for t in todos if t.due is not None and t.due >= today}
+    lines: list[Line] = []
+    for item in items:
+        if is_upcoming(item, today):
+            day = item.classification.span_start
+            todo = due.pop(item.key) if item.key in due and due[item.key].due == day else None
+            lines.append(ItemLine(day, item, todo))
     for ev in events:
         start = dt.date.fromisoformat(ev.start[:10])
         source = by_key.get(ev.source or "")
         if source is not None and source.classification.span_start == start:
             continue
         lines.append(EventLine(max(start, today), ev, sources.get(ev.source or "")))
-    lines += [TodoLine(t.due, t) for t in todos if t.due is not None and t.due >= today]
+    lines += [TodoLine(t.due, t) for t in due.values()]
     return weeks(lines)
 
 

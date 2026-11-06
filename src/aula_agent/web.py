@@ -554,8 +554,9 @@ def todos_html(todos: list[archive.ItemTodo], ledger: Ledger, today: dt.date, ba
     )
 
 
-def item_row(item: archive.Item, extra: str = "", *, day: dt.date | None = None) -> str:
-    """One item on the timeline: its category, title and summary, who sent it and when, linked to its detail page.
+def item_row(item: archive.Item, extra: str = "", *, day: dt.date | None = None, acts: str = "") -> str:
+    """One item on the timeline: its category, title and summary, who sent it and when, linked to its detail page;
+    ``acts``: buttons at its side.
 
     A sensitive thread shows only its date, source and category (the page may stand open on a screen).
     """
@@ -567,7 +568,8 @@ def item_row(item: archive.Item, extra: str = "", *, day: dt.date | None = None)
         f'<li class="row" data-key="{e(item.key)}">{day_cell(day)}<span class="grow">'
         f'<span class="tag cat-{c.category}">{e(CATEGORY_NAMES[c.category])}</span> '
         f'<a class="item-link" href="{e(store.item_path(item.key))}">{e(item_title(item))}</a>'
-        f'{summary}<span class="mut meta">{e(meta)}</span>{extra}</span></li>'
+        f'{summary}<span class="mut meta">{e(meta)}</span>{extra}</span>'
+        f'{f"<span class=\"acts\">{acts}</span>" if acts else ""}</li>'
     )
 
 
@@ -620,8 +622,11 @@ def week_html(first: dt.date, rows: list[str], today: dt.date) -> str:
 
 def line_html(line: timeline.Line, today: dt.date, back: str) -> str:
     match line:
-        case timeline.ItemLine():
+        case timeline.ItemLine(todo=None):
             return item_row(line.item, day=line.day)
+        case timeline.ItemLine(todo=t):
+            what = "" if t.item.sensitive else f'<span class="meta">✓ <span class="todo">{e(t.text)}</span></span>'
+            return item_row(line.item, what, day=line.day, acts=todo_button(t, checked=False, back=back))
         case timeline.EventLine():
             return event_row(line)
         case timeline.TodoLine():
