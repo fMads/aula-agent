@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import quote
 
 from . import contract, credentials, store
 from .contract import Event, EventError, EventsDoc  # noqa: F401  (EventError re-exported)
@@ -126,11 +127,20 @@ def _source_footer(item: dict[str, Any] | None) -> str:
     return " ".join(parts)
 
 
-def build_event_body(ev: Event, source_item: dict[str, Any] | None = None, attachments: list[dict] | None = None) -> dict[str, Any]:
+def item_link(key: str | None) -> str | None:
+    """The public address of an item's detail page on the web page (as
+    ``web.item_url``), or None when the web page's address is not set up."""
+    return store.web_url(f"/overblik/item/{quote(key, safe=':')}") if key else None
+
+
+def build_event_body(
+    ev: Event, source_item: dict[str, Any] | None = None, attachments: list[dict] | None = None, link: str | None = None
+) -> dict[str, Any]:
     """The full Google Calendar body for an event.
 
     Every field aula-agent owns is always present (also when empty), so an
-    update clears what a correction removed.
+    update clears what a correction removed. ``link`` goes to the item's
+    detail page (only its key is in it, so it is fine for sensitive threads too).
     """
     if ev.all_day:
         start = {"date": ev.start.isoformat()}
@@ -138,7 +148,10 @@ def build_event_body(ev: Event, source_item: dict[str, Any] | None = None, attac
     else:
         start = {"dateTime": ev.start.isoformat(), "timeZone": store.TIMEZONE}
         end = {"dateTime": ev.end.isoformat(), "timeZone": store.TIMEZONE}
-    description = "\n\n".join(p for p in (ev.description, _source_footer(source_item), "Oprettet automatisk af aula-agent") if p)
+    footer = _source_footer(source_item)
+    if link:
+        footer = "\n".join(p for p in (footer, f"Hele teksten: {link}") if p)
+    description = "\n\n".join(p for p in (ev.description, footer, "Oprettet automatisk af aula-agent") if p)
     return {
         "summary": ev.title,
         "start": start,
@@ -319,7 +332,7 @@ def _carry_out(a: Action, google: Google, ledger: Ledger, cfg: dict[str, Any], r
 
     source_item = _source_item(ev, ledger)
     attachments = [_upload(google, ledger, cfg, rel) for rel in ev.attachments]
-    body = build_event_body(ev, source_item, attachments)
+    body = build_event_body(ev, source_item, attachments, item_link(ev.source or source_item.get("key")))
     before = ledger.synced(ev.key, calendar_id)
     if event_id and before and ("T" in before.start) == ev.all_day:
         # All-day <-> timed: Google cannot patch one into the other; replace it.
