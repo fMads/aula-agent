@@ -321,6 +321,20 @@ class Item:
         aula = self.latest.child_ids if self.versions else []
         return list(aula or (self.classification.child_ids if self.classification else ()))
 
+    def important_on(self, today: dt.date) -> bool:
+        """Whether Aula marks the post as important on this day (its "vigtig" with its from–to, both inclusive).
+
+        Without a from or a to, it holds from when the post came or for :data:`ORIENTERING_CURRENT_FOR` after.
+        """
+        raw = self.latest.raw if self.kind == "post" and self.versions else {}
+        if not raw.get("isImportant"):
+            return False
+        came = dt.date.fromisoformat(self.latest.date[:10]) if self.latest.date else today
+        start, end = (parse_api_datetime(raw.get(name)) for name in ("importantFrom", "importantTo"))
+        first = start.date() if start else came
+        last = end.date() if end else came + ORIENTERING_CURRENT_FOR
+        return first <= today <= last
+
     def past(self, today: dt.date) -> bool:
         """Whether it is no longer current (then it is dimmed, never hidden), by the newest classification.
 

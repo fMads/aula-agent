@@ -268,11 +268,14 @@ def test_the_search_field_is_at_the_top_of_the_overview_and_the_child_filter_onl
         a.save_post(post(1, "Juleklip"))
     html = search()
     assert html.index('name="q"') < html.index("<h2>Skal gøres") and '<h2>Søgning' not in html
-    assert 'name="child"' not in html and 'name="category"' in html and 'name="kind"' in html
+    assert 'name="child"' not in html and 'id="barn-filter"' not in html
+    assert 'name="category"' in html and 'name="kind"' in html
 
     configure_children()
     html = search(q="jul", child="2")
-    assert 'name="child"' in html and '<option value="2" selected>Oscar</option>' in html
+    assert '<input type="hidden" name="child" value="2">' in html  # a search keeps the child chosen in the filter
+    assert '<a class="chip on" href="/overblik?q=jul&amp;child=2" aria-current="true">Oscar</a>' in html
+    assert 'href="/overblik?q=jul">Alle børn</a>' in html  # the filter keeps the search
     assert 'value="jul"' in html  # the query stays in the field
 
 
