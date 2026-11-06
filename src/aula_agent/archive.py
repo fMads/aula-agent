@@ -281,7 +281,7 @@ class Topic:
     items: int  # how many items have it in their newest classification
 
 
-NOTICE_CURRENT_FOR = dt.timedelta(days=14)  # a notice is past this long after it came
+ORIENTERING_CURRENT_FOR = dt.timedelta(days=14)  # an orientering (and a reply, an unclassified item) is past this long after it came
 
 
 @dataclass
@@ -325,8 +325,8 @@ class Item:
         """Whether it is no longer current (then it is dimmed, never hidden), by the newest classification.
 
         An arrangement, a deadline or a period is past when its span is over (without a span: when the
-        item's day has passed). Standing info never is. A notice, a reply or an item not classified
-        yet is past :data:`NOTICE_CURRENT_FOR` after it came, or when its span is over.
+        item's day has passed). Standing info never is. An orientering, a reply or an item not
+        classified yet is past :data:`ORIENTERING_CURRENT_FOR` after it came, or when its span is over.
         """
         c = self.classification
         if c is not None and c.category == Category.INFO:
@@ -337,7 +337,7 @@ class Item:
         day = dt.date.fromisoformat(self.latest.date[:10]) if self.versions and self.latest.date else None
         if c is not None and c.category in (Category.ARRANGEMENT, Category.FRIST, Category.PERIODE):
             return end is None and day is not None and day < today
-        return day is not None and today - day > NOTICE_CURRENT_FOR
+        return day is not None and today - day > ORIENTERING_CURRENT_FOR
 
 
 TODO_FRESH_FOR = dt.timedelta(days=14)  # a todo without due counts on an item at most this old

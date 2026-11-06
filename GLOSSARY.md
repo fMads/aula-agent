@@ -137,7 +137,7 @@ Det, en synkronisering vil gøre for hvert event og barn: opret, opdatér, slet 
 ## Overblikket
 
 **Past**:
-Et item, der ikke længere er aktuelt. Det gælder et arrangement, en frist eller en periode, hvis span er slut, og en orientering kort tid efter den kom. Stående info bliver aldrig past. Past items skjules ikke, de dæmpes kun.
+Et item, der ikke længere er aktuelt. Det gælder et arrangement, en frist eller en periode, hvis span er slut, og en orientering, et svar og et item uden classification 14 dage efter, de kom. Stående info bliver aldrig past. Past items skjules ikke, de dæmpes kun.
 _Avoid_: Overstået (kun i brugertekst), udløbet (det er Aulas expireAt), arkiveret
 
 **Overview**:
