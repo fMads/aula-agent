@@ -2,7 +2,8 @@
 // - søgning mens man skriver (og filtre og barn-filter uden genindlæsning), URL'en følger med,
 // - detaljen i en skuffe på brede skærme (tilbage-knappen og Esc lukker den), fuld side på mobil,
 // - "/" fokuserer søgefeltet (på detaljen som fuld side: går til forsiden med fokus i det),
-// - "Klaret"/"Fortryd" uden at miste pladsen på siden,
+// - "Klaret"/"Fortryd" uden genindlæsning: linjen bliver stående og markeres som klaret (eller åben) alle steder
+//   på siden, så et fejltryk kan fortrydes med samme knap,
 // - "Fjern for <barn>" spørger i en dialog i stedet for på bekræftelsessiden.
 // Siderne hentes som almindelig HTML, og kun <main id="overblik-main"> (og toppen og fanerne) skiftes ud.
 // Går noget galt (fx Cloudflare Access vil have et nyt login), så navigeres der helt almindeligt.
@@ -202,7 +203,7 @@
     markChosen(null);
     let opener = drawer.opener;
     if (opener && !document.contains(opener)) {
-      // listen er hentet igen imens (fx efter "Klaret"): samme link i den nye liste
+      // listen er hentet igen imens (fx efter "Fjern"): samme link i den nye liste
       opener = [...main().querySelectorAll("a.item-link")].find((a) => a.href === drawer.opener.href);
     }
     if (opener) opener.focus({ preventScroll: true });
@@ -267,30 +268,40 @@
       ev.preventDefault();
       if (!window.confirm(form.dataset.confirm)) return;
       form.method = "post";
-      tick(form);
+      send(form);
       return;
     }
     const action = new URL(form.action, location.href);
-    if (form.method.toLowerCase() !== "post" || !action.pathname.startsWith("/todos/")) return;
+    if (form.method.toLowerCase() !== "post" || !TODO[action.pathname] || !form.closest("[data-todo]")) return;
     ev.preventDefault();
     tick(form);
   });
 
-  // "Klaret"/"Fortryd" (og "Fjern"): send formularen, og vis det, siden sender tilbage til, der hvor knappen sad.
-  async function tick(form) {
-    const inDrawer = drawer && drawer.el.contains(form);
+  // Sender formularen med fetch og giver siden, den sender tilbage til; null når det gik galt (så er den sendt
+  // helt almindeligt i stedet).
+  async function post(form) {
     const button = form.querySelector("button");
+    const focused = button && document.activeElement === button;
     if (button) button.disabled = true;
-    let got;
     try {
-      got = await load(form.action, {
+      return await load(form.action, {
         keep: true,
         fetch: { method: "POST", body: new URLSearchParams(new FormData(form)) },
       });
     } catch (err) {
+      form.submit();
+      return null;
+    } finally {
       if (button) button.disabled = false;
-      return form.submit();
+      if (focused) button.focus({ preventScroll: true });
     }
+  }
+
+  // "Fjern" (og "Klaret"/"Fortryd", når siden har en besked): vis det, siden sender tilbage til, der hvor knappen sad.
+  async function send(form, got = null) {
+    const inDrawer = drawer && drawer.el.contains(form);
+    got = got || (await post(form));
+    if (!got) return;
     if (inDrawer) {
       drawer.body.replaceChildren(rebase(mainOf(got.doc), drawer.body.dataset.url));
       showList(listUrl, { keepScroll: true });
@@ -298,6 +309,72 @@
       document.querySelectorAll("body > .flash").forEach((el) => el.remove());
       main().replaceWith(mainOf(got.doc));
       markChosen(isOpen() ? drawer.body.dataset.url : null);
+    }
+  }
+
+  // ------------------------------------------------------------------ Klaret og Fortryd
+
+  // En todo-knaps action, og hvad den bliver til, når den er sendt: den modsatte knap.
+  const TODO = {
+    "/todos/check": { next: "/todos/uncheck", label: "Fortryd", done: true },
+    "/todos/uncheck": { next: "/todos/check", label: "Klaret", done: false },
+  };
+
+  const holders = (root, ref) => root.querySelectorAll(`[data-todo="${CSS.escape(ref)}"]`);
+
+  // Send "Klaret"/"Fortryd", og markér todo'en der, hvor den står (i Skal gøres, I dag og i morgen, Kommende og
+  // detaljen), uden at hente siden igen. Siger siden, at det ikke gik (fx "Prøv igen om lidt"), så vises den.
+  async function tick(form) {
+    const ref = form.closest("[data-todo]").dataset.todo;
+    const flip = TODO[new URL(form.action, location.href).pathname];
+    const inDrawer = drawer && drawer.el.contains(form);
+    const focused = document.activeElement === form.querySelector("button");
+    const got = await post(form);
+    if (!got) return;
+    if (got.doc.querySelector("body > .flash")) return send(form, got);
+    document.querySelectorAll("body > .flash").forEach((el) => el.remove());
+    if (inDrawer || !top()) {
+      // detaljen: den viser status ("klaret 6/11 kl. 10.12"), så den skiftes ud med den, siden sender tilbage til
+      const content = mainOf(got.doc);
+      if (inDrawer) drawer.body.replaceChildren(rebase(content, drawer.body.dataset.url));
+      else main().replaceWith(content);
+      const button = holders(content, ref)[0]?.querySelector("button");
+      if (focused && button) button.focus({ preventScroll: true });
+    }
+    if (top()) markTodo(ref, flip);
+    if (!inDrawer && isOpen() && holders(drawer.body, ref).length) refreshDrawer();
+  }
+
+  // Todo'en ``ref`` alle steder i listen: klaret eller åben, og knappen den modsatte.
+  function markTodo(ref, flip) {
+    holders(main(), ref).forEach((el) => {
+      el.classList.toggle("done", flip.done);
+      const form = el.querySelector("form");
+      const button = form && form.querySelector("button");
+      if (!button) return;
+      form.action = new URL(flip.next, form.action).href;
+      const label = button.querySelector(".vh");
+      if (label) {
+        label.textContent = flip.label;
+        button.title = flip.label;
+      } else button.textContent = flip.label;
+    });
+    const count = document.querySelector("#skal-goeres .count");
+    if (count) count.textContent = main().querySelectorAll("#skal-goeres [data-todo]:not(.done)").length;
+  }
+
+  // Skuffen viser samme todo, som blev krydset af i listen: hent den igen, på samme sted.
+  async function refreshDrawer() {
+    const url = drawer.body.dataset.url;
+    try {
+      const got = await load(url, { keep: true });
+      if (isOpen() && drawer.body.dataset.url === url) {
+        const y = drawer.body.scrollTop;
+        drawer.body.replaceChildren(rebase(mainOf(got.doc), url));
+        drawer.body.scrollTop = y;
+      }
+    } catch (err) {
+      /* skuffen viser bare den gamle status */
     }
   }
 

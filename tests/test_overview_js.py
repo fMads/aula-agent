@@ -128,3 +128,59 @@ def test_fjern_on_the_detail_asks_through_the_script_or_a_confirmation_page_both
 
     script = (web.STATIC_DIR / "overblik.js").read_text(encoding="utf-8")
     assert "data-confirm" in script and "confirm(" in script
+
+
+def todo_forms(html):
+    """Each todo button's form: (its action, the item and version it posts)."""
+    forms = re.findall(r'<form\b[^>]*action="(/todos/[a-z]+)"[^>]*>(.*?)</form>', html, re.S)
+    return [(action, re.search(r'name="item" value="([^"]+)"', f)[1], re.search(r'name="version" value="(\d+)"', f)[1])
+            for action, f in forms]
+
+
+def todo_parts(html, ref):
+    """The elements marked as the todo ``ref`` ("<item>@<version>"), each from its start tag to its form's end."""
+    return re.findall(rf'<[a-z]+\b[^>]*\sdata-todo="{re.escape(ref)}"[^>]*>.*?</form>', html, re.S)
+
+
+def test_every_todo_button_sits_in_the_element_the_script_marks_as_klaret_for_that_todo_on_every_list_and_the_detail():
+    from aula_agent import web
+    from aula_agent.ledger import Ledger
+
+    with archive.open(at=dt.datetime(2026, 11, 2, 9, tzinfo=dt.UTC)) as a:
+        a.save_post(post(1, "Skolefoto", publish="2026-11-02T08:00:00"))
+        a.save_post(post(2, "Skovtur", publish="2026-11-02T08:00:00"))
+        a.save_post(post(3, "Madpakke", publish="2026-11-02T08:00:00"))
+        a.classify("post:1", archive.Classification(  # in Skal gøres and on tomorrow
+            archive.Category.INFO, todo=archive.Todo("Bestil billeder", dt.date(2026, 11, 7))))
+        a.classify("post:2", archive.Classification(  # on its item's line in Kommende
+            archive.Category.ARRANGEMENT, dt.date(2026, 11, 20), todo=archive.Todo("Medbring madpakke", dt.date(2026, 11, 20))))
+        a.classify("post:3", archive.Classification(archive.Category.INFO, todo=archive.Todo("Aflever sedlen")))
+        versions = {t.item.key: t.version.id for t in a.todos()}
+    ledger = Ledger()
+    ledger.check_todo("post:3", versions["post:3"])
+    ledger.save()
+    ref = {key: f"{key}@{version}" for key, version in versions.items()}
+
+    html = get("/").text
+    forms = todo_forms(html)
+    assert sorted(forms) == sorted([("/todos/check", "post:1", str(versions["post:1"]))] * 2  # Skal gøres and ...
+                                   + [("/todos/check", "post:2", str(versions["post:2"]))] * 2
+                                   + [("/todos/uncheck", "post:3", str(versions["post:3"]))])
+    open_on_tomorrow = todo_parts(html, ref["post:1"])
+    assert len(open_on_tomorrow) == 2  # Skal gøres and I dag og i morgen: the script marks both
+    assert all("done" not in part.split(">", 1)[0] and 'title="Klaret"' in part for part in open_on_tomorrow)
+    assert len(todo_parts(html, ref["post:2"])) == 2  # Skal gøres and its item's line in Kommende
+    assert len(todo_parts(html.split('<section id="kommende"', 1)[1], ref["post:2"])) == 1
+    [ticked] = todo_parts(html, ref["post:3"])
+    assert re.search(r'class="[^"]*\bdone\b', ticked.split(">", 1)[0]) and 'title="Fortryd"' in ticked
+    assert re.search(r'<section id="skal-goeres"><h2>Skal gøres<span class="count">2</span>', html)
+
+    for key, label in (("post:1", "Klaret"), ("post:3", "Fortryd")):
+        [part] = todo_parts(get(f"/item/{key}").text, ref[key])  # on the detail, as a page or in the drawer
+        assert f">{label}</button>" in part
+
+    script = (web.STATIC_DIR / "overblik.js").read_text(encoding="utf-8")
+    assert "data-todo" in script and '"/todos/check"' in script and '"/todos/uncheck"' in script
+    assert all(f'"{label}"' in script for label, _ in web.TODO_ACTIONS.values())
+    assert "#skal-goeres" in script and ".count" in script  # its number of open todos
+    assert "form.submit()" in script  # an error: sent the ordinary way

@@ -326,7 +326,7 @@ background:transparent;position:relative;top:.05rem}button.tick:hover{border-col
 .done button.tick{background:var(--acc);border-color:var(--acc)}
 .done button.tick::after{content:"";position:absolute;left:.45rem;top:.18rem;width:.35rem;height:.7rem;border:solid var(--on-acc);
 border-width:0 2px 2px 0;transform:rotate(45deg)}
-.done .todo{text-decoration:line-through;color:var(--mut)}
+.done .todo{text-decoration:line-through;color:var(--mut)}.todo-row.done .bad{display:none}
 .row-todo{display:flex!important;gap:.5rem;align-items:center;margin-top:.3rem;font-size:.92rem}.row-todo button.tick{width:1.3rem;height:1.3rem}
 /* the front page: one column, or two when there is room (Skal gøres and Gælder nu | I dag og i morgen and Kommende) */
 main{container-type:inline-size}
@@ -681,6 +681,12 @@ TODO_ACTIONS: dict[str, tuple[str, Callable[[Ledger, str, int], None]]] = {
 }
 
 
+def todo_ref(t: archive.ItemTodo) -> str:
+    """``data-todo="<item>@<version>"`` on the element holding a todo's button: what overblik.js marks as ticked off
+    (class ``done``) after sending the button, on every place the todo stands on the page."""
+    return f'data-todo="{e(t.item.key)}@{t.version.id}"'
+
+
 def todo_button(t: archive.ItemTodo, *, checked: bool, back: str | None = None, tick: bool = False) -> str:
     """ "Klaret" or "Fortryd"; ``back``: the page to return to (:func:`safe_back`; else the overview); ``tick``: as
     the round button in front of a todo in the lists (filled when it is ticked off), its label only for a reader."""
@@ -724,7 +730,7 @@ def todo_item(
     what = f'<a class="todo-link" href="{e(store.item_path(t.item.key))}"><span class="todo">{e(text)}</span></a>'
     meta = f'<span class="meta">{kids.mark(t.item.child_ids)}{" · ".join(due)}</span>'
     done = " done" if checked else ""
-    return f'<li class="row todo-row{done}">{day_cell(day)}{button}<span class="grow">{what}{meta}</span></li>'
+    return f'<li class="row todo-row{done}" {todo_ref(t)}>{day_cell(day)}{button}<span class="grow">{what}{meta}</span></li>'
 
 
 def todos_html(
@@ -837,7 +843,7 @@ def line_html(
             return item_row(line.item, day=day, kids=kids)
         case timeline.ItemLine(todo=t):
             text = SENSITIVE if t.item.sensitive else t.text
-            what = (f'<span class="row-todo">{todo_button(t, checked=False, back=back, tick=True)}'
+            what = (f'<span class="row-todo" {todo_ref(t)}>{todo_button(t, checked=False, back=back, tick=True)}'
                     f'<span class="todo">{e(text)}</span></span>')
             return item_row(line.item, what, day=day, kids=kids)
         case timeline.EventLine():
@@ -1375,7 +1381,7 @@ def todo_detail(d: Detail, *, hide: bool) -> str:
     due = f" · senest {e(fmt_date(t.due.isoformat()))}" if t.due else ""
     text = "Skal gøres" if hide else f'<span class="todo">{e(t.text)}</span>'
     return (
-        f'<ul class="list"><li><span class="grow">✓ {text}<br><span class="mut">{status}{due}</span></span>'
+        f'<ul class="list"><li {todo_ref(t)}><span class="grow">✓ {text}<br><span class="mut">{status}{due}</span></span>'
         f'<span class="acts">{todo_button(t, checked=checked, back=store.item_path(t.item.key))}</span></li></ul>'
     )
 

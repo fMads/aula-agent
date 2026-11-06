@@ -110,7 +110,7 @@ def fill(today: dt.date, port: int) -> None:
         save(post(5, "Mødetider i SFO", -45, "SFO åbner kl. 6.30 og lukker kl. 17."),
              c(C.INFO, None, None, ["sfo"], "SFO åbner 6.30 og lukker 17."))
         save(post(6, "Lus i klassen", -2, "Der er konstateret lus. Tjek venligst jeres barns hår."),
-             c(C.ORIENTERING, None, None, ["sundhed"], "Lus i klassen, tjek håret."), [EMMA])
+             c(C.ORIENTERING, None, None, ["sundhed"], "Lus i klassen, tjek håret.", "Tjek håret for lus", 1), [EMMA])
         save(post(7, "Ny mødetid om morgenen", -1, "Fra på mandag møder vi kl. 8.15.", important=(-1, 6)),
              c(C.ORIENTERING, None, None, ["skema"], "Ny mødetid kl. 8.15 fra mandag."), [OSCAR])
         save(post(8, "Forældremøde", -5, "Forældremøde i klassen om tolv dage kl. 19."),

@@ -21,6 +21,7 @@ def test_the_demo_fills_its_directory_with_two_children_todos_and_events_and_let
         on_today, on_tomorrow = near.split(f'data-day="{today + dt.timedelta(days=1)}"')
         assert re.search(r'<span class="date time">\d\d:\d\d</span>', on_today)
         assert '<span class="date time">hele dagen' in on_tomorrow
+        assert 'action="/todos/check"' in on_tomorrow  # a todo to tick off there too
         assert c.get("/aula/login").status_code == 403 and c.get("/google").status_code == 403
         assert "ikke hentet fra Aula" not in html  # the demo has had a good night
 
