@@ -742,30 +742,49 @@ class Archive:
     ) -> list[Hit]:
         """The items that match ``query`` (every word as the beginning of a word), newest first.
 
-        An item matches on its title, text, sender, summary and topics, or on the name of or the text
-        in one of its files; without a query every item matches. The filters narrow it: the items for
-        ``child`` (an item for no child in particular is for every child), of ``category``, with
-        ``topic`` (both by the newest classification), and from ``source``.
+        Every word must be in the item (its title, text, sender, summary and topics) or in one of its
+        files (the name or the text in it), not necessarily the same place; without a query every item
+        matches. A hit shows the files that have a word the item itself does not have, or every word.
+        The filters narrow it: the items for ``child`` (an item for no child in particular is for every
+        child), of ``category``, with ``topic`` (both by the newest classification), and from ``source``.
         """
         words = re.findall(r"\w+", query)
         if query.strip() and not words:  # only quotes, stars and the like
             return []
         excerpts: dict[str, tuple[tuple[str, bool], ...]] = {}
-        in_files: dict[str, dict[str, tuple[tuple[str, bool], ...]]] = {}  # item key -> attachment id -> excerpt
+        file_excerpts: dict[str, dict[str, tuple[tuple[str, bool], ...]]] = {}  # item key -> attachment id -> excerpt
+        shown: dict[str, set[str]] = {}  # item key -> the attachment ids of the files to show
         if words:
-            match = " ".join(f'"{w}"*' for w in words)
+            in_item: list[set[str]] = []  # per word: the items that have it themselves
+            in_files: list[dict[str, set[str]]] = []  # per word: item key -> the attachment ids of its files with it
+            for w in words:
+                term = f'"{w}"*'
+                in_item.append({k for (k,) in self._db.execute(
+                    "SELECT item_key FROM search_items WHERE search_items MATCH ?", (term,))})
+                files: dict[str, set[str]] = {}
+                for key, attachment in self._db.execute(
+                    "SELECT item_key, attachment_id FROM search_files WHERE search_files MATCH ?", (term,)
+                ):
+                    files.setdefault(key, set()).add(attachment)
+                in_files.append(files)
+            keys = set.intersection(*(item_keys | files.keys() for item_keys, files in zip(in_item, in_files)))
+            for key in keys:
+                with_all = set.intersection(*(files.get(key, set()) for files in in_files))
+                only_there = {a for item_keys, files in zip(in_item, in_files) if key not in item_keys
+                              for a in files.get(key, ())}
+                shown[key] = with_all | only_there
+            any_word = " OR ".join(f'"{w}"*' for w in words)
             for key, snippet in self._db.execute(
                 "SELECT item_key, snippet(search_items, -1, ?, ?, '…', 16) FROM search_items WHERE search_items MATCH ?",
-                (_MARK, _UNMARK, match),
+                (_MARK, _UNMARK, any_word),
             ):
                 excerpts[key] = _parts(snippet)
             for key, attachment, snippet in self._db.execute(
                 "SELECT item_key, attachment_id, snippet(search_files, 4, ?, ?, '…', 16) FROM search_files"
                 " WHERE search_files MATCH ?",
-                (_MARK, _UNMARK, match),
+                (_MARK, _UNMARK, any_word),
             ):
-                in_files.setdefault(key, {})[attachment] = _parts(snippet)
-            keys = excerpts.keys() | in_files.keys()
+                file_excerpts.setdefault(key, {})[attachment] = _parts(snippet)
         else:
             keys = {key for (key,) in self._db.execute("SELECT key FROM items")}
         out = []
@@ -773,9 +792,9 @@ class Archive:
             item = self.item(key)
             if item is None or not item.versions or not _wanted(item, child, category, topic, source):
                 continue
-            matched = in_files.get(key, {})
-            files = tuple(f for f in item.files if f.attachment_id in matched)
-            excerpt = excerpts.get(key) or next((x for x in matched.values() if x), ())
+            files = tuple(f for f in item.files if f.attachment_id in shown.get(key, ()))
+            in_shown = (file_excerpts.get(key, {}).get(f.attachment_id) for f in files)
+            excerpt = excerpts.get(key) or next((x for x in in_shown if x), ())
             out.append(Hit(item, excerpt, files))
         out.sort(key=lambda h: (h.item.latest.date or "", h.item.key), reverse=True)
         return out

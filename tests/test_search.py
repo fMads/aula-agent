@@ -106,6 +106,20 @@ def test_a_word_only_in_an_attached_pdf_or_docx_finds_the_item_and_shows_the_fil
     assert "Program" in html and "program.docx" in html and "Indbydelse" not in html
 
 
+def test_the_words_may_be_spread_over_the_item_and_its_files_and_the_file_is_shown_when_a_word_is_only_there():
+    with archive.open() as a:
+        save_with_files(a, *with_files(1, "Juleklip", {"indbydelse.pdf": pdf("Medbring saks og lim")}))
+        save_with_files(a, *with_files(2, "Juleklip i SFO", {"plan.pdf": pdf("Vi klipper stjerner")}))
+        save_with_files(a, *with_files(3, "Skovtur", {"liste.pdf": pdf("Medbring saks")}))
+
+    html = results(search(q="juleklip saks"))
+    assert hits(html) == ["Juleklip"]  # post:2 has no "saks", post:3 no "juleklip"
+    assert "indbydelse.pdf" in html and "<mark>Juleklip</mark>" in html
+
+    html = results(search(q="juleklip"))  # every word in the item itself: no file to show
+    assert "indbydelse.pdf" not in html and "plan.pdf" not in html
+
+
 def hits(html):
     """The titles of the hits, in order."""
     import re
