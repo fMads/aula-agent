@@ -63,7 +63,7 @@ def test_sync_creates_calendar_per_child_uploads_once_and_marks_processed(google
     }
     result = gcal.sync(doc, google=google)
 
-    assert sorted(google.calendars.values()) == ["Skole – Emma", "Skole – Oscar"]
+    assert sorted(google.calendars.values()) == ["Aula – Emma", "Aula – Oscar"]
     assert len(result["created"]) == 2 and result["processed"] == ["post:9"]
     assert google.uploads == ["indbydelse.pdf"]  # uploaded once, attached to both
     assert google.folders == ["Aula"]
@@ -230,7 +230,22 @@ def test_calendar_name_falls_back_to_child_id(google):
     cfg["children"]["7"] = {"name": "", "institution": "Skolen"}
     store.save_config(cfg)
     gcal.sync({"events": [ev(child_ids=[7])]}, google=google)
-    assert list(google.calendars.values()) == ["Skole – 7"]
+    assert list(google.calendars.values()) == ["Aula – 7"]
+
+
+def test_new_config_names_calendars_for_any_institution(google):
+    setup_children((1, "Emma Jensen"))
+    gcal.sync({"events": [ev()]}, google=google)
+    assert list(google.calendars.values()) == ["Aula – Emma"]
+    assert store.load_config()["children"]["1"]["calendar_name"] == "Aula – Emma"
+
+
+def test_saved_calendar_name_template_is_kept(google):
+    store.save_config({"children": {}, "calendar_name_template": "Skole – {name}"})  # an existing installation
+    setup_children((1, "Emma Jensen"))
+    gcal.sync({"events": [ev()]}, google=google)
+    assert list(google.calendars.values()) == ["Skole – Emma"]
+    assert store.load_config()["calendar_name_template"] == "Skole – {name}"
 
 
 def test_removed_by_user_is_never_recreated(google):

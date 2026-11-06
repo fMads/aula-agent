@@ -2,7 +2,7 @@
 
 # aula-agent
 
-Mange datoer fra skolen står aldrig i Aula-kalenderen. De kommer i stedet i beskeder, i ugebreve og som PDF-indbydelser i opslag. **aula-agent** finder dem og lægger dem i Google Calendar.
+Mange datoer fra skolen eller børnehaven står aldrig i Aula-kalenderen. De kommer i stedet i beskeder, i ugebreve og som PDF-indbydelser i opslag. **aula-agent** finder dem og lægger dem i Google Calendar.
 
 Hver aften sker følgende:
 
@@ -10,7 +10,7 @@ Hver aften sker følgende:
 2. En AI-agent (Claude Code eller Codex) læser teksten og filerne. Den finder arrangementer og frister, f.eks. *"Fredag d. 14. er der juleklip, husk saks"* eller *"tilmelding senest 10/11"*.
 3. Arrangementerne lægges i en Google-kalender. Som standard har hvert barn sin egen kalender, men flere børn kan dele én. Indbydelser og andre filer bliver hængt på begivenhederne.
 
-Hvis skolen sender en rettelse, f.eks. *"det er flyttet til torsdag"*, opdateres den begivenhed, der allerede ligger i kalenderen. Der bliver ikke oprettet en ny.
+Hvis institutionen sender en rettelse, f.eks. *"det er flyttet til torsdag"*, opdateres den begivenhed, der allerede ligger i kalenderen. Der bliver ikke oprettet en ny.
 
 ## Sådan hænger det sammen
 
@@ -30,7 +30,7 @@ Hvis skolen sender en rettelse, f.eks. *"det er flyttet til torsdag"*, opdateres
 
 Python-delen forstår ikke selv tekst. Den henter og gemmer data og taler med Aula og Google. Det er agenten, der læser og vurderer indholdet.
 
-**Arkivet.** Aula sletter opslag og beskeder efter nogle måneder. Derfor gemmer `fetch` hvert opslag og hver beskedtråd, den ser, i et arkiv (`data/archive.sqlite`) med alle filer og billeder, også det der er for gammelt til agenten. En tråd gemmes hel, som Aula sendte den, også systembeskeder (fx modtagere tilføjet); beskeder fra en følsom tråd er markeret som følsomme. Retter skolen et opslag eller en besked, gemmes den nye version ved siden af den gamle. Hver nat læser `fetch` kun de tråde, der er ændret; `uv run aula-agent backfill` henter én gang alt, hvad Aula stadig har (alle opslag og alle tråde), til arkivet. Den kan køres igen uden dubletter, giver ikke agenten noget og starter aldrig et MitID-login. Med en sti til en redningskopi (`uv run aula-agent backfill data/rescue-2026-11-05`) læser den kopien i stedet for Aula: `posts.json`, `threads.json` og filerne i `files/` kopieres ind, og versionerne får datoen i mappens navn. Det kræver ikke Aula-login, og kører du bagefter `fetch` eller `backfill` mod Aula, giver de samme items ingen dubletter. Arkivet rydder aldrig op. Det er en almindelig SQLite-fil, som du kan åbne med SQLite-værktøjer, DuckDB eller ClickHouse.
+**Arkivet.** Aula sletter opslag og beskeder efter nogle måneder. Derfor gemmer `fetch` hvert opslag og hver beskedtråd, den ser, i et arkiv (`data/archive.sqlite`) med alle filer og billeder, også det der er for gammelt til agenten. En tråd gemmes hel, som Aula sendte den, også systembeskeder (fx modtagere tilføjet); beskeder fra en følsom tråd er markeret som følsomme. Retter institutionen et opslag eller en besked, gemmes den nye version ved siden af den gamle. Hver nat læser `fetch` kun de tråde, der er ændret; `uv run aula-agent backfill` henter én gang alt, hvad Aula stadig har (alle opslag og alle tråde), til arkivet. Den kan køres igen uden dubletter, giver ikke agenten noget og starter aldrig et MitID-login. Med en sti til en redningskopi (`uv run aula-agent backfill data/rescue-2026-11-05`) læser den kopien i stedet for Aula: `posts.json`, `threads.json` og filerne i `files/` kopieres ind, og versionerne får datoen i mappens navn. Det kræver ikke Aula-login, og kører du bagefter `fetch` eller `backfill` mod Aula, giver de samme items ingen dubletter. Arkivet rydder aldrig op. Det er en almindelig SQLite-fil, som du kan åbne med SQLite-værktøjer, DuckDB eller ClickHouse.
 
 **Backup.** Til sidst i hver `fetch` kopieres arkivet og dets filer til Drive-mappen **"Aula-arkiv"**, som aula-agent selv opretter. Den er privat: del den ikke (modsat mappen "Aula" med kalenderens vedhæftninger). Arkiv-filen erstattes hver gang, og hver fil lægges kun op én gang. Fejler backuppen, eller mangler Google-login, giver `fetch` en advarsel, men natkørslen fortsætter. Mappens navn kan ændres med `archive_folder_name` i `data/config.json`, før den første backup tages. `uv run aula-agent backup` tager en backup med det samme.
 
@@ -124,7 +124,7 @@ codex "Kør den natlige Aula-synkronisering"      # eller Codex
 
 Codex skal have lov til at bruge netværket, fordi `fetch` og `apply` taler med Aula og Google. Godkend det, når den spørger.
 
-Agenten følger [`AGENTS.md`](AGENTS.md). `CLAUDE.md` henviser bare til den, så begge agenter bruger de samme instruktioner. Den læser alt, der er hentet, laver en events-fil, laver en prøvekørsel og opretter derefter begivenhederne. Kalenderen hedder **"Skole – <barnets fornavn>"** og bliver oprettet automatisk. Første gang vil det meste ligge tilbage i tiden, så der bliver typisk kun oprettet nogle få begivenheder.
+Agenten følger [`AGENTS.md`](AGENTS.md). `CLAUDE.md` henviser bare til den, så begge agenter bruger de samme instruktioner. Den læser alt, der er hentet, laver en events-fil, laver en prøvekørsel og opretter derefter begivenhederne. Kalenderen hedder **"Aula – <barnets fornavn>"** og bliver oprettet automatisk. Navnet kommer fra `calendar_name_template` i `data/config.json`; har din config allerede en skabelon (ældre installationer har "Skole – {name}"), bliver den brugt, og eksisterende kalendere omdøbes ikke. Første gang vil det meste ligge tilbage i tiden, så der bliver typisk kun oprettet nogle få begivenheder.
 
 ### 5. Kør automatisk hver aften
 
@@ -204,11 +204,11 @@ Når adressen (`--url`) er sat, får begivenhederne i Google Calendar et link ti
 ## I hverdagen
 
 - **Login udløbet:** Natkørslen stopper og siger det. Så logger du ind igen med `uv run aula login` eller på web-siden. Det, der ikke er nået at blive behandlet, venter bare til næste kørsel.
-- **Forkert begivenhed:** Fjern den på web-siden. Hvis du sletter den direkte i Google Calendar, kan den dukke op igen, næste gang skolen skriver om det samme.
+- **Forkert begivenhed:** Fjern den på web-siden. Hvis du sletter den direkte i Google Calendar, kan den dukke op igen, næste gang institutionen skriver om det samme.
 - **Del med den anden forælder:**
-  - I Google Calendar: Indstillinger → *Skole – …* → Delt med → tilføj vedkommende med *Se alle begivenhedsdetaljer*. Gør det ikke med redigeringsret, for rettelser fra skolen overskriver ændringer.
+  - I Google Calendar: Indstillinger → *Aula – …* → Delt med → tilføj vedkommende med *Se alle begivenhedsdetaljer*. Gør det ikke med redigeringsret, for rettelser fra institutionen overskriver ændringer.
   - Vedhæftede filer ligger i Drive-mappen **"Aula"**. Den skal også deles, hvis den anden forælder skal kunne åbne filerne. Del **ikke** mappen "Aula-arkiv" (backuppen af arkivet).
-- **Flere børn:** Hvert barn får sin egen kalender. Et nyt barn bliver fundet automatisk ved næste `fetch`. Aula fortæller ikke, hvilket barn et opslag gælder, så agenten afgør det ud fra klasse og grupper og ud fra indholdet. Når det er uklart, lægger den begivenheden hos alle relevante børn.
+- **Flere børn:** Hvert barn får sin egen kalender. Et nyt barn bliver fundet automatisk ved næste `fetch`. Aula fortæller ikke, hvilket barn et opslag gælder, så agenten afgør det ud fra klasse, stue og grupper og ud fra indholdet. Når det er uklart, lægger den begivenheden hos alle relevante børn.
 - **Fælles kalender for flere børn:** Hvert barn hører til præcis én kalender, men flere børn kan dele den. Sæt det samme `calendar_id` (og `calendar_name`) på børnene i `data/config.json`. En begivenhed for flere børn i samme kalender bliver så til én post dér, ikke én pr. barn. Fjerner du den for ét barn på web-siden, bliver posten liggende for de andre og slettes først, når ingen af kalenderens børn er tilbage. En rettelse, der ikke længere nævner et af børnene, gør det samme.
   - Har du før ladet flere børn pege på samme kalender (den gamle omvej), kender poster fra dengang kun ét af børnene, indtil begivenheden bliver rettet. Der kommer ikke dubletter.
 
