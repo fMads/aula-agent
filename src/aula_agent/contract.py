@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import archive, store
-from .archive import Category, Classification
+from .archive import Category, Classification, Todo
 from .ledger import Ledger
 from .runs import Outcome, Problem
 
@@ -187,6 +187,7 @@ def _event(raw: Any, children: set[str], problems: list[str], where: str) -> Eve
 
 
 SUMMARY_MAX = 120
+TODO_MAX = 120
 MAX_TOPICS = 3
 
 
@@ -201,6 +202,29 @@ def _span(raw: Any) -> tuple[dt.date, dt.date]:
     if end < start:
         raise ValueError("span slutter før den starter")
     return start, end
+
+
+def _todo(raw: Any, *, is_reply: bool, problems: list[str], where: str) -> Todo | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        problems.append(f"{where}: todo skal være et objekt {{text, due}}")
+        return None
+    before = len(problems)
+    if is_reply:
+        problems.append(f"{where}: et svar har ingen todo")
+    text = raw.get("text").strip() if isinstance(raw.get("text"), str) else ""
+    if not text:
+        problems.append(f"{where}: todo: text mangler")
+    elif len(text) > TODO_MAX:
+        problems.append(f"{where}: todo: text er {len(text)} tegn (højst {TODO_MAX})")
+    due = None
+    if raw.get("due") is not None:
+        try:
+            due = dt.date.fromisoformat(raw["due"])
+        except (TypeError, ValueError):
+            problems.append(f"{where}: todo: due skal være en dato (YYYY-MM-DD), ikke {raw['due']!r}")
+    return Todo(text, due) if len(problems) == before else None
 
 
 def _classification(
@@ -238,6 +262,7 @@ def _classification(
         problems.append(f"{where}: summary mangler")
     elif summary and len(summary) > SUMMARY_MAX:
         problems.append(f"{where}: summary er {len(summary)} tegn (højst {SUMMARY_MAX})")
+    todo = _todo(raw.get("todo"), is_reply=is_reply, problems=problems, where=where)
     child_ids: list[int] = []
     raw_children = raw.get("child_ids") or []
     if not isinstance(raw_children, list):
@@ -251,7 +276,7 @@ def _classification(
     if len(problems) > before:
         return None
     return Classification(
-        Category(category), span_start, span_end, item_topics, summary, tuple(dict.fromkeys(child_ids))
+        Category(category), span_start, span_end, item_topics, summary, tuple(dict.fromkeys(child_ids)), todo=todo
     )
 
 
@@ -424,7 +449,8 @@ def accept(raw: str | dict[str, Any], cfg: dict[str, Any], ledger: Ledger, *, dr
             for name in doc.new_topics:
                 echo(f"[prøvekørsel] Nyt topic: {name}")
             for key, c in doc.classifications.items():
-                echo(f"[prøvekørsel] Classification: {key} {' '.join(filter(None, (c.category, c.span_text())))}")
+                todo = c.todo and f"todo: {c.todo.text}" + (f" ({c.todo.due.isoformat()})" if c.todo.due else "")
+                echo(f"[prøvekørsel] Classification: {key} {' '.join(filter(None, (c.category, c.span_text(), todo)))}")
             return doc
         for name, description in doc.new_topics.items():
             arch.create_topic(name, description)

@@ -221,3 +221,41 @@ def test_an_item_to_classify_may_be_left_out_but_gives_no_events():
     event = {"key": "post:3#1", "source": "post:3", "child_ids": [1], "title": "Svømning", "start": "2099-11-10"}
     with pytest.raises(EventError, match="post:3 er fra to_classify og må ikke give events"):
         parse_doc([classify("post:3")], processed=[], pending=[], to_classify=["post:3"], events=[event])
+
+
+# ----------------------------------------------------------------------------- todo
+
+
+def test_a_classification_with_a_todo_goes_through():
+    doc = parse_doc([classify(todo={"text": "Betal 50 kr. til turen", "due": "2026-11-20"})])
+    todo = doc.classifications["post:1"].todo
+    assert (todo.text, todo.due) == ("Betal 50 kr. til turen", dt.date(2026, 11, 20))
+    assert parse_doc([classify(todo={"text": "Medbring madpakke"})]).classifications["post:1"].todo.due is None
+    assert parse_doc([classify()]).classifications["post:1"].todo is None
+
+
+@pytest.mark.parametrize(
+    "todo, message",
+    [
+        ({"due": "2026-11-20"}, "todo: text mangler"),
+        ({"text": "  "}, "todo: text mangler"),
+        ({"text": "x" * 121}, "todo: text er 121 tegn"),
+        ({"text": "Betal", "due": "20/11"}, "todo: due skal være en dato"),
+        ("Betal", "todo skal være et objekt"),
+    ],
+)
+def test_bad_todos_rejected(todo, message):
+    with pytest.raises(EventError, match=message):
+        parse_doc([classify(todo=todo)])
+
+
+def test_a_reply_has_no_todo_and_every_todo_problem_comes_at_once():
+    with pytest.raises(EventError) as err:
+        parse_doc(
+            [{"item": "post:1", "category": "svar", "todo": {"text": "Svar"}},
+             classify("post:2", todo={"text": "x" * 130, "due": "snart"})],
+            processed=["post:1", "post:2"], pending=["post:1", "post:2"],
+        )
+    text = str(err.value)
+    for part in ("post:1", "et svar har ingen todo", "130 tegn", "due skal være en dato"):
+        assert part in text

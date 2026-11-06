@@ -78,7 +78,7 @@ Den stabile identitet for et event på tværs af kørsler (`<item-key>#<n>`). Sa
 Aftalen mellem kode og agent om, hvordan inbox og events document ser ud.
 
 **Classification**:
-Agentens fortolkning af én item version: hvad slags information det er, hvornår det gælder, emner, et resumé på én linje og – når Aula ikke har sat dem – hvilke børn det gælder (ADR 0003). Har Aula sat børnene, vinder Aulas over agentens. Fakta som afsender, dato og koblingen til events hører ikke til den. Dem ved koden selv.
+Agentens fortolkning af én item version: hvad slags information det er, hvornår det gælder, emner, et resumé på én linje, evt. en todo og – når Aula ikke har sat dem – hvilke børn det gælder (ADR 0003). Har Aula sat børnene, vinder Aulas over agentens. Fakta som afsender, dato og koblingen til events hører ikke til den. Dem ved koden selv.
 _Avoid_: Inddeling (kun i brugertekst), tagging, kategorisering
 
 **Category**:
@@ -92,6 +92,10 @@ _Avoid_: Periode (det er en category), gyldighed
 **Topic**:
 Et emne, der binder items om det samme sammen ("svømning", "lejrskole"), med en linjes beskrivelse af, hvad der hører under det. Et item har 1–3 topics. Agenten genbruger et eksisterende topic, når det passer, og opretter kun et nyt, når intet passer.
 _Avoid_: Emne (kun i brugertekst), tag, label
+
+**Todo**:
+Noget forælderen skal gøre (betale, tilmelde, aflevere, medbringe), med en kort tekst i bydeform og evt. en dato (`due`). Den er et valgfrit felt på en classification, ikke en category, fordi opgaver findes i alle categories. Den står på listen "Skal gøres", til forælderen krydser den af, også når datoen er passeret (så er den overskredet). Afkrydsning gælder hele item'et, ikke pr. barn. En ny item version har sin egen todo, der er åben igen. En todo, der ikke var aktuel, da den blev klassificeret (`due` passeret, eller ingen `due` på et item over 14 dage gammelt), starter som klaret.
+_Avoid_: Opgave (kun i brugertekst), task, reminder, frist (det er en category og et event)
 
 **Unclassified item**:
 Et item i arkivet, hvis nyeste version mangler en classification, og som ikke er et pending item, fx fra backfill eller ældre end cutoff. Agenten får det i inbox for at klassificere det, ikke for at finde events i det.
@@ -120,7 +124,7 @@ Et event, som en forælder har fjernet for ét barn på web-siden. Eventet må a
 _Avoid_: Ignored, deleted
 
 **Ledger**:
-Alt det, aula-agent husker mellem kørsler: sete items, pending items, synced entries, event history, hvad brugeren har fjernet, og run-loggen.
+Alt det, aula-agent husker mellem kørsler: sete items, pending items, synced entries, event history, hvad brugeren har fjernet, hvilke todos der er krydset af, og run-loggen.
 _Avoid_: State, database
 
 **Event history**:

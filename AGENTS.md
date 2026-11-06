@@ -4,11 +4,11 @@ Finder arrangementer i Aula-opslag og -beskeder og lægger dem i Google Calendar
 Hvert barn hører til én kalender (standard: sin egen, "Skole – <fornavn>"), og flere børn kan dele én (joint calendar, ADR 0002). Python 3.14 via `uv`. Brugervejledning: `README.md`.
 
 - `src/aula_agent/aula_source.py` – henter fra Aula (bibliotek: `aula` på PyPI) og bestemmer via `Intake`, hvilke items agenten får. `backfill()` læser alt til arkivet uden om intake (kilden er en `BackfillSource`: Aula eller en redningskopi). Starter aldrig MitID-login selv.
-- `src/aula_agent/archive.py` – arkivet (`data/archive.sqlite`, ADR 0001): alt hvad `fetch` og `backfill` har set fra Aula eller en redningskopi (opslag og hele beskedtråde), med alle item versions og filer, uanset cutoff, og agentens classifications (pr. item version) og topics. Kun dette modul rører arkiv-filen og ejer item-nøglerne; skemaets version styres med `user_version`.
+- `src/aula_agent/archive.py` – arkivet (`data/archive.sqlite`, ADR 0001): alt hvad `fetch` og `backfill` har set fra Aula eller en redningskopi (opslag og hele beskedtråde), med alle item versions og filer, uanset cutoff, og agentens classifications (pr. item version, evt. med en todo) og topics. Kun dette modul rører arkiv-filen og ejer item-nøglerne; skemaets version styres med `user_version`.
 - `src/aula_agent/contract.py` – agent-kontrakten: skriver `inbox.json`, validerer events-filen (alle fejl på én gang → exit-kode 5) og gemmer ved `apply` agentens classifications og topics i arkivet (via `archive.py`).
 - `src/aula_agent/backup.py` – backup af arkivet til den private Drive-mappe `Aula-arkiv` (aldrig den delte "Aula"); `fetch` og `backfill` tager den til sidst, en fejl er kun en advarsel. Er mappen slettet i Drive, starter den forfra.
 - `src/aula_agent/gcal.py` – Google Calendar + Drive: `plan()` beslutter (én post pr. event og kalender med kalenderens børn), `execute()` udfører via `Google`-adapteren (vedhæftninger skal ligge i Drive).
-- `src/aula_agent/ledger.py` – alt hvad der huskes mellem kørsler (`data/state.json`). Rør ikke state-dict'en direkte andre steder.
+- `src/aula_agent/ledger.py` – alt hvad der huskes mellem kørsler (`data/state.json`), også hvilke todos der er krydset af. Rør ikke state-dict'en direkte andre steder.
 - `src/aula_agent/runs.py` – en kørsel: lås + run-log + struktureret udfald (`Outcome`). `credentials.py` – login-status og Google OAuth.
 - `src/aula_agent/web.py` – valgfri web-side (Starlette, 127.0.0.1:8787) bag Cloudflare Tunnel + Access. Appen validerer selv Access-JWT'en og e-mail-allowlisten (`web` i `data/config.json`, sættes med `aula-agent web-setup`) og afviser alt, når den ikke er sat op.
 - `deploy/` – systemd-skabeloner (`*.in`) + `install-services.sh` (web, tunnel, nightly) og `nightly.sh` (natkørsel uden T3 med Claude Code eller Codex, styret af `AULA_AGENT`).
@@ -50,7 +50,8 @@ Når du bliver bedt om at køre den natlige Aula-synkronisering, så gør præci
          "category": "arrangement",
          "span": {"start": "2026-12-04"},
          "topics": ["juleklip"],
-         "summary": "Juleklip fre 4/12, husk saks og lim. Forældre velkomne fra kl. 12."
+         "summary": "Juleklip fre 4/12, husk saks og lim. Forældre velkomne fra kl. 12.",
+         "todo": {"text": "Medbring saks og lim", "due": "2026-12-04"}
        },
        {"item": "message:456:789", "category": "svar"}
      ],
@@ -83,6 +84,12 @@ Når du bliver bedt om at køre den natlige Aula-synkronisering, så gør præci
    - `span`: hvornår item'et gælder (ikke hvornår det kom): `{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}`, `end` er sidste dag og valgfri (standard = `start`). Arrangement: dagen; frist: fristens dato; periode: fra–til. Udelad den, når item'et ikke har en dato (typisk info og orientering).
    - `topics`: 1–3 emner. Genbrug et fra inbox' `topics`, når det passer (se beskrivelsen). Opret kun et nyt, når intet passer, og skriv det så i `new_topics` med en linjes beskrivelse af, hvad der hører under det. Korte navne med små bogstaver ("svømning", "lejrskole"). Svar må have 0.
    - `summary`: højst 120 tegn på én linje med det praktiske: hvad, hvornår, hvad skal man huske. Ikke "Kære forældre …". **Ingen** navne på andre børn eller forældre. Svar må udelade den.
+   - `todo` (valgfri): noget forælderen selv skal gøre – betale, tilmelde, aflevere, medbringe, svare. `{"text": "...", "due": "YYYY-MM-DD"}`.
+     - `text`: kort og i bydeform ("Betal 50 kr. til turen", "Tilmeld i Aula"), højst 120 tegn. **Ingen** navne på andre børn eller forældre.
+     - `due`: fristen eller dagen det skal være gjort, når der er en. Udelad den, når der ingen frist er.
+     - Kun én pr. item; er der flere ting, så skriv den vigtigste eller saml dem kort. Ingen todo på `svar` eller når der intet er at gøre.
+     - En frist med todo er stadig også en frist: den får sit `Frist: …`-event som ovenfor (kun for `items`, aldrig for `to_classify`). Er `due` arrangementets egen dag ("medbring …"), er arrangementets event nok.
+     - Skriv også todo for items i `to_classify`. Koden afgør selv, om den kommer på listen (gamle todos starter som klaret).
    - Følsomme tråde (`"sensitive": true` på item'et): **intet** `summary`.
    - `child_ids`: kun når item'ets `child_ids` er tom, efter samme regler som for events. Har Aula sat børnene, så udelad den (Aulas vinder).
 

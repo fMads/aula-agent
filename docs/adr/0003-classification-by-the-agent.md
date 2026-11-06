@@ -9,6 +9,14 @@ Agent-kontrakten udvides:
 - Items i `to_classify` giver aldrig events.
 - Classification gemmes i arkivet pr. item version ved `apply`, også når Google-login mangler.
 
+## Todo er et felt på classification, og listen styres af afkrydsning
+
+Efter den første vurdering (gate #28) manglede der en måde at se, hvad man selv skal gøre: en betaling uden dato landede i stående info, og "tilmeld og betal senest …" i et arrangement stod kun i resuméet. En classification kan derfor have en **todo** (`{text, due}`). Den er et felt og ikke en syvende category, fordi opgaver findes i alle categories, og en category er kun den vigtigste slags information i item'et.
+
+En todo forsvinder kun, når forælderen krydser den af (i Ledger, pr. item og item version, ikke pr. barn), også når datoen er passeret: så står den som overskredet. En ny item version giver en ny, åben todo. Koden, ikke agenten, afgør, om en todo kommer på listen: kun hvis den var aktuel, da classification'en blev gemt (`due` samme dag eller senere, eller ingen `due` på et item højst 14 dage gammelt). Andre starter som klaret, så køen og backfill ikke fylder listen, og kan genåbnes med "fortryd". `aula-agent reclassify` sletter alle classifications, så hele arkivet klassificeres igen med todo.
+
+Fravalgt: todo som category (en frist-category findes, men en betaling i stående info eller en tilmelding i et arrangement ville så miste sin egentlige category), og at todos forsvinder af sig selv, når datoen er passeret (så ser man ikke det, man har glemt).
+
 ## Considered Options
 
 - **Koden udleder inddelingen** (events → arrangement, `isImportant` → periode, ellers info): Billig og forudsigelig, men forkert, så snart agenten ikke har lavet et event (gammelt arrangement, noget der står i Aulas kalender, en periode der kun har ét event). Den giver hverken topics eller resumé.

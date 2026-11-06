@@ -108,6 +108,20 @@ def apply(events_file: Path, dry_run: bool) -> None:
 
 
 @main.command()
+def reclassify() -> None:
+    """Slet alle classifications i arkivet (topics bliver), så agenten klassificerer alle items igen via køen."""
+    from . import archive
+
+    try:
+        with run("reclassify") as r, archive.open() as arch:
+            n = arch.forget_classifications()
+            r.summary = f"{n} classifications slettet"
+    except Problem as exc:
+        _fail(exc)
+    click.echo(f"{n} classifications slettet. Items kommer i to_classify igen fra næste fetch (højst 100 pr. nat).")
+
+
+@main.command()
 def backup() -> None:
     """Kopiér arkivet og dets filer til den private Drive-mappe nu (fetch gør det også hver nat)."""
     from .backup import take

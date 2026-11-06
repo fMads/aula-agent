@@ -15,6 +15,9 @@ calendar, the user removed an event); the on-disk shape stays in here:
   title, dates and children. It stays when the event is cancelled.
 - ``ignored``: event key -> event the user removed from some children's calendars
   (``child_ids``; missing = every child, as before removal was per child)
+- ``todos``: ``"<item key>|<item version>"`` -> what the user did with that version's todo:
+  ticked it off (``checked`` true, ``at``) or undid that (``checked`` false). Untouched
+  todos are not in it.
 - ``uploads`` / ``drive_folder_id``: attachments already in Drive
 - ``runs``: the last 50 command runs, newest last
 - ``last_fetch``: when Aula was last read
@@ -118,7 +121,7 @@ class Ledger:
         st = data if data is not None else {}
         for name, default in (
             ("seen", {}), ("threads", {}), ("thread_retries", {}), ("pending", {}), ("events", {}), ("uploads", {}),
-            ("ignored", {}), ("history", {}), ("runs", []), ("drive_folder_id", None), ("last_fetch", None),
+            ("ignored", {}), ("history", {}), ("todos", {}), ("runs", []), ("drive_folder_id", None), ("last_fetch", None),
         ):
             st.setdefault(name, default)
         for raw in st["events"].values():  # from before joint calendars: one child per entry
@@ -326,6 +329,33 @@ class Ledger:
             for k, v in self._st["ignored"].items()
             if _not_over(v.get("start"), v.get("end"), today)
         ]
+
+    # ------------------------------------------------------------------ todos ticked off
+
+    @staticmethod
+    def _todo(item_key: str, version: int) -> str:
+        return f"{item_key}|{version}"
+
+    def check_todo(self, item_key: str, version: int) -> None:
+        """The user ticked off the todo of this item version (for the whole item, not per child)."""
+        self._st["todos"][self._todo(item_key, version)] = {"checked": True, "at": _now()}
+
+    def uncheck_todo(self, item_key: str, version: int) -> None:
+        """The user undid ticking it off: open, also when it started as done."""
+        self._st["todos"][self._todo(item_key, version)] = {"checked": False, "at": _now()}
+
+    def todo_checked(self, item_key: str, version: int, *, by_default: bool = False) -> bool:
+        """Whether the todo of this item version is ticked off; ``by_default`` when the user never touched it.
+
+        A new item version has a todo of its own, open until it is ticked off.
+        """
+        mark = self._st["todos"].get(self._todo(item_key, version))
+        return by_default if mark is None else mark["checked"]
+
+    def todo_checked_at(self, item_key: str, version: int) -> str | None:
+        """When the user ticked it off (None when they did not, or undid it)."""
+        mark = self._st["todos"].get(self._todo(item_key, version))
+        return mark["at"] if mark and mark["checked"] else None
 
     # ------------------------------------------------------------------ Drive uploads
 

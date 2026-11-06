@@ -1,4 +1,4 @@
-"""Minimal web UI: status, MitID re-login, Google connect, upcoming events.
+"""Minimal web UI: status, MitID re-login, Google connect, upcoming events, the overview with its todos.
 
 Meant to sit behind a Cloudflare Tunnel with Cloudflare Access in front. The app
 does not trust the tunnel alone: every request must carry a valid Cloudflare
@@ -249,6 +249,7 @@ input[type=text]{font:inherit;padding:.35rem .5rem;border:1px solid var(--line);
 .otp{font-size:2rem;letter-spacing:.2em;font-weight:600}
 .flash{padding:.6rem .8rem;border-radius:8px;border:1px solid var(--line);margin-bottom:1rem}
 form.inline{display:inline;margin:0}
+details>summary{cursor:pointer;margin:2rem 0 .6rem;font-weight:600}
 .acts{display:flex;flex-direction:column;gap:.3rem;align-items:flex-end}
 """
 
@@ -396,6 +397,50 @@ CATEGORY_NAMES = {
 }
 
 
+def todo_lists(todos: list[archive.ItemTodo], ledger: Ledger) -> tuple[list[archive.ItemTodo], list[archive.ItemTodo]]:
+    """The open todos, by due (passed ones come first, none last), and the ticked off ones, last ticked first.
+
+    A todo that was not current when it was classified counts as ticked off until the user undoes that.
+    """
+    open_, checked = [], []
+    for t in todos:
+        is_checked = ledger.todo_checked(t.item.key, t.version.id, by_default=not t.was_current)
+        (checked if is_checked else open_).append(t)
+    open_.sort(key=lambda t: (t.due is None, t.due or dt.date.max, t.item.key))
+    checked.sort(key=lambda t: ledger.todo_checked_at(t.item.key, t.version.id) or "", reverse=True)
+    return open_, checked
+
+
+def todo_item(t: archive.ItemTodo, *, today: dt.date, checked: bool) -> str:
+    button = (
+        f'<form class="inline" method="post" action="/todos/{"uncheck" if checked else "check"}">'
+        f'<input type="hidden" name="item" value="{e(t.item.key)}">'
+        f'<input type="hidden" name="version" value="{t.version.id}">'
+        f'<button class="small">{"Fortryd" if checked else "Klaret"}</button></form>'
+    )
+    if t.item.sensitive:  # the page may stand open on a screen: not even what to do
+        what = "🔒 Følsom tråd"
+    else:
+        overdue = not checked and t.due is not None and t.due < today
+        meta = [m for m in (
+            t.due and f"senest {fmt_date(t.due.isoformat())}", t.item.latest.title or "(uden titel)",
+        ) if m]
+        flag = ' <b class="bad">overskredet</b>' if overdue else ""
+        what = f'<span class="todo">{e(t.text)}</span>{flag}<br><span class="mut">{e(" · ".join(meta))}</span>'
+    return f'<li><span class="grow">{what}</span><span class="acts">{button}</span></li>'
+
+
+def todos_html(todos: list[archive.ItemTodo], ledger: Ledger, today: dt.date) -> str:
+    open_, checked = todo_lists(todos, ledger)
+    open_html = "".join(todo_item(t, today=today, checked=False) for t in open_) or '<li class="mut">Intet at gøre.</li>'
+    checked_html = "".join(todo_item(t, today=today, checked=True) for t in checked) or '<li class="mut">Intet klaret endnu.</li>'
+    return (
+        f'<h2>Skal gøres <span class="mut">({len(open_)})</span></h2><ul class="list">{open_html}</ul>'
+        f'<details><summary>Klaret <span class="mut">({len(checked)})</span></summary>'
+        f'<ul class="list">{checked_html}</ul></details>'
+    )
+
+
 def overview_item(item: archive.Item) -> str:
     c, latest = item.classification, item.latest
     meta = [m for m in ("opslag" if item.kind == "post" else "besked", fmt_date((latest.date or "")[:10])) if m]
@@ -416,20 +461,21 @@ def overview_item(item: archive.Item) -> str:
 
 async def overview(request: Request) -> Response:
     """The raw list of the agent's classifications (trin 1 of the overview), to judge them by."""
-    pending = Ledger.load().pending_keys()
+    ledger = Ledger.load()
+    pending = ledger.pending_keys()
 
-    def read() -> tuple[list[archive.Item], list[archive.Topic], int] | None:
+    def read() -> tuple[list[archive.Item], list[archive.Topic], int, list[archive.ItemTodo]] | None:
         with archive.read() as a:
             if a is None:
                 return None
-            return a.items(), a.topics(), len(a.unclassified(exclude=pending))
+            return a.items(), a.topics(), len(a.unclassified(exclude=pending)), a.todos()
 
     nav = '<p><a href="/">Status</a> · <b>Overblik</b></p>'
     got = await asyncio.to_thread(read)
     if got is None:
         body = '<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>'
         return page("Overblik", nav + body)
-    items, topics, unclassified = got
+    items, topics, unclassified, todos = got
     groups: dict[archive.Category, list[archive.Item]] = {c: [] for c in archive.Category}
     for item in items:
         if item.classification:
@@ -449,9 +495,35 @@ async def overview(request: Request) -> Response:
         for t in topics
     ) or '<li class="mut">Ingen emner endnu.</li>'
     body = f"""{nav}<p>{unclassified} endnu ikke inddelt · {len(topics)} {"emne" if len(topics) == 1 else "emner"}</p>
+{todos_html(todos, ledger, request.app.state.today())}
 {"".join(sections) or '<p class="mut">Intet er inddelt endnu.</p>'}
 <h2>Emner</h2><ul class="list">{topics_html}</ul>"""
-    return page("Overblik", body)
+    return page("Overblik", body, request.query_params.get("msg"))
+
+
+async def tick_todo(request: Request) -> Response:
+    """ "Klaret" (``/todos/check``) or "Fortryd" (``/todos/uncheck``) on a todo of one item version."""
+    form = await request.form()
+    item = str(form.get("item") or "")
+    raw_version = str(form.get("version") or "")
+    version = int(raw_version) if raw_version.isdigit() else None
+    check = request.url.path.endswith("/check")
+
+    def work() -> str | None:
+        with archive.read() as a:
+            if a is None or not any(t.item.key == item and t.version.id == version for t in a.todos()):
+                return "Opgaven findes ikke længere."
+        with store.lock(wait=False):
+            ledger = Ledger.load()
+            (ledger.check_todo if check else ledger.uncheck_todo)(item, version)
+            ledger.save()
+        return None
+
+    try:
+        msg = await asyncio.to_thread(work)
+    except store.Busy as exc:
+        msg = f"{exc} Prøv igen om lidt."
+    return RedirectResponse("/overblik" + (f"?msg={quote(msg)}" if msg else ""), status_code=303)
 
 
 async def remove_event(request: Request) -> Response:
@@ -601,8 +673,12 @@ async def google_callback(request: Request) -> Response:
     return response
 
 
-def create_app(*, verifier_factory=default_verifier_factory, mitid: MitIDLogin | None = None, google=None) -> Starlette:
-    """``google`` makes the Calendar/Drive adapter (default: connect with the saved token)."""
+def create_app(
+    *, verifier_factory=default_verifier_factory, mitid: MitIDLogin | None = None, google=None,
+    today: Callable[[], dt.date] = dt.date.today,
+) -> Starlette:
+    """``google`` makes the Calendar/Drive adapter (default: connect with the saved token);
+    ``today`` says which day it is (when a todo is overdue)."""
     from . import gcal
 
     app = Starlette(
@@ -610,6 +686,8 @@ def create_app(*, verifier_factory=default_verifier_factory, mitid: MitIDLogin |
             Route("/", home),
             Route("/overblik", overview),
             Route("/events/remove", remove_event, methods=["POST"]),
+            Route("/todos/check", tick_todo, methods=["POST"]),
+            Route("/todos/uncheck", tick_todo, methods=["POST"]),
             Route("/aula/login", aula_login_page),
             Route("/aula/login", aula_login_start, methods=["POST"]),
             Route("/aula/login/state", aula_login_state),
@@ -623,4 +701,5 @@ def create_app(*, verifier_factory=default_verifier_factory, mitid: MitIDLogin |
     app.state.mitid = mitid or MitIDLogin()
     app.state.oauth_pending = {}
     app.state.google = google or gcal.Google.connect
+    app.state.today = today
     return app

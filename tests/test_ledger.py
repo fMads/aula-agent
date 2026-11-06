@@ -140,3 +140,19 @@ def test_history_is_kept_in_state_json(data_dir):
     (h,) = Ledger.load().events_by_item("post:1")
     assert [(line.item, line.action) for line in h.lines] == [("post:1", "created")]
     assert Ledger.load().events_by_item("post:2") == []
+
+
+def test_a_todo_is_ticked_off_per_item_version_and_can_be_undone(data_dir):
+    ledger = Ledger()
+    assert not ledger.todo_checked("post:1", 7) and ledger.todo_checked("post:1", 7, by_default=True)
+
+    ledger.check_todo("post:1", 7)
+    ledger.save()
+    ledger = Ledger.load()
+    assert ledger.todo_checked("post:1", 7, by_default=False) and ledger.todo_checked_at("post:1", 7)
+    assert not ledger.todo_checked("post:1", 8)  # a new version of the item: open again
+    assert not ledger.todo_checked("post:2", 7)
+
+    ledger.uncheck_todo("post:1", 7)
+    assert not ledger.todo_checked("post:1", 7, by_default=True)  # undone stays open, also one that started as done
+    assert ledger.todo_checked_at("post:1", 7) is None
