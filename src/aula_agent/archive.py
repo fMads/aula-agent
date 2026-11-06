@@ -13,6 +13,10 @@ version (with its todo, if any) and the topics they use (ADR 0003). An item vers
 classification until the agent gives it a new one or ``reclassify`` deletes them all
 (:meth:`Archive.forget_classifications`); a new version has none until the agent gives it one.
 
+It also keeps a free-text index (:meth:`Archive.search`) of each item as its newest version and
+newest classification have it, and of each file by its name and, for PDF and docx, the text in it
+(taken out once, when the file is stored). Saving and classifying keep it up to date.
+
 Version rule: an item gets a new item version only when its title, its text or
 the set of its attachment ids changes. Signed URLs, comment counts, bookmarks
 and the like do not count, and while there is no new version the stored raw
@@ -44,13 +48,14 @@ from aula.models.message import Message
 from aula.models.post import Post
 from aula.utils.dates import parse_api_datetime
 
-from . import store
+from . import filetext, store
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 _BACKUPS_SINCE = 3  # the schema version that added the backup tables
 _CLASSIFICATIONS_SINCE = 4  # the schema version that added classifications and topics
 _TODOS_SINCE = 5  # the schema version that added a todo to classifications
 _FIRST_CLASSIFIED_SINCE = 6  # the schema version that remembers when a version was first classified
+_SEARCH_SINCE = 7  # the schema version that added the free-text index
 
 # Message types that are items; the rest (RecipientsAdded, SystemReply, AutoReply,
 # MessageDeleted, ...) are system messages and are only kept in the raw thread.
@@ -143,6 +148,19 @@ ALTER TABLE classifications ADD COLUMN todo_due TEXT;   -- YYYY-MM-DD, empty wit
 _SCHEMA_6 = """
 ALTER TABLE versions ADD COLUMN first_classified_at TEXT;
 UPDATE versions SET first_classified_at = (SELECT saved_at FROM classifications WHERE version_id = versions.id);
+"""
+
+# The free-text index (FTS5): each item as its newest version and newest classification has it, and
+# each file by its name and the text in it. The text is taken out of a stored file once (``extracted``).
+# Danish letters stay as they are (no "å" -> "a"); case does not count.
+_SCHEMA_7 = """
+CREATE VIRTUAL TABLE search_items USING fts5(
+    item_key UNINDEXED, title, body, author, summary, topics, tokenize = 'unicode61 remove_diacritics 0'
+);
+CREATE VIRTUAL TABLE search_files USING fts5(
+    item_key UNINDEXED, attachment_id UNINDEXED, extracted UNINDEXED, name, text,
+    tokenize = 'unicode61 remove_diacritics 0'
+);
 """
 
 
@@ -263,6 +281,9 @@ class Topic:
     items: int  # how many items have it in their newest classification
 
 
+NOTICE_CURRENT_FOR = dt.timedelta(days=14)  # a notice is past this long after it came
+
+
 @dataclass
 class Item:
     key: str
@@ -292,6 +313,24 @@ class Item:
         """The children the item is for: Aula's when it set them, else the agent's, else none (= every child)."""
         aula = self.latest.child_ids if self.versions else []
         return list(aula or (self.classification.child_ids if self.classification else ()))
+
+    def past(self, today: dt.date) -> bool:
+        """Whether it is no longer current (then it is dimmed, never hidden), by the newest classification.
+
+        An arrangement, a deadline or a period is past when its span is over (without a span: when the
+        item's day has passed). Standing info never is. A notice, a reply or an item not classified
+        yet is past :data:`NOTICE_CURRENT_FOR` after it came, or when its span is over.
+        """
+        c = self.classification
+        if c is not None and c.category == Category.INFO:
+            return False
+        end = c and (c.span_end or c.span_start)
+        if end is not None and end < today:
+            return True
+        day = dt.date.fromisoformat(self.latest.date[:10]) if self.versions and self.latest.date else None
+        if c is not None and c.category in (Category.ARRANGEMENT, Category.FRIST, Category.PERIODE):
+            return end is None and day is not None and day < today
+        return day is not None and today - day > NOTICE_CURRENT_FOR
 
 
 TODO_FRESH_FOR = dt.timedelta(days=14)  # a todo without due counts on an item at most this old
@@ -345,6 +384,23 @@ class Thread:
     saved_at: str
     raw: dict[str, Any]
     messages: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class Hit:
+    """An item that matched a search."""
+
+    item: Item
+    excerpt: tuple[tuple[str, bool], ...] = ()  # the text around the match as (text, marked) parts; () without one
+    files: tuple[File, ...] = ()  # the item's files whose name or text matched
+
+
+class Source(StrEnum):
+    """Where an item came from, for a search filter."""
+
+    POST = "opslag"
+    MESSAGE = "besked"
+    DOCUMENT = "dokument"  # an item with a document attached (a file that is not an image, or a secure document)
 
 
 @dataclass
@@ -456,6 +512,7 @@ class Archive:
             (key, version, self._saved_at(), title, author, date, json.dumps(groups, ensure_ascii=False),
              json.dumps(child_ids), body, _json(raw)),
         )
+        self._index(key)
         return True
 
     async def save_files(
@@ -493,6 +550,7 @@ class Archive:
                 " kind = excluded.kind, name = excluded.name, detail = excluded.detail, path = excluded.path",
                 (item_key, file.attachment_id, file.kind, file.name, file.detail, file.path),
             )
+            self._index_file(item_key, file)
             out.append(file)
         return out
 
@@ -537,6 +595,7 @@ class Archive:
             "INSERT INTO classification_topics (version_id, topic, position) VALUES (?, ?, ?)",
             [(version, topic, i) for i, topic in enumerate(c.topics)],
         )
+        self._index(item_key)
         return True
 
     def forget_classifications(self) -> int:
@@ -546,7 +605,10 @@ class Archive:
         Returns how many there were.
         """
         self._db.execute("DELETE FROM classification_topics")
-        return self._db.execute("DELETE FROM classifications").rowcount
+        n = self._db.execute("DELETE FROM classifications").rowcount
+        for (key,) in self._db.execute("SELECT key FROM items").fetchall():
+            self._index(key)  # without their summaries and topics
+        return n
 
     # -- backup (from :mod:`aula_agent.backup`); each change is committed at once,
     # so a backup that fails half-way does not upload the same file again
@@ -670,6 +732,93 @@ class Archive:
         out.sort(key=lambda i: (i.latest.date or "", i.key))
         return out[:limit] if limit is not None else out
 
+    def search(
+        self, query: str = "", *, child: int | None = None, category: Category | None = None,
+        topic: str | None = None, source: Source | None = None,
+    ) -> list[Hit]:
+        """The items that match ``query`` (every word as the beginning of a word), newest first.
+
+        An item matches on its title, text, sender, summary and topics, or on the name of or the text
+        in one of its files; without a query every item matches. The filters narrow it: the items for
+        ``child`` (an item for no child in particular is for every child), of ``category``, with
+        ``topic`` (both by the newest classification), and from ``source``.
+        """
+        words = re.findall(r"\w+", query)
+        if query.strip() and not words:  # only quotes, stars and the like
+            return []
+        excerpts: dict[str, tuple[tuple[str, bool], ...]] = {}
+        in_files: dict[str, dict[str, tuple[tuple[str, bool], ...]]] = {}  # item key -> attachment id -> excerpt
+        if words:
+            match = " ".join(f'"{w}"*' for w in words)
+            for key, snippet in self._db.execute(
+                "SELECT item_key, snippet(search_items, -1, ?, ?, '…', 16) FROM search_items WHERE search_items MATCH ?",
+                (_MARK, _UNMARK, match),
+            ):
+                excerpts[key] = _parts(snippet)
+            for key, attachment, snippet in self._db.execute(
+                "SELECT item_key, attachment_id, snippet(search_files, 4, ?, ?, '…', 16) FROM search_files"
+                " WHERE search_files MATCH ?",
+                (_MARK, _UNMARK, match),
+            ):
+                in_files.setdefault(key, {})[attachment] = _parts(snippet)
+            keys = excerpts.keys() | in_files.keys()
+        else:
+            keys = {key for (key,) in self._db.execute("SELECT key FROM items")}
+        out = []
+        for key in keys:
+            item = self.item(key)
+            if item is None or not item.versions or not _wanted(item, child, category, topic, source):
+                continue
+            matched = in_files.get(key, {})
+            files = tuple(f for f in item.files if f.attachment_id in matched)
+            excerpt = excerpts.get(key) or next((x for x in matched.values() if x), ())
+            out.append(Hit(item, excerpt, files))
+        out.sort(key=lambda h: (h.item.latest.date or "", h.item.key), reverse=True)
+        return out
+
+    def reindex(self) -> None:
+        """Build the free-text index for every item and file (the text is taken out of a stored file only once)."""
+        for (key,) in self._db.execute("SELECT key FROM items").fetchall():
+            self._index(key)
+        for row in self._db.execute(
+            "SELECT item_key, attachment_id, kind, name, detail, path FROM files ORDER BY rowid"
+        ).fetchall():
+            self._index_file(row[0], File(*row[1:]))
+
+    def _index_file(self, item_key: str, file: File) -> None:
+        """Put a file in the free-text index by its name, and by its text once it is stored."""
+        old = self._db.execute(
+            "SELECT name, extracted, text FROM search_files WHERE item_key = ? AND attachment_id = ?",
+            (item_key, file.attachment_id),
+        ).fetchone()
+        stored = store.DATA_DIR / file.path if file.path else None
+        if stored is not None and not stored.is_file():
+            stored = None
+        if old and old[0] == file.name and (old[1] or stored is None):
+            return
+        if old and old[1]:
+            text = old[2]
+        else:
+            text = filetext.extract(stored) if stored is not None and file.kind == Kind.FILE else None
+        self._db.execute("DELETE FROM search_files WHERE item_key = ? AND attachment_id = ?", (item_key, file.attachment_id))
+        self._db.execute(
+            "INSERT INTO search_files (item_key, attachment_id, extracted, name, text) VALUES (?, ?, ?, ?, ?)",
+            (item_key, file.attachment_id, int(bool(old and old[1]) or stored is not None), file.name, text or ""),
+        )
+
+    def _index(self, key: str) -> None:
+        """Put an item in the free-text index as its newest version and newest classification have it."""
+        self._db.execute("DELETE FROM search_items WHERE item_key = ?", (key,))
+        item = self.item(key)
+        if item is None or not item.versions:
+            return
+        latest, c = item.latest, item.classification
+        self._db.execute(
+            "INSERT INTO search_items (item_key, title, body, author, summary, topics) VALUES (?, ?, ?, ?, ?, ?)",
+            (key, latest.title or "", latest.body, latest.author or "", (c and c.summary) or "",
+             " ".join(c.topics) if c else ""),
+        )
+
     def thread(self, thread_id: str) -> Thread | None:
         row = self._db.execute("SELECT id, saved_at, raw, messages FROM threads WHERE id = ?", (thread_id,)).fetchone()
         return Thread(row[0], row[1], json.loads(row[2]), json.loads(row[3])) if row else None
@@ -712,6 +861,37 @@ def post_groups(post: Post) -> list[str]:
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
+
+
+_MARK, _UNMARK = "\x02", "\x03"  # around a match in an excerpt (characters Aula's text does not have)
+
+
+def _parts(snippet: str) -> tuple[tuple[str, bool], ...]:
+    """An FTS5 snippet as (text, marked) parts; () when nothing in it is marked."""
+    if _MARK not in snippet:
+        return ()
+    parts = []
+    for i, piece in enumerate(re.split(f"[{_MARK}{_UNMARK}]", snippet)):
+        if piece:
+            parts.append((piece, i % 2 == 1))
+    return tuple(parts)
+
+
+def _wanted(item: Item, child: int | None, category: Category | None, topic: str | None, source: Source | None) -> bool:
+    c = item.classification
+    if child is not None and item.child_ids and child not in item.child_ids:
+        return False
+    if category is not None and (c is None or c.category != category):
+        return False
+    if topic is not None and (c is None or topic not in c.topics):
+        return False
+    if source == Source.POST:
+        return item.kind == "post"
+    if source == Source.MESSAGE:
+        return item.kind == "message"
+    if source == Source.DOCUMENT:
+        return any(f.kind in (Kind.FILE, Kind.SECURE_DOCUMENT) for f in item.files)
+    return True
 
 
 _URL_QUERY = re.compile(r"(https?://[^\s?#()<>\[\]\"']+)[?#][^\s()<>\[\]\"']*")
@@ -759,6 +939,9 @@ def _migrate(db: sqlite3.Connection) -> None:
         db.executescript(_SCHEMA_5)
     if current < _FIRST_CLASSIFIED_SINCE:
         db.executescript(_SCHEMA_6)
+    if current < _SEARCH_SINCE:
+        db.executescript(_SCHEMA_7)
+        Archive(db).reindex()
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 

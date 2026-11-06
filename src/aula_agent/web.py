@@ -244,13 +244,16 @@ ul.list li .grow{flex:1;min-width:0}.date{white-space:nowrap;font-variant-numeri
 button,.btn{font:inherit;border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:8px;padding:.35rem .8rem;cursor:pointer;text-decoration:none;display:inline-block}
 button.primary,.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
 button.small{font-size:.85rem;padding:.15rem .6rem}
-input[type=text]{font:inherit;padding:.35rem .5rem;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--fg)}
+input[type=text],input[type=search],select{font:inherit;padding:.35rem .5rem;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--fg)}
 .qr{width:min(20rem,80vw);aspect-ratio:1;margin:1rem 0}.qr svg{width:100%;height:100%}
 .otp{font-size:2rem;letter-spacing:.2em;font-weight:600}
 .flash{padding:.6rem .8rem;border-radius:8px;border:1px solid var(--line);margin-bottom:1rem}
 form.inline{display:inline;margin:0}
 details>summary{cursor:pointer;margin:2rem 0 .6rem;font-weight:600}
 .acts{display:flex;flex-direction:column;gap:.3rem;align-items:flex-end}
+form.search{display:flex;flex-wrap:wrap;gap:.4rem;margin:0 0 1rem}form.search input[type=search]{flex:1 1 100%;font-size:1.05rem;padding:.55rem .7rem}
+li.past{opacity:.6}.tag{font-size:.8rem;border:1px solid var(--line);border-radius:6px;padding:0 .35rem;color:var(--mut)}
+mark{background:#fde68a;color:inherit;border-radius:2px}@media (prefers-color-scheme:dark){mark{background:#7a5c00}}
 """
 
 
@@ -467,8 +470,103 @@ def overview_item(item: archive.Item) -> str:
     )
 
 
+SOURCE_NAMES = {
+    archive.Source.POST: "Opslag",
+    archive.Source.MESSAGE: "Besked",
+    archive.Source.DOCUMENT: "Med dokument",
+}
+
+
+def item_url(key: str) -> str:
+    """The item's detail page."""
+    return f"/overblik/item/{quote(key, safe=':')}"
+
+
+def excerpt_html(parts: tuple[tuple[str, bool], ...]) -> str:
+    return "".join(f"<mark>{e(text)}</mark>" if marked else e(text) for text, marked in parts)
+
+
+def search_hit(hit: archive.Hit, today: dt.date) -> str:
+    item, c, latest = hit.item, hit.item.classification, hit.item.latest
+    past = item.past(today)
+    meta = [m for m in ("opslag" if item.kind == "post" else "besked", fmt_date((latest.date or "")[:10])) if m]
+    if c:
+        meta.append(CATEGORY_NAMES[c.category])
+        if span := c.span_text("%d.%m.%Y"):
+            meta.append(f"gælder {span}")
+    lines = []
+    if item.sensitive:  # found, but no subject, excerpt, topics or file names (the page may stand open on a screen)
+        title = "🔒 Følsom tråd"
+    else:
+        title = latest.title or "(uden titel)"
+        if c and c.topics:
+            meta.append(f"emner: {', '.join(c.topics)}")
+        if hit.excerpt:
+            lines.append(f'<span class="excerpt">{excerpt_html(hit.excerpt)}</span>')
+        if hit.files:
+            lines.append(f'<span class="mut">i fil: {e(", ".join(f.name for f in hit.files))}</span>')
+    flag = ' <span class="tag">overstået</span>' if past else ""
+    lines.append(f'<span class="mut">{e(" · ".join(meta))}</span>')
+    return (
+        f'<li{' class="past"' if past else ""}><span class="grow"><a href="{e(item_url(item.key))}">{e(title)}</a>{flag}'
+        f'{"".join("<br>" + line for line in lines)}</span></li>'
+    )
+
+
+def search_form(params, topics: list[archive.Topic]) -> str:
+    """The search field with its filters, a GET form on /overblik (the child filter only with more than one child)."""
+    def select(name: str, label: str, options: list[tuple[str, str]]) -> str:
+        chosen = params.get(name) or ""
+        opts = "".join(
+            f'<option value="{e(value)}"{" selected" if value == chosen else ""}>{e(text)}</option>'
+            for value, text in [("", label), *options]
+        )
+        return f'<select name="{name}" aria-label="{e(label)}">{opts}</select>'
+
+    children = store.load_config()["children"]
+    filters = [
+        select("child", "Alle børn", [(cid, (c.get("name") or "?").split()[0]) for cid, c in children.items()])
+        if len(children) > 1 else "",
+        select("category", "Alle slags", [(str(c), name) for c, name in CATEGORY_NAMES.items()]),
+        select("topic", "Alle emner", [(t.name, t.name) for t in topics]),
+        select("source", "Alle kilder", [(str(s), name) for s, name in SOURCE_NAMES.items()]),
+    ]
+    return (
+        f'<form class="search" method="get" action="/overblik"><input type="search" name="q" value="{e(params.get("q"))}"'
+        f' placeholder="Søg i alt fra Aula" aria-label="Søg">{"".join(filters)}<button>Søg</button></form>'
+    )
+
+
+def searching(params) -> bool:
+    """Whether the overview is asked for search results (a query, or a filter other than the child)."""
+    return any((params.get(name) or "").strip() for name in ("q", "category", "topic", "source"))
+
+
+def search_part(params, today: dt.date) -> tuple[str, bool] | None:
+    """The search field for the top of the overview, with the results when it is asked for them
+    (:func:`searching`), and whether it is; None without an archive ready for it."""
+    def choice(name, kind):
+        try:
+            return kind(params.get(name)) if params.get(name) else None
+        except ValueError:
+            return None
+
+    with archive.read() as a:
+        if a is None:
+            return None
+        form = search_form(params, a.topics())
+        if not searching(params):
+            return form, False
+        hits = a.search(
+            params.get("q") or "", child=choice("child", int), category=choice("category", archive.Category),
+            topic=params.get("topic") or None, source=choice("source", archive.Source),
+        )
+    found = "".join(search_hit(h, today) for h in hits) or '<li class="mut">Intet fundet.</li>'
+    return form + f'<h2>Søgning <span class="mut">({len(hits)})</span></h2><ul class="list">{found}</ul>', True
+
+
 async def overview(request: Request) -> Response:
-    """The raw list of the agent's classifications (trin 1 of the overview), to judge them by."""
+    """The raw list of the agent's classifications (trin 1 of the overview), to judge them by, under the search."""
     ledger = Ledger.load()
     pending = ledger.pending_keys()
 
@@ -479,10 +577,14 @@ async def overview(request: Request) -> Response:
             return a.items(), a.topics(), len(a.unclassified(exclude=pending)), a.todos()
 
     nav = '<p><a href="/">Status</a> · <b>Overblik</b></p>'
+    search = await asyncio.to_thread(search_part, request.query_params, request.app.state.today())
+    if search and search[1]:
+        return page("Søgning", nav + search[0])
     got = await asyncio.to_thread(read)
-    if got is None:
+    if got is None or search is None:
         body = '<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>'
         return page("Overblik", nav + body)
+    nav += search[0]
     items, topics, unclassified, todos = got
     groups: dict[archive.Category, list[archive.Item]] = {c: [] for c in archive.Category}
     for item in items:

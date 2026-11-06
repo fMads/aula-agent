@@ -164,6 +164,7 @@ Web-siden viser:
 - de seneste kørsler
 - hvor mange opslag og beskeder arkivet har, hvornår der sidst blev gemt noget, og hvornår der sidst blev taget backup (med en advarsel, hvis det er mere end 2 døgn siden eller aldrig er sket)
 - de kommende begivenheder med en knap til at fjerne forkerte (de bliver så ikke oprettet igen). Gælder en begivenhed flere børn, er der en knap pr. barn
+- et overblik (`/overblik`) med et søgefelt øverst. Søgningen finder alt i arkivet på ordbegyndelser ("svøm" finder "svømning"), også tekst inde i vedhæftede PDF- og Word-filer (docx), og kan indsnævres efter barn, slags, emne og kilde (opslag, besked, med dokument). Overståede ting er dæmpede, og følsomme tråde vises uden emne og uddrag
 
 Fra web-siden kan du også logge ind i Aula med MitID (QR-koden vises i browseren) og forbinde Google.
 
