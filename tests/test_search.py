@@ -285,3 +285,13 @@ def test_a_query_without_words_finds_nothing_and_breaks_nothing():
         a.save_post(post(1, 'Juleklip "AND" *'))
     for q in ('"', "*", "AND OR NOT", '" OR "'):
         assert hits(search(q=q)) == [], q
+
+
+def test_a_snippet_shows_the_words_without_the_markdown_around_them():
+    with archive.open() as a:
+        a.save_post(post(1, "Ugebrev", body="<p>Til festen: <b>husk farverigt tøj</b> og <i>godt humør</i>.</p>"))
+
+    html = results(search(q="farverigt"))
+
+    assert "<mark>farverigt</mark> tøj" in html and "godt humør" in html
+    assert "**" not in html and "_godt" not in html

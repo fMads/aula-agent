@@ -410,3 +410,19 @@ def test_fjern_only_leads_back_to_a_page_on_the_site_and_without_back_to_the_fro
     assert none.headers["location"].startswith("/?msg=")
     assert "Begivenheden findes ikke længere." in page.text and "evil.example" not in page.text
     assert "Skovtur" in asked.text and '<a href="/" class="btn">Fortryd</a>' in asked.text
+
+
+def test_the_text_is_shown_as_formatted_markdown_not_raw(aula):
+    long = "Til festen på onsdag skal alle optræde med et lille nummer, og vi vil gerne opfordre til, at børnene kommer i farverigt tøj."
+    html = (f"<p>Kære forældre</p><p>{long}</p><p><b>Vigtigt:</b> husk <i>madpakke</i>.</p>"
+            '<ul><li>saks</li><li>lim</li></ul><p><a href="https://example.org/plan">Se planen</a></p>'
+            '<p><a href="javascript:alert(1)">klik</a> &lt;script&gt;alert(2)&lt;/script&gt;</p>')
+    aula["client"] = FakeAula([child(1, "Emma")], [post(1, "Ugebrev", 1, html=html)], [], {})
+    run_fetch()
+
+    page = get("/item/post:1").text
+    assert "<strong>Vigtigt:</strong>" in page and "<em>madpakke</em>" in page and "**" not in page
+    assert "<li>saks</li>" in page and "<li>lim</li>" in page
+    assert '<a href="https://example.org/plan"' in page and ">Se planen</a>" in page
+    assert long in page  # the hard wrap html2text puts into a long paragraph is gone
+    assert "href=\"javascript:" not in page and "<script>alert(2)" not in page and "&lt;script&gt;alert(2)" in page

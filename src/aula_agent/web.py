@@ -21,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, NamedTuple
 from urllib.parse import quote, urlencode, urlparse, urlsplit
 
+from markdown_it import MarkdownIt
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
 from starlette.middleware import Middleware
@@ -368,7 +369,8 @@ border:1px solid var(--line);border-radius:14px;padding:.7rem .85rem}
 .card b{display:block;font-size:.8rem;color:var(--mut);font-weight:500}
 .qr{width:min(20rem,80vw);aspect-ratio:1;margin:1rem 0}.qr svg{width:100%;height:100%}
 .otp{font-size:2rem;letter-spacing:.2em;font-weight:600}
-.text{white-space:pre-wrap;overflow-wrap:anywhere}
+.text{overflow-wrap:anywhere}.text p,.text ul,.text ol{margin:.6rem 0}.text ul,.text ol{padding-left:1.4rem}
+.text table{border-collapse:collapse}.text td,.text th{border:1px solid var(--line);padding:.2rem .4rem}
 details.version>summary{margin:.4rem 0;font-weight:400}
 ul.thread li.sel{border-left:3px solid var(--acc);padding-left:.6rem}
 .topic h3{margin:1.2rem 0 .35rem}.week{margin-top:1.2rem}
@@ -961,8 +963,14 @@ KIND_FILTER_NAMES = {
 }
 
 
+# The Markdown in a snippet of an item's body: bold and italics (** __ and _ at a word's edge) and html2text's
+# backslash escapes. A snippet is a piece of a line, so it is shown as text without them, not rendered.
+SNIPPET_MARKUP = re.compile(r"\*\*|__|(?<!\w)_(?=\w)|(?<=\w)_(?!\w)|\\(?=[\\`*_{}\[\]()#+\-.!])")
+
+
 def excerpt_html(parts: tuple[tuple[str, bool], ...]) -> str:
-    return "".join(f"<mark>{e(text)}</mark>" if marked else e(text) for text, marked in parts)
+    plain = ((SNIPPET_MARKUP.sub("", text), marked) for text, marked in parts)
+    return "".join(f"<mark>{e(text)}</mark>" if marked else e(text) for text, marked in plain)
 
 
 def search_hit(hit: archive.Hit, today: dt.date, kids: Children = NOBODY) -> str:
@@ -1267,8 +1275,30 @@ def child_names(child_ids: list[int], cfg: dict[str, Any]) -> str:
     return ", ".join(child_first_name(cfg["children"].get(str(c))) for c in child_ids)
 
 
+def _new_tab(self, tokens, idx, options, env):
+    tokens[idx].attrSet("target", "_blank")
+    tokens[idx].attrSet("rel", "noopener noreferrer")
+    return self.renderToken(tokens, idx, options, env)
+
+
+def _image_as_link(self, tokens, idx, options, env):
+    # The CSP lets no image in from Aula's servers, so an image in the text is a link to it.
+    src = tokens[idx].attrGet("src") or ""
+    alt = self.renderInlineAsText(tokens[idx].children or [], options, env) or "billede"
+    return f'<a href="{e(src)}" target="_blank" rel="noopener noreferrer">[{e(alt)}]</a>'
+
+
+# An item's body is the Markdown aula's html2text made from Aula's HTML. Raw HTML in it is shown as text, and
+# markdown-it refuses javascript:, vbscript:, file: and data: links.
+MARKDOWN = MarkdownIt("commonmark", {"html": False}).enable("table")
+MARKDOWN.add_render_rule("link_open", _new_tab)
+MARKDOWN.add_render_rule("image", _image_as_link)
+# html2text wraps long lines; a wrap inside a paragraph is a space, not a line break.
+MARKDOWN.add_render_rule("softbreak", lambda self, tokens, idx, options, env: " ")
+
+
 def item_text(body: str) -> str:
-    return f'<div class="text">{e(body)}</div>'
+    return f'<div class="text">{MARKDOWN.render(body)}</div>'
 
 
 def file_url(item_key: str, attachment_id: str) -> str:
