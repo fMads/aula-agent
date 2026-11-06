@@ -199,6 +199,8 @@ Det kræver et domæne på Cloudflare. Zero Trust er gratis til få brugere.
 
 Se opsætningen med `uv run aula-agent web-setup`. Hvis du kører `--email` igen, erstatter det hele listen.
 
+Siden kan ligge på telefonens hjemmeskærm som en app (i Safari: Del → *Føj til hjemmeskærm*, i Chrome: *Installer app*). Den hedder "Overblik". Et andet navn sætter du med `"app_name"` under `"web"` i `data/config.json`, fx `"app_name": "Hjemme"`. Det står også øverst på siden. Kald den ikke "Aula", så den ikke forveksles med Aula-appen. Siden virker kun med net.
+
 Når adressen (`--url`) er sat, får begivenhederne i Google Calendar et link til item'ets detalje-side på web-siden (`/item/<item-key>`). Begivenheder, der allerede ligger i kalenderen, får linket, næste gang de bliver opdateret.
 
 ## I hverdagen
