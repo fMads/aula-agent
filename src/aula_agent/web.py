@@ -353,10 +353,13 @@ async def home(request: Request) -> Response:
         return ((cfg["children"].get(str(child_id)) or {}).get("name") or "?").split()[0]
 
     events = ledger.upcoming()
+    sensitive = sensitive_items({ev.source for ev in events if ev.source})
     if events:
         items = []
         for ev in events:
             src_txt = ev.source_item.get("title") or ev.source_item.get("subject") or ""
+            if ev.source in sensitive:
+                src_txt = SENSITIVE
             link = f' <a href="{e(ev.link)}" target="_blank" rel="noopener">åbn</a>' if ev.link else ""
             names = ", ".join(first_name(c) for c in ev.child_ids)
             several = len(ev.child_ids) > 1
@@ -399,6 +402,17 @@ async def home(request: Request) -> Response:
 <h2>Seneste kørsler</h2><ul class="list">{runs_html}</ul>
 <p class="mut" style="margin-top:2rem">Logget ind som {e(getattr(request.state, "email", ""))}</p>"""
     return page("Aula → Kalender", body, request.query_params.get("msg"))
+
+
+SENSITIVE = "🔒 Følsom tråd"  # what a sensitive thread is called on a page that may stand open on a screen
+
+
+def sensitive_items(keys: set[str]) -> set[str]:
+    """Which of these items are sensitive threads, by the archive (none, when it is missing or not migrated yet)."""
+    with archive.read() as a:
+        if a is None:
+            return set()
+        return {k for k in keys if (item := a.item(k)) is not None and item.sensitive}
 
 
 CATEGORY_NAMES = {
@@ -453,7 +467,7 @@ def todo_item(t: archive.ItemTodo, *, today: dt.date, checked: bool) -> str:
         None if sensitive else t.item.latest.title or "(uden titel)",
     ) if m]
     flag = ' <b class="bad">overskredet</b>' if overdue else ""
-    text = "🔒 Følsom tråd" if sensitive else t.text
+    text = SENSITIVE if sensitive else t.text
     what = f'<span class="todo">{e(text)}</span>{flag}<br><span class="mut">{e(" · ".join(meta))}</span>'
     return f'<li><span class="grow">{what}</span><span class="acts">{button}</span></li>'
 
@@ -475,7 +489,7 @@ def overview_item(item: archive.Item) -> str:
     if span := c.span_text("%d.%m.%Y"):
         meta.append(f"gælder {span}")
     if item.sensitive:  # the page may stand open on a screen: no subject, summary or topics
-        title, summary = "🔒 Følsom tråd", ""
+        title, summary = SENSITIVE, ""
     else:
         title, summary = latest.title or "(uden titel)", c.summary or ""
         if c.topics:
@@ -735,7 +749,7 @@ def item_title(item: archive.Item | None) -> str:
     """What an item is called in a list: its title, but never a sensitive thread's subject."""
     if item is None:
         return "et item, der ikke er i arkivet"
-    return "🔒 Følsom tråd" if item.sensitive else item.latest.title or "(uden titel)"
+    return SENSITIVE if item.sensitive else item.latest.title or "(uden titel)"
 
 
 @dataclass
