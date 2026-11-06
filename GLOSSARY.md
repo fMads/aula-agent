@@ -9,8 +9,12 @@ Finder arrangementer og frister i forældrenes Aula og lægger dem i børnenes G
 _Avoid_: Instans, deployment, opsætning
 
 **Operator**:
-Forælderen, der har installeret aula-agent og driver installationen: maskinen, natkørslen og nye logins. Installationen læser Aula med operatorens eget MitID. Andre forældre i familien kan bruge web-siden og kalenderne uden at være operator.
+Forælderen, der har installeret aula-agent og driver installationen: maskinen, natkørslen og nye logins. Installationen læser Aula med operatorens eget MitID og lægger events i operatorens Google. Kun operatoren kan logge ind i Aula og forbinde Google.
 _Avoid_: Admin, ejer, vært, bruger (en bruger er enhver forælder, der bruger siden eller kalenderne)
+
+**Medforælder**:
+En voksen i familien, som operatoren har givet adgang til web-siden, og som ikke er operator. Der kan være flere. En medforælder ser det samme som operatoren, også operatorens beskeder, og kan krydse todos af og fjerne events, men ikke logge ind i Aula eller forbinde Google. Beskeder, som kun medforælderen har fået i sin egen Aula, ser installationen aldrig.
+_Avoid_: Partner, gæst, bruger (det er alle, også operatoren)
 
 ## Fra Aula
 
@@ -104,7 +108,7 @@ Et emne, der binder items om det samme sammen ("svømning", "lejrskole"), med en
 _Avoid_: Emne (kun i brugertekst), tag, label
 
 **Todo**:
-Noget forælderen skal gøre (betale, tilmelde, aflevere, medbringe), med en kort tekst i bydeform og evt. en dato (`due`). Den er et valgfrit felt på en classification, ikke en category, fordi opgaver findes i alle categories. Den står på listen "Skal gøres", til forælderen krydser den af, også når datoen er passeret (så er den overskredet). Afkrydsning gælder hele item'et, ikke pr. barn. En ny item version har sin egen todo, der er åben igen. En todo, der ikke var aktuel, da den blev klassificeret (`due` passeret, eller ingen `due` på et item over 14 dage gammelt), starter som klaret.
+Noget forælderen skal gøre (betale, tilmelde, aflevere, medbringe), med en kort tekst i bydeform og evt. en dato (`due`). Den er et valgfrit felt på en classification, ikke en category, fordi opgaver findes i alle categories. Den står på listen "Skal gøres", til forælderen krydser den af, også når datoen er passeret (så er den overskredet). Afkrydsning gælder hele item'et og hele familien, ikke pr. barn eller pr. forælder. En ny item version har sin egen todo, der er åben igen. En todo, der ikke var aktuel, da den blev klassificeret (`due` passeret, eller ingen `due` på et item over 14 dage gammelt), starter som klaret.
 _Avoid_: Opgave (kun i brugertekst), task, reminder, frist (det er en category og et event)
 
 **Unclassified item**:
@@ -130,7 +134,7 @@ Ledger gemmer den pr. (event key, kalender) med `child_ids`, Google-eventets id,
 _Avoid_: Kalenderpost (kun i brugertekst)
 
 **Removed by user**:
-Et event, som en forælder har fjernet for ét barn på web-siden. Eventet må aldrig komme tilbage for det barn, heller ikke under en ny key. Eventets andre børn beholder det, også når de deler kalender med barnet.
+Et event, som en forælder har fjernet for ét barn på web-siden. Det gælder for hele familien. Eventet må aldrig komme tilbage for det barn, heller ikke under en ny key. Eventets andre børn beholder det, også når de deler kalender med barnet.
 _Avoid_: Ignored, deleted
 
 **Ledger**:
