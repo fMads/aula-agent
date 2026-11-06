@@ -90,6 +90,7 @@ Når du bliver bedt om at køre den natlige Aula-synkronisering, så gør præci
      - Kun én pr. item; er der flere ting, så skriv den vigtigste eller saml dem kort. Ingen todo på `svar` eller når der intet er at gøre.
      - En frist med todo er stadig også en frist: den får sit `Frist: …`-event som ovenfor (kun for `items`, aldrig for `to_classify`). Er `due` arrangementets egen dag ("medbring …"), er arrangementets event nok.
      - Skriv også todo for items i `to_classify`. Koden afgør selv, om den kommer på listen (gamle todos starter som klaret).
+     - Skriv todo uanset kalenderen: også når brugeren har fjernet eventet (`removed_by_user`), eller når arrangementet allerede står i `aula_calendar`. At fjerne et event er ikke det samme som at have gjort det; brugeren krydser selv todo'en af på web-siden.
    - Følsomme tråde (`"sensitive": true` på item'et): **intet** `summary`.
    - `child_ids`: kun når item'ets `child_ids` er tom, efter samme regler som for events. Har Aula sat børnene, så udelad den (Aulas vinder).
 
