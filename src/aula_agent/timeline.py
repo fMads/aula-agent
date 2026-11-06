@@ -1,8 +1,9 @@
-"""The overview's timeline (#29): what stands where on the front page, week by week. It returns data; web.py renders it.
+"""The overview's timeline (#29, #54): what stands where on the front page, day by day and week by week.
+It returns data; web.py renders it.
 
-Gælder nu is what :meth:`archive.Item.current` says is current. Kommende and Tidligere are weeks (Monday first),
-each with its lines: an item on its day (:func:`placed_on`), an event in the calendar or an open todo with due.
-Standing info is never in the weeks.
+Gælder nu is what :meth:`archive.Item.current` says is current. I dag og i morgen and Kommende are days, and
+Tidligere is weeks (Monday first), each with its lines: an item on its day (:func:`placed_on`), an event in the
+calendar or an open todo with due. Standing info is never on the days or in the weeks.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ class ItemLine:
 
 @dataclass(frozen=True)
 class EventLine:
-    """An event in the calendar; ``day`` is where it stands (an event begun before the weeks: their first day)."""
+    """An event in the calendar; ``day`` is where it stands (an event begun before today: today)."""
 
     day: dt.date
     event: UpcomingEvent
@@ -87,13 +88,28 @@ def is_upcoming(item: archive.Item, today: dt.date) -> bool:
     return c.category != archive.Category.INFO and bool(c.span_start) and c.span_start >= today and item.current(today) is None
 
 
+@dataclass(frozen=True)
+class Day:
+    day: dt.date
+    lines: tuple[Line, ...]
+
+
+@dataclass(frozen=True)
+class Upcoming:
+    """I dag og i morgen (``near``: today and tomorrow, also when there is nothing on them) and Kommende
+    (``later``: from the day after tomorrow, the days with something on them)."""
+
+    near: tuple[Day, Day]
+    later: list[Day]
+
+
 def upcoming(
     items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date,
     sources: dict[str, archive.Item],
-) -> list[Week]:
-    """Kommende, week by week from today: the items :func:`is_upcoming`, the events (an event on the day its
-    item's span begins is that item, shown once: in Kommende or Gælder nu) and the
-    open ``todos`` due today or later. ``sources``: the events' items in the archive (shown or not), by key."""
+) -> Upcoming:
+    """I dag og i morgen and Kommende, day by day from today: the items :func:`is_upcoming`, the events (an event
+    on the day its item's span begins is that item, shown once: here or in Gælder nu) and the open ``todos`` due
+    today or later. ``sources``: the events' items in the archive (shown or not), by key."""
     by_key = {i.key: i for i in items}
     due = {t.item.key: t for t in todos if t.due is not None and t.due >= today}
     lines: list[Line] = []
@@ -109,7 +125,12 @@ def upcoming(
             continue
         lines.append(EventLine(max(start, today), ev, sources.get(ev.source or "")))
     lines += [TodoLine(t.due, t) for t in due.values()]
-    return weeks(lines)
+    by_day: dict[dt.date, list[Line]] = {}
+    for line in sorted(lines, key=lambda line: (line.day, _ORDER[type(line)])):
+        by_day.setdefault(line.day, []).append(line)
+    tomorrow = today + dt.timedelta(days=1)
+    near = (Day(today, tuple(by_day.pop(today, ()))), Day(tomorrow, tuple(by_day.pop(tomorrow, ()))))
+    return Upcoming(near, [Day(day, tuple(members)) for day, members in by_day.items()])
 
 
 @dataclass(frozen=True)

@@ -319,7 +319,7 @@ def test_an_upcoming_event_on_the_front_page_links_to_the_item(aula):
     apply({"processed": ["post:1"], "events": [{**trip_event("post:1"), "child_ids": [1]}], "new_topics": TOPICS,
            "classifications": [classify("post:1")]})
 
-    assert '<a class="item-link" href="/item/post:1">Skovtur</a>' in get("/").text
+    assert '<a class="item-link" href="/item/post:1">Skovtur</a>' in get("/past").text  # no span: under Tidligere
 
 
 # ------------------------------------------------------------------ "Fjern for <barn>" under "Blev til i kalenderen"

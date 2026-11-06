@@ -126,6 +126,10 @@ def fill(today: dt.date, port: int) -> None:
                  [EMMA] if n % 2 else [OSCAR])
         save(post(40, "Høstfest", -21, "Høstfest i skolegården."), c(C.ARRANGEMENT, -18, None, ["skolefest"], "Høstfest i skolegården."))
         save(post(41, "Billeder fra turen", -1, "Tak for en dejlig tur."))  # not classified yet
+        save(post(42, "Fællessang i salen", -3, "Vi synger sammen i salen om morgenen. Forældre er velkomne."),
+             c(C.ORIENTERING, None, None, ["skema"], "Fællessang i salen om morgenen, forældre velkomne."), [EMMA])
+        save(post(43, "Fodboldstævne", -8, "Stævne for alle børn i morgen hele dagen. Tilmelding senest i går."),
+             c(C.FRIST, -1, None, ["idræt"], "Fodboldstævne hele dagen, tilmelding senest i går.", "Tilmeld til stævnet", -1))
 
         a.save_thread("70", [msg("a", -2, "Vi skal i skoven på fredag. Betal 40 kr. via MobilePay."),
                              msg("b", -1, "Tak, det er betalt.", sender="Forælder Demo")],
@@ -138,17 +142,21 @@ def fill(today: dt.date, port: int) -> None:
         a.classify("message:71:a", c(C.ORIENTERING, todo="Ring til skolen", due=4))
 
     ledger = Ledger.load()
-    for key, children, title, start, source in (
-        ("post:2#1", [OSCAR], "Juleklip", day(28), "post:2"),
-        ("post:3#1", [EMMA, OSCAR], "Frist: tilmelding til skolefest", day(9), "post:3"),
-        ("post:8#1", [OSCAR], "Forældremøde", day(12), "post:8"),
-        ("message:70:a#1", [OSCAR], "Tur i skoven", day(5), "message:70:a"),
-        ("post:3#2", [EMMA, OSCAR], "Skolefest", day(30), "post:3"),
+    for key, children, title, start, end, source in (
+        ("post:2#1", [OSCAR], "Juleklip", day(28), None, "post:2"),
+        ("post:3#1", [EMMA, OSCAR], "Frist: tilmelding til skolefest", day(9), None, "post:3"),
+        ("post:8#1", [OSCAR], "Forældremøde", day(12), None, "post:8"),
+        ("message:70:a#1", [OSCAR], "Tur i skoven", day(5), None, "message:70:a"),
+        ("post:3#2", [EMMA, OSCAR], "Skolefest", day(30), None, "post:3"),
+        ("post:42#1", [EMMA], "Fællessang", f"{today}T08:15", f"{today}T08:45", "post:42"),  # today, with a time
+        ("post:43#1", [EMMA, OSCAR], "Fodboldstævne", day(1), None, "post:43"),  # tomorrow, all day, both
     ):
+        start = start if isinstance(start, str) else start.isoformat()
+        end = end or start
         for child in children:
-            ledger.record(SyncedEntry(key, [child], f"cal{child}", f"ev-{key}-{child}", title, start.isoformat(),
-                                      start.isoformat(), source, {}, f"https://calendar.google.com/demo/{key}"))
-        ledger.add_history(key, "created", source, title=title, start=start.isoformat(), end=start.isoformat())
+            ledger.record(SyncedEntry(key, [child], f"cal{child}", f"ev-{key}-{child}", title, start, end, source, {},
+                                      f"https://calendar.google.com/demo/{key}"))
+        ledger.add_history(key, "created", source, title=title, start=start, end=end)
     ledger.mark_removed("post:2#1", OSCAR, title="Juleklip", start=day(28).isoformat(), end=day(28).isoformat())
     ledger.log_run("fetch", "ok", "3 nye/ændrede, 0 venter")  # a night that went well: no warning about it
     ledger.log_run("apply", "ok", "5 oprettet")
