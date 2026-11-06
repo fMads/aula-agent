@@ -148,7 +148,7 @@ def test_reclassify_puts_every_item_in_to_classify_again_and_keeps_the_topics(au
     r = CliRunner().invoke(cli.main, ["reclassify"])
 
     assert r.exit_code == 0, r.output
-    assert "2" in r.output
+    assert r.output.startswith("2 classifications slettet.")
     run_fetch()
     assert queued() == ["post:1", "post:2"]
     assert [(t["name"], t["items"]) for t in inbox()["topics"]] == [("skema", 0)]

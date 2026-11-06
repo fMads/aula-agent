@@ -93,7 +93,7 @@ Når du bliver bedt om at køre den natlige Aula-synkronisering, så gør præci
    - Følsomme tråde (`"sensitive": true` på item'et): **intet** `summary`.
    - `child_ids`: kun når item'ets `child_ids` er tom, efter samme regler som for events. Har Aula sat børnene, så udelad den (Aulas vinder).
 
-   Køen (`to_classify`): items i arkivet, som aldrig er klassificeret (fra backfill, ældre end cutoff, eller en ny version af et item). Højst 100, ældste først, i samme form som `items`.
+   Køen (`to_classify`): items i arkivet, hvis nyeste version ikke er klassificeret (fra backfill, ældre end cutoff, en ny version af et item, eller alle efter `aula-agent reclassify`). Højst 100, ældste først, i samme form som `items`.
    - Skriv kun en classification for dem – **ingen** events, og de skal ikke i `processed`. Et event med et af dem som `source` bliver afvist.
    - Klassificér ud fra tekst, emne og filnavne. Læs kun en fil, når det er nødvendigt for at forstå item'et.
    - Det er OK at udelade et item, fx hvis det er svært eller der er mange. Det kommer igen i køen næste nat.

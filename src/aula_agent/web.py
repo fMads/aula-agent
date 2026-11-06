@@ -411,22 +411,30 @@ def todo_lists(todos: list[archive.ItemTodo], ledger: Ledger) -> tuple[list[arch
     return open_, checked
 
 
+# The buttons on a todo, by the action they post to (``/todos/<action>``): its label and what it does in Ledger.
+TODO_ACTIONS: dict[str, tuple[str, Callable[[Ledger, str, int], None]]] = {
+    "check": ("Klaret", Ledger.check_todo),
+    "uncheck": ("Fortryd", Ledger.uncheck_todo),
+}
+
+
 def todo_item(t: archive.ItemTodo, *, today: dt.date, checked: bool) -> str:
+    action = "uncheck" if checked else "check"
     button = (
-        f'<form class="inline" method="post" action="/todos/{"uncheck" if checked else "check"}">'
+        f'<form class="inline" method="post" action="/todos/{action}">'
         f'<input type="hidden" name="item" value="{e(t.item.key)}">'
         f'<input type="hidden" name="version" value="{t.version.id}">'
-        f'<button class="small">{"Fortryd" if checked else "Klaret"}</button></form>'
+        f'<button class="small">{TODO_ACTIONS[action][0]}</button></form>'
     )
-    if t.item.sensitive:  # the page may stand open on a screen: not even what to do
-        what = "🔒 Følsom tråd"
-    else:
-        overdue = not checked and t.due is not None and t.due < today
-        meta = [m for m in (
-            t.due and f"senest {fmt_date(t.due.isoformat())}", t.item.latest.title or "(uden titel)",
-        ) if m]
-        flag = ' <b class="bad">overskredet</b>' if overdue else ""
-        what = f'<span class="todo">{e(t.text)}</span>{flag}<br><span class="mut">{e(" · ".join(meta))}</span>'
+    sensitive = t.item.sensitive  # the page may stand open on a screen: not what to do, nor the subject
+    overdue = not checked and t.due is not None and t.due < today
+    meta = [m for m in (
+        t.due and f"senest {fmt_date(t.due.isoformat())}",
+        None if sensitive else t.item.latest.title or "(uden titel)",
+    ) if m]
+    flag = ' <b class="bad">overskredet</b>' if overdue else ""
+    text = "🔒 Følsom tråd" if sensitive else t.text
+    what = f'<span class="todo">{e(text)}</span>{flag}<br><span class="mut">{e(" · ".join(meta))}</span>'
     return f'<li><span class="grow">{what}</span><span class="acts">{button}</span></li>'
 
 
@@ -502,12 +510,14 @@ async def overview(request: Request) -> Response:
 
 
 async def tick_todo(request: Request) -> Response:
-    """ "Klaret" (``/todos/check``) or "Fortryd" (``/todos/uncheck``) on a todo of one item version."""
+    """A button in :data:`TODO_ACTIONS` ("Klaret", "Fortryd") on a todo of one item version."""
+    if (known := TODO_ACTIONS.get(request.path_params["action"])) is None:
+        return PlainTextResponse("Findes ikke.", status_code=404)
+    act = known[1]
     form = await request.form()
     item = str(form.get("item") or "")
     raw_version = str(form.get("version") or "")
     version = int(raw_version) if raw_version.isdigit() else None
-    check = request.url.path.endswith("/check")
 
     def work() -> str | None:
         with archive.read() as a:
@@ -515,7 +525,7 @@ async def tick_todo(request: Request) -> Response:
                 return "Opgaven findes ikke længere."
         with store.lock(wait=False):
             ledger = Ledger.load()
-            (ledger.check_todo if check else ledger.uncheck_todo)(item, version)
+            act(ledger, item, version)
             ledger.save()
         return None
 
@@ -686,8 +696,7 @@ def create_app(
             Route("/", home),
             Route("/overblik", overview),
             Route("/events/remove", remove_event, methods=["POST"]),
-            Route("/todos/check", tick_todo, methods=["POST"]),
-            Route("/todos/uncheck", tick_todo, methods=["POST"]),
+            Route("/todos/{action}", tick_todo, methods=["POST"]),
             Route("/aula/login", aula_login_page),
             Route("/aula/login", aula_login_start, methods=["POST"]),
             Route("/aula/login/state", aula_login_state),

@@ -5,12 +5,13 @@ it, the way only :mod:`aula_agent.ledger` touches ``state.json``. Callers talk i
 domain terms (save a post, save its files, how much is archived); the schema,
 the versioning rule and where files are placed stay in here.
 
-The archive fills up independently of intake and cutoff, and never forgets:
-nothing is cleaned up or marked as gone from Aula.
+The archive fills up independently of intake and cutoff, and never forgets
+what came from Aula: no item, version or file is cleaned up or marked as gone from Aula.
 
 Besides what came from Aula, it keeps the agent's classification of each item
 version (with its todo, if any) and the topics they use (ADR 0003). An item version keeps its
-classification; a new version has none until the agent gives it one.
+classification until the agent gives it a new one or ``reclassify`` deletes them all
+(:meth:`Archive.forget_classifications`); a new version has none until the agent gives it one.
 
 Version rule: an item gets a new item version only when its title, its text or
 the set of its attachment ids changes. Signed URLs, comment counts, bookmarks
@@ -41,13 +42,15 @@ from typing import Any
 from aula.models.attachment import Attachment
 from aula.models.message import Message
 from aula.models.post import Post
+from aula.utils.dates import parse_api_datetime
 
 from . import store
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _BACKUPS_SINCE = 3  # the schema version that added the backup tables
 _CLASSIFICATIONS_SINCE = 4  # the schema version that added classifications and topics
 _TODOS_SINCE = 5  # the schema version that added a todo to classifications
+_FIRST_CLASSIFIED_SINCE = 6  # the schema version that remembers when a version was first classified
 
 # Message types that are items; the rest (RecipientsAdded, SystemReply, AutoReply,
 # MessageDeleted, ...) are system messages and are only kept in the raw thread.
@@ -135,6 +138,13 @@ ALTER TABLE classifications ADD COLUMN todo_text TEXT;  -- empty when there is n
 ALTER TABLE classifications ADD COLUMN todo_due TEXT;   -- YYYY-MM-DD, empty without a due date
 """
 
+# when a version got its first classification: neither a new one nor ``reclassify`` changes it,
+# so whether its todo was current stays as it was
+_SCHEMA_6 = """
+ALTER TABLE versions ADD COLUMN first_classified_at TEXT;
+UPDATE versions SET first_classified_at = (SELECT saved_at FROM classifications WHERE version_id = versions.id);
+"""
+
 
 def _stamp(at: dt.datetime) -> str:
     return at.astimezone().isoformat(timespec="seconds") if at.tzinfo is None else at.isoformat(timespec="seconds")
@@ -170,6 +180,7 @@ class Version:
     raw: dict[str, Any]
     id: int | None = None  # the archive's handle on this version (an inbox item's ``archive_version``)
     classification: Classification | None = None
+    first_classified_at: str | None = None  # kept when it is classified again, also after ``reclassify``
 
 
 class Kind(StrEnum):
@@ -267,14 +278,14 @@ class Item:
         return self.versions[-1]
 
     @property
-    def classified(self) -> Version | None:
+    def classified_version(self) -> Version | None:
         """The newest version that has a classification (the newest version may not have one yet)."""
         return next((v for v in reversed(self.versions) if v.classification), None)
 
     @property
     def classification(self) -> Classification | None:
         """The newest classification there is."""
-        return self.classified.classification if self.classified else None
+        return self.classified_version.classification if self.classified_version else None
 
     @property
     def child_ids(self) -> list[int]:
@@ -303,7 +314,8 @@ class ItemTodo:
 
     @property
     def classified_at(self) -> str:
-        return self.version.classification.saved_at
+        """When the version was first classified (a new classification of it does not change that)."""
+        return self.version.first_classified_at or self.version.classification.saved_at
 
     @property
     def was_current(self) -> bool:
@@ -313,8 +325,16 @@ class ItemTodo:
         on = dt.date.fromisoformat(self.classified_at[:10])
         if self.due is not None:
             return self.due >= on
-        sent = self.version.date
-        return bool(sent) and on - dt.date.fromisoformat(sent[:10]) <= TODO_FRESH_FOR
+        came = self.came_out
+        return bool(came) and on - dt.date.fromisoformat(came[:10]) <= TODO_FRESH_FOR
+
+    @property
+    def came_out(self) -> str | None:
+        """When the item came out as this version: the first version when it was published or sent,
+        a later one (a correction) when it was edited in Aula, or else when the archive saw it."""
+        if self.version is self.item.versions[0]:
+            return self.version.date
+        return _iso(parse_api_datetime(self.version.raw.get("editedAt"))) or self.version.saved_at
 
 
 @dataclass
@@ -508,6 +528,10 @@ class Archive:
              c.summary, json.dumps(list(c.child_ids)), self._saved_at(),
              c.todo and c.todo.text, c.todo and c.todo.due and c.todo.due.isoformat()),
         )
+        self._db.execute(
+            "UPDATE versions SET first_classified_at = coalesce(first_classified_at, ?) WHERE id = ?",
+            (self._saved_at(), version),
+        )
         self._db.execute("DELETE FROM classification_topics WHERE version_id = ?", (version,))
         self._db.executemany(
             "INSERT INTO classification_topics (version_id, topic, position) VALUES (?, ?, ?)",
@@ -516,7 +540,8 @@ class Archive:
         return True
 
     def forget_classifications(self) -> int:
-        """Delete every classification (``reclassify``), so every item is unclassified again; the topics stay.
+        """Delete every classification (``reclassify``), so every item is unclassified again; the topics stay,
+        and so does when each version was first classified (whether its todo was current).
 
         Returns how many there were.
         """
@@ -578,14 +603,14 @@ class Archive:
         if row is None:
             return None
         item = Item(row[0], row[1], row[2], bool(row[3]))
-        for vid, saved_at, title, author, date, groups, child_ids, body, raw in self._db.execute(
-            "SELECT id, saved_at, title, author, date, groups, child_ids, body, raw FROM versions"
+        for vid, saved_at, title, author, date, groups, child_ids, body, raw, first_classified_at in self._db.execute(
+            "SELECT id, saved_at, title, author, date, groups, child_ids, body, raw, first_classified_at FROM versions"
             " WHERE item_key = ? ORDER BY id",
             (key,),
         ):
             item.versions.append(
                 Version(saved_at, title, author, date, json.loads(groups), json.loads(child_ids), body, json.loads(raw),
-                        vid, self._classification(vid))
+                        vid, self._classification(vid), first_classified_at)
             )
         item.versions.sort(key=lambda v: _when(v.saved_at))  # stable: equal times keep the order they were saved in
         item.files = [
@@ -611,8 +636,8 @@ class Archive:
         )
         day = lambda text: dt.date.fromisoformat(text) if text else None  # noqa: E731
         return Classification(
-            Category(row[0]), day(row[1]), day(row[2]), topics, row[3], tuple(json.loads(row[4])), row[5],
-            Todo(row[6], day(row[7])) if row[6] else None,
+            category=Category(row[0]), span_start=day(row[1]), span_end=day(row[2]), topics=topics, summary=row[3],
+            child_ids=tuple(json.loads(row[4])), saved_at=row[5], todo=Todo(row[6], day(row[7])) if row[6] else None,
         )
 
     def topics(self) -> list[Topic]:
@@ -630,7 +655,7 @@ class Archive:
 
     def todos(self) -> list[ItemTodo]:
         """The todos in the items' newest classifications, by item key (a new version's replaces the old one's)."""
-        return [ItemTodo(item, item.classified) for item in self.items() if item.classification and item.classification.todo]
+        return [ItemTodo(item, item.classified_version) for item in self.items() if item.classification and item.classification.todo]
 
     def unclassified(self, *, exclude: Iterable[str] = (), limit: int | None = None) -> list[Item]:
         """Items whose newest version has no classification, oldest first (by the newest version's date).
@@ -732,6 +757,8 @@ def _migrate(db: sqlite3.Connection) -> None:
         db.executescript(_SCHEMA_4)
     if current < _TODOS_SINCE:
         db.executescript(_SCHEMA_5)
+    if current < _FIRST_CLASSIFIED_SINCE:
+        db.executescript(_SCHEMA_6)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 

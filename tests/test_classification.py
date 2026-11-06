@@ -195,7 +195,8 @@ def test_an_archive_from_before_classifications_gets_them_and_keeps_its_items(da
     archive_posts((1, 3))
     db = sqlite3.connect(store.path("ARCHIVE_FILE"))
     with db:
-        db.executescript("DROP TABLE classification_topics; DROP TABLE classifications; DROP TABLE topics;")
+        db.executescript("DROP TABLE classification_topics; DROP TABLE classifications; DROP TABLE topics;"
+                         " ALTER TABLE versions DROP COLUMN first_classified_at;")
         db.execute("PRAGMA user_version = 3")
     db.close()
 
@@ -247,9 +248,31 @@ def test_an_archive_from_before_todos_keeps_its_classifications(data_dir):
     with db:  # as schema 4 had it
         db.execute("ALTER TABLE classifications DROP COLUMN todo_text")
         db.execute("ALTER TABLE classifications DROP COLUMN todo_due")
+        db.execute("ALTER TABLE versions DROP COLUMN first_classified_at")
         db.execute("PRAGMA user_version = 4")
     db.close()
 
     with archive.open() as a:
         c = a.item("post:1").classification
         assert (c.summary, c.todo) == ("Lus", None) and a.todos() == []
+
+
+def test_an_archive_from_before_first_classified_counts_its_classifications_as_the_first(data_dir):
+    import sqlite3
+
+    archive_posts((1, 3))
+    with archive.open(at=dt.datetime(2026, 11, 2, 9, 0).astimezone()) as a:
+        a.create_topic("tur", "Ture ud af huset")
+        a.classify("post:1", archive.Classification(archive.Category.FRIST, topics=("tur",), summary="Tur",
+                                                    todo=archive.Todo("Tilmeld")))
+    db = sqlite3.connect(store.path("ARCHIVE_FILE"))
+    with db:  # as schema 5 had it
+        db.execute("ALTER TABLE versions DROP COLUMN first_classified_at")
+        db.execute("PRAGMA user_version = 5")
+    db.close()
+
+    with archive.open(at=dt.datetime(2026, 11, 20, 9, 0).astimezone()) as a:
+        a.classify("post:1", archive.Classification(archive.Category.FRIST, topics=("tur",), summary="Tur igen",
+                                                    todo=archive.Todo("Tilmeld")))
+        [t] = a.todos()
+    assert t.classified_at.startswith("2026-11-02")

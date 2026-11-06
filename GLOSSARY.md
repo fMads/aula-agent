@@ -98,7 +98,7 @@ Noget forælderen skal gøre (betale, tilmelde, aflevere, medbringe), med en kor
 _Avoid_: Opgave (kun i brugertekst), task, reminder, frist (det er en category og et event)
 
 **Unclassified item**:
-Et item i arkivet, hvis nyeste version mangler en classification, og som ikke er et pending item, fx fra backfill eller ældre end cutoff. Agenten får det i inbox for at klassificere det, ikke for at finde events i det.
+Et item i arkivet, hvis nyeste version mangler en classification, og som ikke er et pending item, fx fra backfill, ældre end cutoff eller efter `aula-agent reclassify` (der sletter alle classifications). Agenten får det i inbox for at klassificere det, ikke for at finde events i det.
 
 ## I kalenderen
 
