@@ -47,3 +47,18 @@ def test_the_script_is_served_as_javascript_behind_access():
     assert "overblik-main" in r.text
     with make_client() as c:
         assert c.get("/static/andet.js", headers=auth()).status_code == 404
+
+
+def test_the_pages_and_the_script_agree_on_the_ids_the_script_swaps_and_listens_on():
+    from aula_agent import store, web
+
+    archive_with_a_post()
+    cfg = store.load_config()
+    cfg["children"] = {"1": {"name": "Emma Test"}, "2": {"name": "Oscar Test"}}
+    store.save_config(cfg)
+    html = get("/overblik").text
+    script = (web.STATIC_DIR / "overblik.js").read_text(encoding="utf-8")
+    for element, id_ in (("main", "overblik-main"), ("div", "overblik-top"), ("nav", "barn-filter"),
+                         ("form", "search"), ("input", "q")):
+        assert re.search(rf'<{element}\b[^>]*\sid="{id_}"', html), id_
+        assert f'"{id_}"' in script or f"#{id_}" in script, id_
