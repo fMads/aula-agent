@@ -75,7 +75,7 @@ def test_a_current_todo_is_open_after_apply_and_klaret_and_fortryd_move_it(aula)
     html = overview()
     assert to_do(html) == ["Betal 50 kr. til turen"] and done(html) == []
     assert "Skovtur" in _between(html, "<h2>Skal gøres", "<details") and "20.11.2099" in html
-    assert html.index("<h2>Skal gøres") < html.index("<h2>Arrangement")
+    assert html.index("<h2>Skal gøres") < html.index("<h2>Gælder nu")
 
     press("check", *version_of(html, "Betal 50 kr. til turen"))
     html = overview()
