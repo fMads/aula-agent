@@ -2,6 +2,16 @@
 
 Finder arrangementer og frister i forældrenes Aula og lægger dem i børnenes Google-kalendere. En LLM-agent læser indholdet; koden henter, husker og synkroniserer.
 
+## Hvem
+
+**Installation**:
+Én kørende aula-agent for én familie med sin egen config, Ledger, arkiv, Aula-session og Google-login. Den har præcis én operator.
+_Avoid_: Instans, deployment, opsætning
+
+**Operator**:
+Forælderen, der har installeret aula-agent og driver installationen: maskinen, natkørslen og nye logins. Installationen læser Aula med operatorens eget MitID. Andre forældre i familien kan bruge web-siden og kalenderne uden at være operator.
+_Avoid_: Admin, ejer, vært, bruger (en bruger er enhver forælder, der bruger siden eller kalenderne)
+
 ## Fra Aula
 
 **Child**:
