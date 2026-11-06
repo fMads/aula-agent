@@ -196,7 +196,7 @@ def test_an_archive_from_before_classifications_gets_them_and_keeps_its_items(da
     db = sqlite3.connect(store.path("ARCHIVE_FILE"))
     with db:
         db.executescript("DROP TABLE classification_topics; DROP TABLE classifications; DROP TABLE topics;"
-                         " ALTER TABLE versions DROP COLUMN first_classified_at;")
+                         " ALTER TABLE versions DROP COLUMN first_classified_at; DROP TABLE search_items; DROP TABLE search_files;")
         db.execute("PRAGMA user_version = 3")
     db.close()
 
@@ -249,6 +249,7 @@ def test_an_archive_from_before_todos_keeps_its_classifications(data_dir):
         db.execute("ALTER TABLE classifications DROP COLUMN todo_text")
         db.execute("ALTER TABLE classifications DROP COLUMN todo_due")
         db.execute("ALTER TABLE versions DROP COLUMN first_classified_at")
+        db.executescript("DROP TABLE search_items; DROP TABLE search_files;")
         db.execute("PRAGMA user_version = 4")
     db.close()
 
@@ -268,6 +269,7 @@ def test_an_archive_from_before_first_classified_counts_its_classifications_as_t
     db = sqlite3.connect(store.path("ARCHIVE_FILE"))
     with db:  # as schema 5 had it
         db.execute("ALTER TABLE versions DROP COLUMN first_classified_at")
+        db.executescript("DROP TABLE search_items; DROP TABLE search_files;")
         db.execute("PRAGMA user_version = 5")
     db.close()
 
