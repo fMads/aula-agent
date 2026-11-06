@@ -278,3 +278,14 @@ def test_an_arrangement_over_several_days_under_way_today_is_current_with_its_ev
     now = section(html, "gaelder-nu")
     assert titles(now) == ["Lejrskole"] and "gælder 05.11.2026–07.11.2026" in now
     assert "Lejrskole" not in section(html, "kommende")
+
+
+def test_aulas_important_mark_with_a_from_but_no_to_holds_for_fourteen_days_from_the_from():
+    with archive.open() as a:
+        a.save_post(important(1, "Vigtigt om skolevejen", "2026-10-25T00:00:00", None, publish="2026-10-01T08:00:00"))
+        a.save_post(important(2, "Vigtigt om cykelhjelme", "2026-10-20T00:00:00", None, publish="2026-11-01T08:00:00"))
+        a.create_topic("skole", "Skolens hverdag")
+        classify(a, "post:1", "info", topics=["skole"])
+        classify(a, "post:2", "info", topics=["skole"])
+
+    assert titles(section(overview(), "gaelder-nu")) == ["Vigtigt om skolevejen"]  # from 25/10: until 8/11

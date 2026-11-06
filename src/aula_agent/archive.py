@@ -332,7 +332,8 @@ class Item:
     def important_on(self, today: dt.date) -> bool:
         """Whether Aula marks the post as important on this day (its "vigtig" with its from–to, both inclusive).
 
-        Without a from or a to, it holds from when the post came or for :data:`ORIENTERING_CURRENT_FOR` after.
+        Without a from, it holds from when the post came; without a to, for :data:`ORIENTERING_CURRENT_FOR`
+        after its first day.
         """
         raw = self.latest.raw if self.kind == "post" and self.versions else {}
         if not raw.get("isImportant"):
@@ -340,7 +341,7 @@ class Item:
         came = dt.date.fromisoformat(self.latest.date[:10]) if self.latest.date else today
         start, end = (parse_api_datetime(raw.get(name)) for name in ("importantFrom", "importantTo"))
         first = start.date() if start else came
-        last = end.date() if end else came + ORIENTERING_CURRENT_FOR
+        last = end.date() if end else first + ORIENTERING_CURRENT_FOR
         return first <= today <= last
 
     def current(self, today: dt.date) -> Current | None:
