@@ -281,6 +281,14 @@ class Topic:
     items: int  # how many items have it in their newest classification
 
 
+class Current(StrEnum):
+    """Why an item is current ("Gælder nu" on the overview)."""
+
+    SPAN = "span"  # a period whose span covers the day
+    IMPORTANT = "important"  # Aula marks the post as important on the day
+    NOTICE = "notice"  # an orientering not past yet
+
+
 ORIENTERING_CURRENT_FOR = dt.timedelta(days=14)  # an orientering (and a reply, an unclassified item) is past this long after it came
 
 
@@ -334,6 +342,19 @@ class Item:
         first = start.date() if start else came
         last = end.date() if end else came + ORIENTERING_CURRENT_FOR
         return first <= today <= last
+
+    def current(self, today: dt.date) -> Current | None:
+        """Why the item is current on this day, or None when it is not (by the newest classification)."""
+        c = self.classification
+        if c is None:
+            return None
+        if c.category == Category.PERIODE and c.span_start and c.span_start <= today <= (c.span_end or c.span_start):
+            return Current.SPAN
+        if self.important_on(today):
+            return Current.IMPORTANT
+        if c.category == Category.ORIENTERING and not self.past(today):
+            return Current.NOTICE
+        return None
 
     def past(self, today: dt.date) -> bool:
         """Whether it is no longer current (then it is dimmed, never hidden), by the newest classification.

@@ -27,7 +27,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import archive, credentials, runs, store
+from . import archive, credentials, runs, store, timeline
 from .ledger import EventHistory, Ledger, UpcomingEvent
 from .runs import Outcome
 
@@ -590,21 +590,9 @@ def day_param(value: str | None) -> dt.date | None:
         return None
 
 
-def monday(day: dt.date) -> dt.date:
-    return day - dt.timedelta(days=day.weekday())
-
-
-def placed_on(item: archive.Item) -> dt.date | None:
-    """The day an item has on the timeline: when its span begins, or else when it came."""
-    c = item.classification
-    if c.span_start:
-        return c.span_start
-    return dt.date.fromisoformat(item.latest.date[:10]) if item.latest.date else None
-
-
-def event_row(ev: UpcomingEvent, source: archive.Item | None, day: dt.date) -> str:
-    """An event in the calendar, with a link to the item it came from."""
-    start = dt.date.fromisoformat(ev.start[:10])
+def event_row(line: timeline.EventLine) -> str:
+    """An event in the calendar (on the day it begins), with a link to the item it came from."""
+    ev, source, start = line.event, line.source, line.start
     end = dt.date.fromisoformat((ev.end or ev.start)[:10])
     when = [f"kl. {ev.start[11:16]}"] if len(ev.start) > 10 else []
     if end != start:
@@ -613,7 +601,7 @@ def event_row(ev: UpcomingEvent, source: archive.Item | None, day: dt.date) -> s
     if ev.source and source is not None:
         src = f' · fra <a class="item-link event-src" href="{e(store.item_path(ev.source))}">{e(item_title(source))}</a>'
     return (
-        f'<li class="row event" data-event="{e(ev.key)}">{day_cell(day)}<span class="grow">'
+        f'<li class="row event" data-event="{e(ev.key)}">{day_cell(start)}<span class="grow">'
         f'<span class="ev">📅 {e(ev.title)}</span>{" " + e(" ".join(when)) if when else ""}'
         f'<br><span class="mut">i kalenderen{src}</span></span></li>'
     )
@@ -621,7 +609,7 @@ def event_row(ev: UpcomingEvent, source: archive.Item | None, day: dt.date) -> s
 
 def week_html(first: dt.date, rows: list[str], today: dt.date) -> str:
     """One week (Monday ``first``) with its lines."""
-    this = first == monday(today)
+    this = first == timeline.monday(today)
     label = f"Uge {first.isocalendar().week}" + (" · denne uge" if this else "")
     return (
         f'<div class="week{" cur" if this else ""}" data-week="{first.isoformat()}"><h3><span>{e(label)}</span>'
@@ -630,58 +618,35 @@ def week_html(first: dt.date, rows: list[str], today: dt.date) -> str:
     )
 
 
+def line_html(line: timeline.Line, today: dt.date, back: str) -> str:
+    match line:
+        case timeline.ItemLine():
+            return item_row(line.item, day=line.day)
+        case timeline.EventLine():
+            return event_row(line)
+        case timeline.TodoLine():
+            return todo_item(line.todo, today=today, checked=False, day=line.day, back=back)
+
+
+def weeks_html(weeks: list[timeline.Week], today: dt.date, back: str) -> str:
+    return "".join(week_html(w.monday, [line_html(line, today, back) for line in w.lines], today) for w in weeks)
+
+
 def upcoming_html(
     items: list[archive.Item], events: list[UpcomingEvent], todos: list[archive.ItemTodo], today: dt.date, back: str
 ) -> str:
-    """Kommende, week by week from this week: items whose span begins in the week, the events in it
-    (an event on the day its item's span begins is that item, shown once) and the open ``todos`` due in it."""
-    this_week = monday(today)
-    by_key = {i.key: i for i in items}
-    lines: list[tuple[dt.date, int, str]] = []
-    for day, item in in_weeks(items):
-        if day >= this_week:
-            lines.append((day, 0, item_row(item, day=day)))
-    for ev in events:
-        start = dt.date.fromisoformat(ev.start[:10])
-        source = by_key.get(ev.source or "")
-        if source is not None and source.classification.span_start == start:
-            continue
-        day = max(start, this_week)
-        lines.append((day, 1, event_row(ev, source, start)))
-    for t in todos:
-        if t.due is not None and t.due >= this_week:
-            lines.append((t.due, 2, todo_item(t, today=today, checked=False, day=t.due, back=back)))
-    by_week: dict[dt.date, list[str]] = {}
-    for day, _, html_ in sorted(lines, key=lambda line: line[:2]):
-        by_week.setdefault(monday(day), []).append(html_)
-    weeks = "".join(week_html(first, rows, today) for first, rows in by_week.items())
+    """Kommende (:func:`timeline.upcoming`)."""
+    weeks = weeks_html(timeline.upcoming(items, events, todos, today), today, back)
     return f'<section id="kommende"><h2>Kommende</h2>{weeks or "<p class=\"mut\">Intet kommende.</p>"}</section>'
 
 
-EARLIER_WEEKS = 8  # how many weeks back "Tidligere" shows before "Vis ældre"
-
-
-def in_weeks(items: list[archive.Item]) -> list[tuple[dt.date, archive.Item]]:
-    """The items that stand in the weeks (not standing info), each on its day."""
-    return [(day, i) for i in items if i.classification.category != archive.Category.INFO and (day := placed_on(i))]
-
-
 def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date) -> str:
-    """Tidligere: the :data:`EARLIER_WEEKS` weeks before the week of ``before``, newest first, shown as usual
-    (past or not), and "Vis ældre" when there is something before them."""
-    end = monday(before)
-    start = end - dt.timedelta(weeks=EARLIER_WEEKS)
-    placed = in_weeks(items)
-    by_week: dict[dt.date, list[tuple[dt.date, archive.Item]]] = {}
-    for day, item in sorted(placed, key=lambda p: (p[0], p[1].key), reverse=True):
-        if start <= day < end:
-            by_week.setdefault(monday(day), []).append((day, item))
-    weeks = "".join(
-        week_html(first, [item_row(i, day=day) for day, i in members], today) for first, members in by_week.items()
-    )
+    """Tidligere (:func:`timeline.earlier`), shown as usual (past or not), and "Vis ældre" when there is more."""
+    got = timeline.earlier(items, before)
+    weeks = weeks_html(got.weeks, today, "/overblik")
     older = ""
-    if any(day < start for day, _ in placed):
-        older = f'<p><a class="btn older" href="/overblik?before={start.isoformat()}">Vis ældre</a></p>'
+    if got.older:
+        older = f'<p><a class="btn older" href="/overblik?before={got.older.isoformat()}">Vis ældre</a></p>'
     return f'<section id="tidligere"><h2>Tidligere</h2>{weeks or "<p class=\"mut\">Intet.</p>"}{older}</section>'
 
 
@@ -701,16 +666,14 @@ def standing_html(items: list[archive.Item]) -> str:
     return f'<section id="staaende-info"><h2>Stående info</h2>{"".join(parts) or "<p class=\"mut\">Ingen endnu.</p>"}</section>'
 
 
-def current(item: archive.Item, today: dt.date) -> str | None:
-    """Why the item is in "Gælder nu" (shown under it), or None when it is not."""
-    c = item.classification
-    if c.category == archive.Category.PERIODE and c.span_start and c.span_start <= today <= (c.span_end or c.span_start):
-        return f"gælder {c.span_text('%d.%m.%Y')}"
-    if item.important_on(today):
-        return "⭐ markeret vigtig i Aula"
-    if c.category == archive.Category.ORIENTERING and not item.past(today):
-        return ""
-    return None
+def why_current(item: archive.Item, why: archive.Current) -> str:
+    """What "Gælder nu" says under an item about why it is there ("" for nothing)."""
+    match why:
+        case archive.Current.SPAN:
+            return f"gælder {item.classification.span_text('%d.%m.%Y')}"
+        case archive.Current.IMPORTANT:
+            return "⭐ markeret vigtig i Aula"
+    return ""
 
 
 KIND_FILTER_NAMES = {
@@ -867,9 +830,10 @@ async def overview(request: Request) -> Response:
         return page("Tidligere", nav + search[0] + main(earlier_html(shown, before, today) + back), enhanced=True)
     keep = [(k, v) for k, v in request.query_params.multi_items() if k != "msg" and v]
     back = "/overblik" + (f"?{urlencode(keep)}" if keep else "")  # where "Klaret" returns to: this view
-    now = [(i, why) for i in shown if (why := current(i, today)) is not None]
-    now.sort(key=lambda n: (placed_on(n[0]) or dt.date.min, n[0].key), reverse=True)
-    now_html = "".join(item_row(i, f'<span class="mut meta">{e(why)}</span>' if why else "") for i, why in now)
+    now_html = "".join(
+        item_row(i, f'<span class="mut meta">{e(why)}</span>' if (why := why_current(i, reason)) else "")
+        for i, reason in timeline.now(shown, today)
+    )
     body = f"""
 <section id="skal-goeres">{todos_html(todos, ledger, today, back)}</section>
 <section id="gaelder-nu"><h2>Gælder nu</h2><ul class="list now">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>

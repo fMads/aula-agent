@@ -11,6 +11,7 @@ Hvert barn hører til én kalender (standard: sin egen, "Skole – <fornavn>"), 
 - `src/aula_agent/ledger.py` – alt hvad der huskes mellem kørsler (`data/state.json`), også hvilke todos der er krydset af. Rør ikke state-dict'en direkte andre steder.
 - `src/aula_agent/runs.py` – en kørsel: lås + run-log + struktureret udfald (`Outcome`). `credentials.py` – login-status og Google OAuth.
 - `src/aula_agent/web.py` – valgfri web-side (Starlette, 127.0.0.1:8787) bag Cloudflare Tunnel + Access. Appen validerer selv Access-JWT'en og e-mail-allowlisten (`web` i `data/config.json`, sættes med `aula-agent web-setup`) og afviser alt, når den ikke er sat op.
+- `src/aula_agent/timeline.py` – tidslinjen på `/overblik`: hvad der står under Gælder nu, Kommende og Tidligere, uge for uge (items, events og todos). Returnerer data; `web.py` renderer. Hvornår et item er aktuelt (`current`, `past`, `important_on`), står på `archive.Item`.
 - `src/aula_agent/static/overblik.js` – JS-laget på `/overblik` og detaljen (vanilla, ingen build, ingen afhængigheder): søgning mens man skriver, detaljen i en skuffe på brede skærme, `/` og Esc. Siderne virker uden; de har en CSP uden inline script.
 - `src/aula_agent/demo.py` – `uv run python -m aula_agent.demo <tom-mappe>`: web-siden med opdigtede data på 127.0.0.1 uden Access, til at prøve siden i en browser. Rører aldrig `data/`.
 - `deploy/` – systemd-skabeloner (`*.in`) + `install-services.sh` (web, tunnel, nightly) og `nightly.sh` (natkørsel uden T3 med Claude Code eller Codex, styret af `AULA_AGENT`).
