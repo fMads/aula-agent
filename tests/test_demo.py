@@ -1,6 +1,7 @@
 """The demo (``python -m aula_agent.demo <dir>``): made-up data for trying the web page, never the real data/."""
 
 import datetime as dt
+import sys
 
 import pytest
 from starlette.testclient import TestClient
@@ -24,3 +25,19 @@ def test_the_demo_refuses_the_real_data_directory(tmp_path, target):
     with pytest.raises(SystemExit):
         demo.refuse_real_data(tmp_path / target, real)
     demo.refuse_real_data(tmp_path / "demo", real)  # elsewhere is fine
+
+
+def test_the_demo_will_not_start_after_store_is_imported(tmp_path):
+    with pytest.raises(SystemExit, match="for sig"):
+        demo.main([str(tmp_path / "demo")])  # the tests have imported store
+    assert not (tmp_path / "demo").exists()
+
+
+def test_the_demo_will_not_start_when_the_data_directory_is_not_its_own(tmp_path, monkeypatch):
+    # As if store were not imported yet; ``from . import store`` still finds it on the package, with DATA_DIR
+    # set by the tests' data_dir: then the demo would not use its own directory.
+    monkeypatch.delitem(sys.modules, "aula_agent.store")
+    monkeypatch.delenv("AULA_AGENT_DATA", raising=False)
+    with pytest.raises(SystemExit, match="ville bruge"):
+        demo.main([str(tmp_path / "demo")])
+    assert not (tmp_path / "demo").exists()

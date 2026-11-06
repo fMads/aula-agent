@@ -39,18 +39,24 @@ def _main_checkout(root: Path) -> Path | None:
     return main if main != root.resolve() else None
 
 
+def real_data_dirs(root: Path = PROJECT_ROOT) -> list[Path]:
+    """Where the real data is for the checkout at ``root``: ``<root>/data`` and, in a linked git worktree, the main
+    checkout's ``data/`` after it (the demo never uses either)."""
+    main = _main_checkout(root)
+    return [root / "data"] + ([main / "data"] if main else [])
+
+
 def default_data_dir(root: Path = PROJECT_ROOT) -> Path:
     """``<root>/data``. In a linked worktree without its own ``data/`` it is
     created as a link to the main checkout's ``data/``."""
-    data = root / "data"
+    data, *main = real_data_dirs(root)
     if data.exists() or data.is_symlink():
         return data
-    main = _main_checkout(root)
-    if main and (main / "data").is_dir():
+    if main and main[0].is_dir():
         with contextlib.suppress(OSError):
-            data.symlink_to(main / "data", target_is_directory=True)
+            data.symlink_to(main[0], target_is_directory=True)
             return data
-        return main / "data"
+        return main[0]
     return data
 
 
