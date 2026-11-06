@@ -53,7 +53,8 @@ def test_a_search_without_anything_to_search_for_is_the_front_page_and_the_front
 
 
 def tabs_of(html):
-    return re.search(r'<nav class="tabs" id="faner">(.*?)</nav>', html)[1]
+    """The tabs as they read (their icons left out)."""
+    return re.sub(r"<svg\b.*?</svg>", "", re.search(r'<nav class="tabs" id="faner">(.*?)</nav>', html)[1])
 
 
 @pytest.mark.parametrize(

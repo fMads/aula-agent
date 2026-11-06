@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime as dt
+import re
 
 from aula_agent import archive
 from test_web import auth, classify, configure, make_client, post
@@ -274,7 +275,7 @@ def test_the_search_field_is_at_the_top_of_the_overview_and_the_child_filter_onl
     configure_children()
     html = search(q="jul", child="2")
     assert '<input type="hidden" name="child" value="2">' in html  # a search keeps the child chosen in the filter
-    assert '<a class="chip on" href="/search?q=jul&amp;child=2" aria-current="true">Oscar</a>' in html
+    assert re.search(r'<a class="chip on[^"]*" href="/search\?q=jul&amp;child=2" aria-current="true">Oscar</a>', html)
     assert 'href="/search?q=jul&amp;child=all">Alle børn</a>' in html  # the filter keeps the search
     assert 'value="jul"' in html  # the query stays in the field
 

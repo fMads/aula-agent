@@ -240,68 +240,139 @@ class MitIDLogin:
 # ----------------------------------------------------------------------------- HTML
 
 CSS = """
-:root{--fg:#1d1d1f;--mut:#6e6e73;--line:#e5e5ea;--ok:#1a7f37;--bad:#c62828;--acc:#0b57d0;--bg:#fff;--soft:#f5f5f7}
-@media (prefers-color-scheme:dark){:root{--fg:#f2f2f7;--mut:#a1a1a6;--line:#38383a;--ok:#3fb950;--bad:#ff6b6b;--acc:#8ab4f8;--bg:#111;--soft:#1c1c1e}body{background:#111}}
-*{box-sizing:border-box}body{font:16px/1.5 system-ui,sans-serif;color:var(--fg);max-width:46rem;margin:0 auto;padding:1.25rem}
-h1{font-size:1.4rem;margin:.2rem 0 1.2rem}h2{font-size:1.05rem;margin:2rem 0 .6rem}
-a{color:var(--acc)}.mut{color:var(--mut);font-size:.9rem}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:.6rem}
-.card{border:1px solid var(--line);border-radius:10px;padding:.7rem .8rem}.card b{display:block;font-size:.8rem;color:var(--mut);font-weight:500}
-.ok{color:var(--ok)}.bad{color:var(--bad)}
-ul.list{list-style:none;padding:0;margin:0}ul.list li{border-top:1px solid var(--line);padding:.55rem 0;display:flex;gap:.8rem;align-items:baseline}
-ul.list li .grow{flex:1;min-width:0}.date{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--mut);min-width:6.5rem}
-button,.btn{font:inherit;border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:8px;padding:.35rem .8rem;cursor:pointer;text-decoration:none;display:inline-block}
-button.primary,.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+:root{color-scheme:light dark;--fg:#1c1c1e;--mut:#6b6b70;--line:#e4e4e8;--bg:#f7f7f5;--card:#fff;--soft:#f0f0ee;
+--acc:#2156c9;--on-acc:#fff;--near:#edf2fd;--ok:#1a7f37;--bad:#b3261e;--bad-soft:#fdecea;--mark:#fde68a;
+--kid-0:#0b7a6c;--kid-1:#b85300;--kid-2:#6a4bc4;--kid-3:#b02a5e;--tabs-h:3.6rem}
+@media (prefers-color-scheme:dark){:root{--fg:#ececef;--mut:#a0a0a6;--line:#2e2e33;--bg:#121214;--card:#1b1b1e;--soft:#232327;
+--acc:#8ab0ff;--on-acc:#0d1b3d;--near:#18213a;--ok:#4cc26a;--bad:#ff8a80;--bad-soft:#3a1d1b;--mark:#6b5200;
+--kid-0:#3cc9b4;--kid-1:#ff9a4d;--kid-2:#a993ff;--kid-3:#ff7aa8}}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0 auto;max-width:46rem;padding:0 1.25rem 3rem;font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+color:var(--fg);background:var(--bg)}
+body.wide{max-width:76rem}
+a{color:var(--acc)}.mut{color:var(--mut);font-size:.9rem}.ok{color:var(--ok)}.bad{color:var(--bad)}
+h1{font-size:1.1rem;font-weight:700;margin:0}h1 a{color:inherit;text-decoration:none}
+h2{font-size:.8rem;font-weight:650;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:1.8rem 0 .5rem}
+h3{font-size:.98rem;margin:1.2rem 0 .35rem}
+h2.title{font-size:1.35rem;font-weight:700;text-transform:none;letter-spacing:0;color:var(--fg);margin:1.2rem 0 .4rem}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+/* the top: the app's name and the tabs (in the top on a wide screen, fixed at the bottom on a narrow one) */
+header.top{display:flex;align-items:center;gap:2rem;padding:.9rem 0 .6rem}
+nav.tabs{display:flex;flex:1;gap:1.4rem}nav.tabs>*{display:inline-flex;align-items:center;gap:.35rem;padding:.45rem 0;
+color:var(--mut);text-decoration:none;font-weight:500;border-bottom:2px solid transparent}
+nav.tabs>b{color:var(--fg);border-bottom-color:var(--acc)}nav.tabs a:hover{color:var(--fg)}
+nav.tabs>:last-child{margin-left:auto}nav.tabs svg{display:none;width:1.4rem;height:1.4rem}
+@media (max-width:59.99rem){body{padding-bottom:calc(var(--tabs-h) + env(safe-area-inset-bottom) + 2rem)}
+ header.top{padding:.7rem 0 .3rem}
+ nav.tabs{position:fixed;z-index:15;left:0;right:0;bottom:0;gap:0;background:var(--card);border-top:1px solid var(--line);
+ padding:0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+ nav.tabs>*{flex:1;flex-direction:column;justify-content:center;gap:.1rem;min-height:var(--tabs-h);padding:.3rem 0;
+ font-size:.72rem;border:0}nav.tabs>:last-child{margin-left:0}nav.tabs>b{color:var(--acc);font-weight:600}
+ nav.tabs svg{display:block}}
+nav.tabs svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+/* buttons and fields */
+button,.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:.35rem .8rem;
+cursor:pointer;text-decoration:none;display:inline-block}
+button.primary,.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc)}
 button.small{font-size:.85rem;padding:.15rem .6rem}
-input[type=text],input[type=search],select{font:inherit;padding:.35rem .5rem;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--fg)}
-.qr{width:min(20rem,80vw);aspect-ratio:1;margin:1rem 0}.qr svg{width:100%;height:100%}
-.otp{font-size:2rem;letter-spacing:.2em;font-weight:600}
-.flash{padding:.6rem .8rem;border-radius:8px;border:1px solid var(--line);margin-bottom:1rem}
-ul.warnings{list-style:none;padding:0;margin:0 0 1rem}ul.warnings li{padding:.5rem .8rem;border-radius:8px;border:1px solid var(--bad);margin-bottom:.4rem}
+input[type=text],input[type=search],select{font:inherit;padding:.35rem .5rem;border:1px solid var(--line);border-radius:8px;
+background:var(--card);color:var(--fg)}
 form.inline{display:inline;margin:0}
-details>summary{cursor:pointer;margin:2rem 0 .6rem;font-weight:600}
-.acts{display:flex;flex-direction:column;gap:.3rem;align-items:flex-end}
-form.search{display:flex;flex-wrap:wrap;gap:.4rem;margin:0 0 1rem}form.search input[type=search]{flex:1 1 100%;font-size:1.05rem;padding:.55rem .7rem}
-li.past{opacity:.6}.tag{font-size:.8rem;border:1px solid var(--line);border-radius:6px;padding:0 .35rem;color:var(--mut)}
-mark{background:#fde68a;color:inherit;border-radius:2px}@media (prefers-color-scheme:dark){mark{background:#7a5c00}}
-.text{white-space:pre-wrap;overflow-wrap:anywhere}
-h3{font-size:1rem;margin:1.6rem 0 .5rem}details.version>summary{margin:.4rem 0;font-weight:400}
-ul.thread li.sel{border-left:3px solid var(--acc);padding-left:.6rem}
-.tabs{display:flex;gap:1.4rem;margin:-.6rem 0 1rem}.tabs>*{display:inline-block;padding:.45rem 0}.tabs b{border-bottom:2px solid var(--acc)}
-.sticky{position:sticky;top:0;z-index:5;background:var(--bg);padding:.6rem 0 .5rem;border-bottom:1px solid var(--line);margin-bottom:.5rem}
-.sticky form.search{margin:0}
-.chips{display:flex;flex-wrap:wrap;gap:.4rem;margin:.5rem 0 0}
-.chip{display:inline-flex;align-items:center;min-height:2.5rem;padding:0 1rem;border:1px solid var(--line);border-radius:999px;color:var(--fg);text-decoration:none}
-.chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
-ul.list li.row{padding:.75rem 0}.row .grow>.item-link{font-weight:500;display:inline-block;padding:.1rem 0}
-.sum{display:block;font-size:.92rem}.meta{display:block}
-.cat-arrangement{background:#e6f4ea;color:#0d652d;border-color:#e6f4ea}.cat-frist{background:#fce8e6;color:#a50e0e;border-color:#fce8e6}
-.cat-periode{background:#fef7e0;color:#8a5a00;border-color:#fef7e0}.cat-info{background:#e8f0fe;color:#174ea6;border-color:#e8f0fe}
-@media (prefers-color-scheme:dark){.cat-arrangement,.cat-frist,.cat-periode,.cat-info{background:transparent}}
-ul.now{border:1px solid var(--line);border-radius:12px;padding:0 .9rem;background:var(--soft)}ul.now li:first-child{border-top:0}
-.week{margin-top:1.2rem}.week h3{display:flex;justify-content:space-between;gap:.5rem;border-bottom:2px solid var(--line);padding-bottom:.2rem;margin:0}
-.week.cur h3{border-color:var(--acc)}.ev{font-weight:500}
-.day{margin-top:1rem}.day h3{margin:0 0 .1rem}.day.today h3{color:var(--acc)}
-.week-line{margin:1.4rem 0 0;padding-bottom:.15rem;border-bottom:1px solid var(--line);font-size:.8rem;color:var(--mut)}.topic h3{margin:1rem 0 .2rem}
-#ikke-inddelt{margin-top:.8rem}
-.thumbs{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem}.thumb{width:7rem;height:7rem;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+details>summary{cursor:pointer;margin:1.6rem 0 .5rem;font-weight:600}
+.flash{padding:.6rem .8rem;border-radius:10px;border:1px solid var(--line);background:var(--card);margin:.4rem 0 1rem}
+ul.warnings{list-style:none;padding:0;margin:.6rem 0 0}
+ul.warnings li{padding:.55rem .9rem;border-radius:10px;background:var(--bad-soft);color:var(--bad);margin-bottom:.4rem;font-size:.92rem}
+ul.warnings a{color:inherit;font-weight:600}
+/* the search field and the child filter, sticky at the top */
+.sticky{position:sticky;top:0;z-index:5;background:var(--bg);padding:.5rem 0 .6rem}
+form.search{display:flex;flex-wrap:wrap;gap:.4rem;margin:0}
+form.search input[type=search]{flex:1 1 100%;font-size:1.05rem;padding:.65rem 1rem;border-radius:12px}
 form.search select{flex:1 1 7rem;min-width:0;min-height:2.5rem}form.search button{min-height:2.5rem}
-details.filtre{flex:1 1 auto}details.filtre>summary{margin:0;display:inline-flex;align-items:center;min-height:2.5rem;font-weight:400;color:var(--mut)}
-details.filtre>summary{cursor:pointer;border:1px solid var(--line);border-radius:999px;padding:0 .9rem;color:inherit}details.filtre>summary::before{content:"▸";margin-right:.4rem}details.filtre[open]>summary::before{content:"▾"}
+details.filtre{flex:1 1 auto}
+details.filtre>summary{margin:0;display:inline-flex;align-items:center;min-height:2.3rem;font-weight:400;color:var(--mut);
+border:1px solid var(--line);border-radius:999px;padding:0 .9rem}
+details.filtre>summary::before{content:"▸";margin-right:.4rem}details.filtre[open]>summary::before{content:"▾"}
 .filtre-felter{display:flex;flex-wrap:wrap;gap:.4rem}
 @supports selector(::details-content){@media (min-width:40rem){details.filtre>summary{display:none}
 details.filtre::details-content{content-visibility:visible;block-size:auto}}}
-li.valgt{background:var(--soft);box-shadow:-.6rem 0 0 var(--soft),.6rem 0 0 var(--soft)}
+.chips{display:flex;gap:.4rem;margin:.5rem 0 0;overflow-x:auto;scrollbar-width:none}
+.chip{display:inline-flex;align-items:center;gap:.4rem;flex:none;min-height:2.3rem;padding:0 .95rem;border:1px solid var(--line);
+border-radius:999px;background:var(--card);color:var(--fg);text-decoration:none;font-size:.92rem}
+.chip.on{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+/* a child's colour (kid-<n>, by its place in the config) by its first name, in the lists and on the chips */
+.kid-0{--k:var(--kid-0)}.kid-1{--k:var(--kid-1)}.kid-2{--k:var(--kid-2)}.kid-3{--k:var(--kid-3)}
+.who{display:inline-flex;align-items:center;gap:.3rem;margin-right:.6rem;font-size:.8rem;font-weight:650;color:var(--k,var(--mut));
+white-space:nowrap}.who.all{font-weight:500}
+.who::before,.chip[class*=kid-]::before{content:"";width:.55rem;height:.55rem;border-radius:50%;background:var(--k,var(--mut))}
+.who.all::before{background:none;border:1.5px solid var(--mut);width:.45rem;height:.45rem}
+/* lists */
+ul.list{list-style:none;padding:0;margin:0}
+ul.list li{border-top:1px solid var(--line);padding:.6rem 0;display:flex;gap:.8rem;align-items:baseline}
+ul.list li:first-child{border-top:0}ul.list li .grow{flex:1;min-width:0}
+main section ul.list,ul.list.box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:0 .9rem}
+.date{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--mut);min-width:5.2rem;font-size:.9rem}
+.date.time{min-width:4.6rem}
+.acts{display:flex;flex-direction:column;gap:.3rem;align-items:flex-end}
+.row .grow>*{display:block}.row .grow>.todo-link,.row .grow>.ev{display:inline}
+.row .item-link,.row .ev,.todo-link{font-weight:550;color:var(--fg);text-decoration:none}.row .item-link:hover,.todo-link:hover{text-decoration:underline}
+.label{font-size:.7rem;font-weight:650;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+#staaende-info .label{display:none}.sum{font-size:.92rem}.meta{font-size:.88rem;color:var(--mut)}.meta:empty{display:none}
+.meta a{color:inherit}.row .meta .item-link{font-weight:450}.tag{font-size:.78rem;border:1px solid var(--line);border-radius:6px;padding:0 .35rem;color:var(--mut)}
+li.past{opacity:.6}mark{background:var(--mark);color:inherit;border-radius:2px}
+li.valgt{background:var(--soft);box-shadow:-.9rem 0 0 var(--soft),.9rem 0 0 var(--soft)}
+/* a todo: the round button in front ("Klaret"; filled: "Fortryd") */
+button.tick{flex:none;align-self:flex-start;width:1.6rem;height:1.6rem;padding:0;border-radius:50%;border:2px solid var(--mut);
+background:transparent;position:relative;top:.05rem}button.tick:hover{border-color:var(--acc)}
+.done button.tick{background:var(--acc);border-color:var(--acc)}
+.done button.tick::after{content:"";position:absolute;left:.45rem;top:.18rem;width:.35rem;height:.7rem;border:solid var(--on-acc);
+border-width:0 2px 2px 0;transform:rotate(45deg)}
+.done .todo{text-decoration:line-through;color:var(--mut)}
+.row-todo{display:flex!important;gap:.5rem;align-items:center;margin-top:.3rem;font-size:.92rem}.row-todo button.tick{width:1.3rem;height:1.3rem}
+/* the front page: one column, or two when there is room (Skal gøres and Gælder nu | I dag og i morgen and Kommende) */
+main{container-type:inline-size}
+.cols{display:flex;flex-direction:column}.col{display:contents}
+#skal-goeres{order:1}#i-dag-og-i-morgen{order:2}#gaelder-nu{order:3}#kommende{order:4}
+@container (min-width:52rem){.cols{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:0 2.5rem;align-items:start}
+.col{display:block}}
+h2 .count{font-weight:600;color:var(--mut);margin-left:.3rem}
+#i-dag-og-i-morgen{background:var(--near);border-radius:18px;padding:.2rem 1rem 1rem;margin-top:1.4rem}
+#i-dag-og-i-morgen>h2{color:var(--acc)}#i-dag-og-i-morgen .day:first-of-type h3{color:var(--acc)}
+.day h3{margin:1rem 0 .35rem}.day.today h3{color:var(--acc)}
+.week-line{margin:1.6rem 0 0;padding-bottom:.15rem;border-bottom:1px solid var(--line);font-size:.78rem;color:var(--mut);font-weight:600}
+/* Gælder nu: cards side by side, to scroll sideways (wrapped in the column on a wide screen) */
+ul.now-cards{list-style:none;margin:0 -1.25rem;padding:.1rem 1.25rem .5rem;display:flex;gap:.6rem;overflow-x:auto;
+scroll-snap-type:x proximity;scroll-padding-inline:1.25rem;scrollbar-width:thin}
+.now-card{flex:none;width:15.5rem;scroll-snap-align:start;display:flex;flex-direction:column;gap:.15rem;background:var(--card);
+border:1px solid var(--line);border-radius:14px;padding:.7rem .85rem}
+.now-card .item-link{font-weight:600;color:var(--fg);text-decoration:none}.now-card .why{font-size:.85rem;color:var(--acc)}
+.now-card .sum{font-size:.86rem;color:var(--mut);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.now-card.valgt{background:var(--soft)}
+@container (min-width:52rem){ul.now-cards{margin:0;padding:0;flex-wrap:wrap;overflow:visible}.now-card{width:calc(50% - .3rem)}}
+/* the settings, the logins, the detail */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:.6rem;margin-top:1rem}
+.card{border:1px solid var(--line);border-radius:12px;padding:.7rem .8rem;background:var(--card)}
+.card b{display:block;font-size:.8rem;color:var(--mut);font-weight:500}
+.qr{width:min(20rem,80vw);aspect-ratio:1;margin:1rem 0}.qr svg{width:100%;height:100%}
+.otp{font-size:2rem;letter-spacing:.2em;font-weight:600}
+.text{white-space:pre-wrap;overflow-wrap:anywhere}
+details.version>summary{margin:.4rem 0;font-weight:400}
+ul.thread li.sel{border-left:3px solid var(--acc);padding-left:.6rem}
+.topic h3{margin:1.2rem 0 .35rem}.week{margin-top:1.2rem}
+.week h3{display:flex;justify-content:space-between;gap:.5rem;margin:0 0 .35rem}.week.cur h3{color:var(--acc)}
+#ikke-inddelt{margin-top:.8rem}
+.thumbs{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem}
+.thumb{width:7rem;height:7rem;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 #skuffe{position:fixed;top:0;right:0;bottom:0;width:min(42rem,48vw);z-index:20;background:var(--bg);
 border-left:1px solid var(--line);box-shadow:-8px 0 24px rgba(0,0,0,.12);display:flex;flex-direction:column}
 #skuffe[hidden]{display:none}
 .skuffe-top{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.6rem 1.25rem;border-bottom:1px solid var(--line)}
 .skuffe-indhold{flex:1;overflow:auto;padding:0 1.25rem 2rem;outline:0}.skuffe-indhold h2{margin-top:1.2rem}
 html.skuffe-aaben{padding-right:min(42rem,48vw)}
-@media (max-width:40rem){body{padding:.9rem}h1{margin-bottom:.8rem}
+@media (max-width:40rem){body{padding-left:.9rem;padding-right:.9rem}
 button.small{min-height:2.5rem;padding:.3rem .9rem}ul.list li{flex-wrap:wrap;gap:.3rem .8rem}
 ul.list li .grow{flex:1 1 12rem}.date{min-width:0}.acts{flex-direction:row}
-.row .grow>.item-link{padding:.35rem 0}.tabs{margin-top:-.3rem}.tabs>*{padding:.6rem 0}}
+ul.list li.row{flex-wrap:nowrap}ul.list li.row .grow{flex:1}.date.time{min-width:0;width:3.2rem;white-space:normal}
+ul.now-cards{margin:0 -.9rem;padding-left:.9rem;padding-right:.9rem;scroll-padding-inline:.9rem}}
 """
 
 
@@ -315,14 +386,17 @@ OVERVIEW_CSP = (
     "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 )
 OVERVIEW_SCRIPT = '<script src="/static/overblik.js" defer></script>'
-THEME_COLOR = "#2156c9"  # the browser's bar on a phone and the background of static/icon.svg
+THEME_COLOR = "#2156c9"  # the browser's bar on a phone and the background of static/icon.svg; the accent colour
+THEME_COLOR_DARK = "#121214"  # the browser's bar in the dark theme: the page's background
 
 
 def page(
     title: str | None, body: str, flash: str | None = None, *, status_code: int = 200, enhanced: bool = False,
+    nav: str = "", wide: bool = False,
 ) -> HTMLResponse:
-    """A page under the app's name (``web.app_name``), which is also its title when ``title`` is None; ``enhanced``
-    (the overview and the detail): with :data:`OVERVIEW_SCRIPT` under :data:`OVERVIEW_CSP`."""
+    """A page under the app's name (``web.app_name``), which is also its title when ``title`` is None, with ``nav``
+    (:func:`tabs`) by the name; ``enhanced`` (the overview and the detail): with :data:`OVERVIEW_SCRIPT` under
+    :data:`OVERVIEW_CSP`; ``wide``: room for two columns (the front page)."""
     app_name = web_config()["app_name"]
     flash_html = f'<div class="flash">{e(flash)}</div>' if flash else ""
     headers = {"Cache-Control": "no-store"}
@@ -332,11 +406,13 @@ def page(
         status_code=status_code,
         content=
         f"""<!doctype html><html lang="da"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title or app_name)}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>{e(title or app_name)}</title>
 <meta name="robots" content="noindex"><link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/static/icon-192.png">
-<meta name="theme-color" content="{THEME_COLOR}"><style>{CSS}</style>{OVERVIEW_SCRIPT if enhanced else ""}</head><body>
-<h1><a href="/" style="color:inherit;text-decoration:none">{e(app_name)}</a></h1>{flash_html}{body}</body></html>""",
+<meta name="theme-color" content="{THEME_COLOR}" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="{THEME_COLOR_DARK}" media="(prefers-color-scheme: dark)">
+<style>{CSS}</style>{OVERVIEW_SCRIPT if enhanced else ""}</head><body{' class="wide"' if wide else ""}>
+<header class="top"><h1><a href="/">{e(app_name)}</a></h1>{nav}</header>{flash_html}{body}</body></html>""",
         headers=headers,
     )
 
@@ -352,13 +428,25 @@ TABS = {
 }
 
 
+# The tabs' icons (only at the bottom of a narrow screen): the lines of a 24×24 SVG drawn with the text's colour.
+TAB_ICONS = {
+    "forside": '<path d="M3.5 10.5 12 3.5l8.5 7V20a1 1 0 0 1-1 1H15v-6H9v6H4.5a1 1 0 0 1-1-1z"/>',
+    "info": '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/>',
+    "past": '<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5M12 7.5V12l3 2"/>',
+    "settings": '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/>'
+                '<circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
+}
+
+
 def tabs(active: str | None) -> str:
     """The tabs shared by the pages (``active``: the page it is on; None: a link to each)."""
-    links = "".join(
-        f'<b aria-current="page">{e(label)}</b>' if name == active else f'<a href="{href}">{e(label)}</a>'
-        for name, (href, label) in TABS.items()
-    )
-    return f'<nav class="tabs" id="faner">{links}</nav>'
+    def tab(name: str, href: str, label: str) -> str:
+        icon = f'<svg viewBox="0 0 24 24" aria-hidden="true">{TAB_ICONS[name]}</svg>'
+        if name == active:
+            return f'<b aria-current="page">{icon}{e(label)}</b>'
+        return f'<a href="{href}">{icon}{e(label)}</a>'
+
+    return f'<nav class="tabs" id="faner">{"".join(tab(name, *link) for name, link in TABS.items())}</nav>'
 
 
 def fmt_date(value: str | None) -> str:
@@ -509,13 +597,13 @@ async def home(request: Request) -> Response:
         for r in last_runs
     ) or '<li class="mut">Ingen kørsler endnu.</li>'
 
-    body = f"""{tabs("settings")}<div class="cards">{cards}</div>
+    body = f"""<div class="cards">{cards}</div>
 <p class="mut" id="ikke-inddelt">{e(unclassified)}</p>
 <h2>Børn og kalendere</h2><ul class="list">{children_html}</ul>
 {removed_html(ledger, cfg, request.app.state.today())}
 <h2>Seneste kørsler</h2><ul class="list">{runs_html}</ul>
 <p class="mut" style="margin-top:2rem">Logget ind som {e(getattr(request.state, "email", ""))}</p>"""
-    return page(None, body, request.query_params.get("msg"))
+    return page(None, body, request.query_params.get("msg"), nav=tabs("settings"))
 
 
 SENSITIVE = "🔒 Følsom tråd"  # what a sensitive thread is called on a page that may stand open on a screen
@@ -524,6 +612,37 @@ SENSITIVE = "🔒 Følsom tråd"  # what a sensitive thread is called on a page 
 def child_first_name(child: dict[str, Any] | None) -> str:
     """A child's first name, as the pages show it ("?" when the config does not know the child or its name)."""
     return (((child or {}).get("name") or "").split() or ["?"])[0]
+
+
+KID_COLOURS = 4  # the palette in CSS (.kid-0 … .kid-3): the children's colours, in turn
+
+
+@dataclass(frozen=True)
+class Children:
+    """The children in the config, in its order, each with its first name and its colour: the CSS class
+    ``kid-<n>`` by its place (the palette in turn), for its name in the lists, on the chips and by the events."""
+
+    names: dict[int, str]
+
+    @classmethod
+    def of(cls, cfg: dict[str, Any]) -> Children:
+        return cls({int(cid): child_first_name(c) for cid, c in cfg["children"].items() if cid.isdigit()})
+
+    def colour(self, child_id: int) -> str:
+        return f"kid-{list(self.names).index(child_id) % KID_COLOURS}" if child_id in self.names else ""
+
+    def mark(self, child_ids: list[int] | tuple[int, ...]) -> str:
+        """Whose a line is: each child's first name in its colour, "Begge" ("Alle" with more) when it is for every
+        child (or Aula and the agent set none); nothing with one child."""
+        if len(self.names) < 2:
+            return ""
+        mine = [c for c in self.names if c in child_ids]
+        if not mine or len(mine) == len(self.names):
+            return f'<span class="who all">{"Begge" if len(self.names) == 2 else "Alle"}</span>'
+        return "".join(f'<span class="who {self.colour(c)}">{e(self.names[c])}</span>' for c in mine)
+
+
+NOBODY = Children({})  # no names on the lines
 
 
 def kind_name(item: archive.Item) -> str:
@@ -562,66 +681,96 @@ TODO_ACTIONS: dict[str, tuple[str, Callable[[Ledger, str, int], None]]] = {
 }
 
 
-def todo_button(t: archive.ItemTodo, *, checked: bool, back: str | None = None) -> str:
-    """ "Klaret" or "Fortryd"; ``back``: the page to return to (:func:`safe_back`; else the overview)."""
+def todo_button(t: archive.ItemTodo, *, checked: bool, back: str | None = None, tick: bool = False) -> str:
+    """ "Klaret" or "Fortryd"; ``back``: the page to return to (:func:`safe_back`; else the overview); ``tick``: as
+    the round button in front of a todo in the lists (filled when it is ticked off), its label only for a reader."""
     action = "uncheck" if checked else "check"
+    label = TODO_ACTIONS[action][0]
     back_field = f'<input type="hidden" name="back" value="{e(back)}">' if back else ""
+    button = (f'<button class="tick" title="{label}"><span class="vh">{label}</span></button>' if tick
+              else f'<button class="small">{label}</button>')
     return (
         f'<form class="inline" method="post" action="/todos/{action}">'
         f'<input type="hidden" name="item" value="{e(t.item.key)}">'
-        f'<input type="hidden" name="version" value="{t.version.id}">{back_field}'
-        f'<button class="small">{TODO_ACTIONS[action][0]}</button></form>'
+        f'<input type="hidden" name="version" value="{t.version.id}">{back_field}{button}</form>'
     )
+
+
+def due_text(due: dt.date, today: dt.date) -> str:
+    """When a todo is due, as the lists say it: "i dag", "i morgen" or the weekday and date ("fre 20/11")."""
+    near = {0: "i dag", 1: "i morgen"}.get((due - today).days)
+    return near or f"{WEEKDAYS[due.weekday()]} {short_date(due, today)}"
+
+
+def short_date(day: dt.date, today: dt.date) -> str:
+    """ "20/11", with the year when it is not this year's."""
+    return f"{day.day}/{day.month}" + (f" {day.year}" if day.year != today.year else "")
 
 
 def todo_item(
-    t: archive.ItemTodo, *, today: dt.date, checked: bool, day: dt.date | None = None, back: str | None = None
+    t: archive.ItemTodo, *, today: dt.date, checked: bool, day: dt.date | None = None, back: str | None = None,
+    kids: Children = NOBODY,
 ) -> str:
-    button = todo_button(t, checked=checked, back=back)
+    """A todo with the round button in front, its text linked to its item, whose it is and when it is due."""
+    button = todo_button(t, checked=checked, back=back, tick=True)
     sensitive = t.item.sensitive  # the page may stand open on a screen: not what to do, nor the subject
     overdue = not checked and t.due is not None and t.due < today
-    meta = [m for m in (
-        t.due and f"senest {fmt_date(t.due.isoformat())}",
-        None if sensitive else t.item.latest.title or "(uden titel)",
-    ) if m]
-    flag = ' <b class="bad">overskredet</b>' if overdue else ""
+    due = []
+    if overdue:
+        due.append('<b class="bad">overskredet</b>')
+    if t.due:
+        due.append(f"senest {e(due_text(t.due, today))}")
     text = SENSITIVE if sensitive else t.text
-    what = f'<span class="todo">{e(text)}</span>{flag}<br><span class="mut">{e(" · ".join(meta))}</span>'
-    return f'<li class="row todo-row">{day_cell(day)}<span class="grow">{what}</span><span class="acts">{button}</span></li>'
+    what = f'<a class="todo-link" href="{e(store.item_path(t.item.key))}"><span class="todo">{e(text)}</span></a>'
+    meta = f'<span class="meta">{kids.mark(t.item.child_ids)}{" · ".join(due)}</span>'
+    done = " done" if checked else ""
+    return f'<li class="row todo-row{done}">{day_cell(day)}{button}<span class="grow">{what}{meta}</span></li>'
 
 
 def todos_html(
-    open_: list[archive.ItemTodo], checked: list[archive.ItemTodo], ledger: Ledger, today: dt.date, back: str
+    open_: list[archive.ItemTodo], checked: list[archive.ItemTodo], ledger: Ledger, today: dt.date, back: str,
+    kids: Children = NOBODY,
 ) -> str:
     """Skal gøres and the folded Klaret (:func:`todo_lists`); ``back``: the overview as it is filtered,
     for the buttons to return to."""
-    open_html = "".join(todo_item(t, today=today, checked=False, back=back) for t in open_)
-    checked_html = "".join(todo_item(t, today=today, checked=True, back=back) for t in checked)
+    open_html = "".join(todo_item(t, today=today, checked=False, back=back, kids=kids) for t in open_)
+    checked_html = "".join(todo_item(t, today=today, checked=True, back=back, kids=kids) for t in checked)
     open_html = open_html or '<li class="mut">Intet at gøre.</li>'
     checked_html = checked_html or '<li class="mut">Intet klaret endnu.</li>'
     return (
-        f'<h2>Skal gøres <span class="mut">({len(open_)})</span></h2><ul class="list">{open_html}</ul>'
+        f'<h2>Skal gøres<span class="count">{len(open_)}</span></h2><ul class="list">{open_html}</ul>'
         f'<details><summary>Klaret <span class="mut">({len(checked)})</span></summary>'
-        f'<ul class="list">{checked_html}</ul></details>'
+        f'<ul class="list box">{checked_html}</ul></details>'
     )
 
 
-def item_row(item: archive.Item, extra: str = "", *, day: dt.date | None = None, acts: str = "") -> str:
-    """One item on the timeline: its category, title and summary, who sent it and when, linked to its detail page;
-    ``acts``: buttons at its side.
+def item_row(
+    item: archive.Item, extra: str = "", *, day: dt.date | None = None, kids: Children = NOBODY,
+) -> str:
+    """One item on the timeline: its category (a neutral label), title and summary linked to its detail page, and
+    whose it is (who sent it, and when, are on the detail); ``extra``: more under it (its todo).
 
-    A sensitive thread shows only its date, source and category (the page may stand open on a screen).
+    A sensitive thread shows only its category (the page may stand open on a screen).
     """
-    c, latest = item.classification, item.latest
-    who = None if item.sensitive else latest.author
-    meta = " · ".join(m for m in (kind_name(item), who, fmt_date((latest.date or "")[:10])) if m)
+    c = item.classification
     summary = "" if item.sensitive or not c.summary else f'<span class="sum">{e(c.summary)}</span>'
     return (
         f'<li class="row" data-key="{e(item.key)}">{day_cell(day)}<span class="grow">'
-        f'<span class="tag cat-{c.category}">{e(CATEGORY_NAMES[c.category])}</span> '
+        f'<span class="label">{e(CATEGORY_NAMES[c.category])}</span>'
         f'<a class="item-link" href="{e(store.item_path(item.key))}">{e(item_title(item))}</a>'
-        f'{summary}<span class="mut meta">{e(meta)}</span>{extra}</span>'
-        f'{f"<span class=\"acts\">{acts}</span>" if acts else ""}</li>'
+        f'{summary}<span class="meta">{kids.mark(item.child_ids)}</span>{extra}</span></li>'
+    )
+
+
+def now_card(item: archive.Item, why: archive.Current, kids: Children = NOBODY) -> str:
+    """An item in Gælder nu, as a card: its category, title, why it holds now, its summary and whose it is."""
+    c = item.classification
+    summary = "" if item.sensitive or not c.summary else f'<span class="sum">{e(c.summary)}</span>'
+    reason = f'<span class="why">{e(text)}</span>' if (text := why_current(item, why)) else ""
+    return (
+        f'<li class="now-card" data-key="{e(item.key)}"><span class="label">{e(CATEGORY_NAMES[c.category])}</span>'
+        f'<a class="item-link" href="{e(store.item_path(item.key))}">{e(item_title(item))}</a>{reason}{summary}'
+        f'<span class="meta">{kids.mark(item.child_ids)}</span></li>'
     )
 
 
@@ -644,25 +793,26 @@ def day_param(value: str | None) -> dt.date | None:
         return None
 
 
-def event_row(line: timeline.EventLine, *, dated: bool = True) -> str:
-    """An event in the calendar, with a link to the item it came from; ``dated``: with the day it begins (in the
-    weeks), else on a day of its own (under its heading) with its time or "hele dagen" instead."""
+def event_row(line: timeline.EventLine, *, dated: bool = True, kids: Children = NOBODY) -> str:
+    """An event in the calendar, whose it is and a link to the item it came from; ``dated``: with the day it begins
+    (in the weeks), else on a day of its own (under its heading) with its time or "hele dagen" instead."""
     ev, source, start = line.event, line.source, line.start
     end = dt.date.fromisoformat((ev.end or ev.start)[:10])
-    time = f"kl. {ev.start[11:16]}" if len(ev.start) > 10 else ""
-    when = [time] if time and dated else []
+    time = ev.start[11:16] if len(ev.start) > 10 else ""
+    when = [f"kl. {time}"] if time and dated else []
     if not dated and start < line.day:
         when.append(f"fra {fmt_day(start)}")
     if end != start:
         when.append(f"til {fmt_day(end)}")
     src = ""
     if ev.source and source is not None:
-        src = f' · fra <a class="item-link event-src" href="{e(store.item_path(ev.source))}">{e(item_title(source))}</a>'
+        src = f'fra <a class="item-link event-src" href="{e(store.item_path(ev.source))}">{e(item_title(source))}</a>'
     cell = day_cell(start) if dated else f'<span class="date time">{e(time or "hele dagen")}</span>'
     return (
         f'<li class="row event" data-event="{e(ev.key)}">{cell}<span class="grow">'
-        f'<span class="ev">📅 {e(ev.title)}</span>{" " + e(" ".join(when)) if when else ""}'
-        f'<br><span class="mut">i kalenderen{src}</span></span></li>'
+        f'<span class="label">Kalender</span><span class="ev">{e(ev.title)}</span>'
+        f'{" " + e(" ".join(when)) if when else ""}'
+        f'<span class="meta">{kids.mark(ev.child_ids)}{src}</span></span></li>'
     )
 
 
@@ -677,47 +827,53 @@ def week_html(first: dt.date, rows: list[str], today: dt.date) -> str:
     )
 
 
-def line_html(line: timeline.Line, today: dt.date, back: str, *, dated: bool = True) -> str:
+def line_html(
+    line: timeline.Line, today: dt.date, back: str, *, dated: bool = True, kids: Children = NOBODY,
+) -> str:
     """One line on the timeline; ``dated``: with its day (in the weeks), else under its day's heading."""
     day = line.day if dated else None
     match line:
         case timeline.ItemLine(todo=None):
-            return item_row(line.item, day=day)
+            return item_row(line.item, day=day, kids=kids)
         case timeline.ItemLine(todo=t):
-            what = "" if t.item.sensitive else f'<span class="meta">✓ <span class="todo">{e(t.text)}</span></span>'
-            return item_row(line.item, what, day=day, acts=todo_button(t, checked=False, back=back))
+            text = SENSITIVE if t.item.sensitive else t.text
+            what = (f'<span class="row-todo">{todo_button(t, checked=False, back=back, tick=True)}'
+                    f'<span class="todo">{e(text)}</span></span>')
+            return item_row(line.item, what, day=day, kids=kids)
         case timeline.EventLine():
-            return event_row(line, dated=dated)
+            return event_row(line, dated=dated, kids=kids)
         case timeline.TodoLine():
-            return todo_item(line.todo, today=today, checked=False, day=day, back=back)
+            return todo_item(line.todo, today=today, checked=False, day=day, back=back, kids=kids)
 
 
-def weeks_html(weeks: list[timeline.Week], today: dt.date, back: str) -> str:
-    return "".join(week_html(w.monday, [line_html(line, today, back) for line in w.lines], today) for w in weeks)
+def weeks_html(weeks: list[timeline.Week], today: dt.date, back: str, kids: Children = NOBODY) -> str:
+    return "".join(
+        week_html(w.monday, [line_html(line, today, back, kids=kids) for line in w.lines], today) for w in weeks
+    )
 
 
 WEEKDAY_NAMES = ("Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag")
 
 
-def day_html(d: timeline.Day, today: dt.date, back: str) -> str:
+def day_html(d: timeline.Day, today: dt.date, back: str, kids: Children = NOBODY) -> str:
     """One day with its lines under a heading ("Mandag 9/11"; "I dag · fredag 6/11"), or "Intet i dag/i morgen"."""
     date = f"{WEEKDAY_NAMES[d.day.weekday()]} {d.day.day}/{d.day.month}"
     near = {0: "i dag", 1: "i morgen"}.get((d.day - today).days)
     heading = f"{near.capitalize()} · {date.lower()}" if near else date
-    rows = "".join(line_html(line, today, back, dated=False) for line in d.lines) or f'<li class="mut">Intet {near}.</li>'
+    rows = "".join(line_html(line, today, back, dated=False, kids=kids) for line in d.lines) or f'<li class="mut">Intet {near}.</li>'
     return (
         f'<div class="day{" today" if d.day == today else ""}" data-day="{d.day.isoformat()}"><h3>{e(heading)}</h3>'
         f'<ul class="list">{rows}</ul></div>'
     )
 
 
-def near_html(coming: timeline.Upcoming, today: dt.date, back: str) -> str:
+def near_html(coming: timeline.Upcoming, today: dt.date, back: str, kids: Children = NOBODY) -> str:
     """I dag og i morgen (:func:`timeline.upcoming`), also when there is nothing on them."""
-    days = "".join(day_html(d, today, back) for d in coming.near)
+    days = "".join(day_html(d, today, back, kids) for d in coming.near)
     return f'<section id="i-dag-og-i-morgen"><h2>I dag og i morgen</h2>{days}</section>'
 
 
-def upcoming_html(coming: timeline.Upcoming, today: dt.date, back: str) -> str:
+def upcoming_html(coming: timeline.Upcoming, today: dt.date, back: str, kids: Children = NOBODY) -> str:
     """Kommende (:func:`timeline.upcoming`): the days with something on them, and a line when the week changes
     (from the week of tomorrow, the last day above)."""
     parts, week = [], timeline.monday(coming.near[-1].day)
@@ -725,15 +881,17 @@ def upcoming_html(coming: timeline.Upcoming, today: dt.date, back: str) -> str:
         if (first := timeline.monday(d.day)) != week:
             parts.append(f'<p class="week-line" data-week="{first.isoformat()}">Uge {first.isocalendar().week}</p>')
             week = first
-        parts.append(day_html(d, today, back))
+        parts.append(day_html(d, today, back, kids))
     return f'<section id="kommende"><h2>Kommende</h2>{"".join(parts) or "<p class=\"mut\">Intet kommende.</p>"}</section>'
 
 
-def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date, params) -> str:
+def earlier_html(
+    items: list[archive.Item], before: dt.date, today: dt.date, params, kids: Children = NOBODY,
+) -> str:
     """Tidligere (:func:`timeline.earlier`), shown as usual (past or not), and "Vis ældre" when there is more
     (filtered as the overview is, by ``params``)."""
     got = timeline.earlier(items, before, today)
-    weeks = weeks_html(got.weeks, today, overview_url(params, page="/past"))
+    weeks = weeks_html(got.weeks, today, overview_url(params, page="/past"), kids)
     older = ""
     if got.older:
         href = overview_url(params, page="/past", drop=("before",), add=[("before", got.older.isoformat())])
@@ -744,7 +902,7 @@ def earlier_html(items: list[archive.Item], before: dt.date, today: dt.date, par
 NO_TOPIC = "Uden emne"  # also where a sensitive thread stands: its topic is not shown
 
 
-def standing_html(items: list[archive.Item]) -> str:
+def standing_html(items: list[archive.Item], kids: Children = NOBODY) -> str:
     """Stående info, grouped by each item's first topic (the topics by name), newest first under each."""
     groups: dict[str, list[archive.Item]] = {}
     for item in items:
@@ -753,7 +911,7 @@ def standing_html(items: list[archive.Item]) -> str:
     parts = []
     for topic in sorted(groups, key=lambda t: (t == NO_TOPIC, t)):
         members = sorted(groups[topic], key=lambda i: (i.latest.date or "", i.key), reverse=True)
-        parts.append(f'<div class="topic"><h3>{e(topic)}</h3><ul class="list">{"".join(map(item_row, members))}</ul></div>')
+        parts.append(f'<div class="topic"><h3>{e(topic)}</h3><ul class="list">{"".join(item_row(i, kids=kids) for i in members)}</ul></div>')
     return f'<section id="staaende-info"><h2>Stående info</h2>{"".join(parts) or "<p class=\"mut\">Ingen endnu.</p>"}</section>'
 
 
@@ -761,9 +919,11 @@ def why_current(item: archive.Item, why: archive.Current) -> str:
     """What "Gælder nu" says under an item about why it is there ("" for nothing)."""
     match why:
         case archive.Current.SPAN:
-            return f"gælder {item.classification.span_text('%d.%m.%Y')}"
+            c = item.classification
+            end = c.span_end if c.span_end and c.span_end != c.span_start else None
+            return f"gælder {c.span_start.day}/{c.span_start.month}" + (f"–{end.day}/{end.month}" if end else "")
         case archive.Current.IMPORTANT:
-            return "⭐ markeret vigtig i Aula"
+            return "markeret vigtig i Aula"
     return ""
 
 
@@ -778,7 +938,7 @@ def excerpt_html(parts: tuple[tuple[str, bool], ...]) -> str:
     return "".join(f"<mark>{e(text)}</mark>" if marked else e(text) for text, marked in parts)
 
 
-def search_hit(hit: archive.Hit, today: dt.date) -> str:
+def search_hit(hit: archive.Hit, today: dt.date, kids: Children = NOBODY) -> str:
     item, c, latest = hit.item, hit.item.classification, hit.item.latest
     past = item.past(today)
     meta = [m for m in (kind_name(item), fmt_date((latest.date or "")[:10])) if m]
@@ -796,7 +956,7 @@ def search_hit(hit: archive.Hit, today: dt.date) -> str:
         if hit.files:
             lines.append(f'<span class="mut">i fil: {e(", ".join(f.name for f in hit.files))}</span>')
     flag = ' <span class="tag">overstået</span>' if past else ""
-    lines.append(f'<span class="mut">{e(" · ".join(meta))}</span>')
+    lines.append(f'<span class="mut">{kids.mark(item.child_ids)}{e(" · ".join(meta))}</span>')
     return (
         f'<li{' class="past"' if past else ""}><span class="grow"><a href="{e(store.item_path(item.key))}">{e(title)}</a>{flag}'
         f'{"".join("<br>" + line for line in lines)}</span></li>'
@@ -864,8 +1024,10 @@ def child_filter(params, children: dict[str, Any], page: str = "/") -> str:
         return ""
     chosen = child_param(params)
 
+    kids = Children.of({"children": children})
+
     def chip(cid: int | None, name: str) -> str:
-        on = " on" if cid == chosen else ""
+        on = (" on" if cid == chosen else "") + (f" {kids.colour(cid)}" if cid is not None else "")
         current = ' aria-current="true"' if cid == chosen else ""
         href = overview_url(params, page=page, drop=("child",), add=[("child", str(cid) if cid is not None else ALL_CHILDREN)])
         return f'<a class="chip{on}" href="{e(href)}"{current}>{e(name)}</a>'
@@ -948,7 +1110,8 @@ def search_part(params, today: dt.date, page: str = "/") -> SearchPart | None:
             params.get("q") or "", child=child_param(params), category=choice("category", archive.Category),
             topic=params.get("topic") or None, kind=choice("kind", archive.KindFilter),
         )
-    found = "".join(search_hit(h, today) for h in hits) or '<li class="mut">Intet fundet.</li>'
+    kids = Children.of(store.load_config())
+    found = "".join(search_hit(h, today, kids) for h in hits) or '<li class="mut">Intet fundet.</li>'
     results = f'<section id="soegning"><h2>Søgning <span class="mut">({len(hits)})</span></h2><ul class="list">{found}</ul></section>'
     return SearchPart(form, results)
 
@@ -984,38 +1147,39 @@ async def overview_page(request: Request, params: QueryParams) -> Response:
     nav = tabs(OVERVIEW_PAGES[path])
     search = await asyncio.to_thread(search_part, params, today, path)
     if search and search.results is not None:
-        return page("Søgning", nav + search.form + overview_main(search.results), enhanced=True)
+        return page("Søgning", search.form + overview_main(search.results), enhanced=True, nav=nav)
     got = await asyncio.to_thread(read)
     warned = warnings_html(ledger) if path == "/" else ""
     if got is None or search is None:
         body = overview_main('<p class="mut">Arkivet er ikke klar til overblikket endnu. Det bliver det ved næste hentning fra Aula.</p>')
-        return page(None, nav + warned + body, enhanced=True)
+        return page(None, warned + body, enhanced=True, nav=nav)
     items, todos, sources = got
     todos = [t for t in todos if for_child(t.item.child_ids, child)]
     shown = [
         i for i in items
         if i.classification and i.classification.category != archive.Category.SVAR and for_child(i.child_ids, child)
     ]
-    msg = params.get("msg")
+    msg, kids = params.get("msg"), Children.of(store.load_config())
     if path == "/info":
-        info = standing_html([i for i in shown if i.classification.category == archive.Category.INFO])
-        return page("Info", nav + search.form + overview_main(info), msg, enhanced=True)
+        info = standing_html([i for i in shown if i.classification.category == archive.Category.INFO], kids)
+        return page("Info", search.form + overview_main(info), msg, enhanced=True, nav=nav)
     if path == "/past":
-        earlier = earlier_html(shown, day_param(params.get("before")) or today, today, params)
-        return page("Tidligere", nav + search.form + overview_main(earlier), msg, enhanced=True)
+        earlier = earlier_html(shown, day_param(params.get("before")) or today, today, params, kids)
+        return page("Tidligere", search.form + overview_main(earlier), msg, enhanced=True, nav=nav)
     back = overview_url(params)  # where "Klaret" returns to: this view
     open_, checked = todo_lists(todos, ledger)
     coming = timeline.upcoming(shown, events, open_, today, sources)
-    now_html = "".join(
-        item_row(i, f'<span class="mut meta">{e(why)}</span>' if (why := why_current(i, reason)) else "")
-        for i, reason in timeline.now(shown, today)
-    )
-    body = f"""
-<section id="skal-goeres">{todos_html(open_, checked, ledger, today, back)}</section>
-{near_html(coming, today, back)}
-<section id="gaelder-nu"><h2>Gælder nu</h2><ul class="list now">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>
-{upcoming_html(coming, today, back)}"""
-    return page(None, nav + search.form + warned + overview_main(body), msg, enhanced=True)
+    now_html = "".join(now_card(i, reason, kids) for i, reason in timeline.now(shown, today))
+    # Two columns when there is room (Skal gøres and Gælder nu | the days), else one in the order the CSS gives:
+    # Skal gøres, I dag og i morgen, Gælder nu, Kommende.
+    body = f"""<div class="cols"><div class="col">
+<section id="skal-goeres">{todos_html(open_, checked, ledger, today, back, kids)}</section>
+<section id="gaelder-nu"><h2>Gælder nu</h2><ul class="now-cards">{now_html or '<li class="mut">Intet lige nu.</li>'}</ul></section>
+</div><div class="col">
+{near_html(coming, today, back, kids)}
+{upcoming_html(coming, today, back, kids)}
+</div></div>"""
+    return page(None, search.form + warned + overview_main(body), msg, enhanced=True, nav=nav, wide=True)
 
 
 async def tick_todo(request: Request) -> Response:
@@ -1189,9 +1353,9 @@ def detail_html(d: Detail, *, hide: bool) -> str:
     rows.append(todo_detail(d, hide=hide))
     if hide:
         rows.append('<p><a href="?show=1" class="btn">Vis teksten</a></p>')
-        return f"<h2>{e(item_title(item))}</h2>{''.join(rows)}"
+        return f'<h2 class="title">{e(item_title(item))}</h2>{"".join(rows)}'
     rows += [item_text(latest.body), files_html(item), versions_html(item), calendar_html(d), thread_html(d)]
-    return f"<h2>{e(latest.title or '(uden titel)')}</h2>{''.join(rows)}"
+    return f'<h2 class="title">{e(latest.title or "(uden titel)")}</h2>{"".join(rows)}'
 
 
 def todo_detail(d: Detail, *, hide: bool) -> str:
@@ -1299,10 +1463,10 @@ async def item_detail(request: Request) -> Response:
     nav = tabs(None)
     if d is None:
         body = overview_main('<p class="mut">Det findes ikke i arkivet.</p>')
-        return page("Findes ikke", nav + body, status_code=404, enhanced=True)
+        return page("Findes ikke", body, status_code=404, enhanced=True, nav=nav)
     hide = d.item.sensitive and request.query_params.get("show") != "1"
     title = None if hide else d.item.latest.title or None
-    return page(title, nav + overview_main(detail_html(d, hide=hide)), request.query_params.get("msg"), enhanced=True)
+    return page(title, overview_main(detail_html(d, hide=hide)), request.query_params.get("msg"), enhanced=True, nav=nav)
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -1382,7 +1546,7 @@ async def remove_confirm_page(request: Request) -> Response:
     back_url = back or "/settings"
     if not entries:
         body = f'<p>Begivenheden findes ikke længere.</p><p><a href="{e(back_url)}" class="btn">Tilbage</a></p>'
-        return page("Fjern fra kalenderen", tabs(None) + overview_main(body), enhanced=True)
+        return page("Fjern fra kalenderen", overview_main(body), enhanced=True, nav=tabs(None))
     first = entries[0]
     children = [child_id] if child_id is not None else sorted({c for x in entries for c in x.child_ids})
     when = fmt_date(first.start) + (f"–{fmt_date(first.end)}" if first.end and first.end != first.start else "")
@@ -1392,12 +1556,12 @@ async def remove_confirm_page(request: Request) -> Response:
     if back:
         fields += f'<input type="hidden" name="back" value="{e(back)}">'
     body = (
-        f"<h2>Fjern fra kalenderen</h2><p>Fjern »{e(first.title)}« ({e(when)}) fra kalenderen for "
+        f'<h2 class="title">Fjern fra kalenderen</h2>' f"<p>Fjern »{e(first.title)}« ({e(when)}) fra kalenderen for "
         f"{e(child_names(children, cfg))}? Den bliver ikke oprettet igen.</p>"
         f'<form method="post" action="/events/remove">{fields}<button class="primary">Fjern</button> '
         f'<a href="{e(back_url)}" class="btn">Fortryd</a></form>'
     )
-    return page("Fjern fra kalenderen", tabs(None) + overview_main(body), enhanced=True)
+    return page("Fjern fra kalenderen", overview_main(body), enhanced=True, nav=tabs(None))
 
 
 async def remove_event(request: Request) -> Response:

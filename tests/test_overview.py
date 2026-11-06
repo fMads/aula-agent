@@ -64,7 +64,7 @@ def test_a_period_covering_today_is_current_and_replies_are_shown_nowhere():
 
     now = section(html, "gaelder-nu")
     assert titles(now) == ["Svømning i november"]
-    assert "Onsdage, husk badetøj." in now and "Periode" in now and "opslag" in now
+    assert "Onsdage, husk badetøj." in now and "Periode" in now and "gælder 2/11–30/11" in now
     assert "Svar om svømning" not in html
 
 
@@ -124,7 +124,7 @@ def test_upcoming_begins_after_tomorrow_has_no_empty_days_and_a_week_line_when_t
     ]
     on = days(upcoming)
     assert "Søndag 8/11" in on["2026-11-08"] and "Mandag 9/11" in on["2026-11-09"] and "Tirsdag 17/11" in on["2026-11-17"]
-    assert titles(on["2026-11-11"]) == ["Museum"] and "Forældremøde" in on["2026-11-11"] and "kl. 19:00" in on["2026-11-11"]
+    assert titles(on["2026-11-11"]) == ["Museum"] and "Forældremøde" in on["2026-11-11"] and ">19:00<" in on["2026-11-11"]
 
 
 def test_today_and_tomorrow_are_shown_with_nothing_on_them():
@@ -243,7 +243,7 @@ def test_the_child_filter_shows_the_childs_items_and_those_without_a_child_and_o
     assert titles(oscar) == ["Tur for Oscar", "Skolefoto for alle"] and "Frist: seddel" in oscar
 
 
-def test_a_sensitive_thread_shows_only_its_date_source_and_category():
+def test_a_sensitive_thread_shows_only_its_category():
     with archive.open() as a:
         spec = message("9", "m1", "2026-11-03T08:00:00+01:00", "Samtale om skoledagen", sensitive=True)
         spec["messages"][0]["sender"] = {"fullName": "Lærer Hansen"}
@@ -258,7 +258,7 @@ def test_a_sensitive_thread_shows_only_its_date_source_and_category():
     html = overview()
 
     now = section(html, "gaelder-nu")
-    assert "🔒 Følsom tråd" in now and "besked" in now and "03.11.2026" in now and "Orientering" in now
+    assert "🔒 Følsom tråd" in now and "Orientering" in now
     standing = info()
     assert topics_in(section(standing, "staaende-info")) == {"Uden emne": ["🔒 Følsom tråd"]}
     for page in (html, standing, past()):
@@ -322,7 +322,7 @@ def test_an_arrangement_over_several_days_under_way_today_is_current_with_its_ev
     html = overview()
 
     now = section(html, "gaelder-nu")
-    assert titles(now) == ["Lejrskole"] and "gælder 05.11.2026–07.11.2026" in now
+    assert titles(now) == ["Lejrskole"] and "gælder 5/11–7/11" in now
     assert "Lejrskole" not in section(html, "kommende") + section(html, "i-dag-og-i-morgen")
 
 
@@ -499,7 +499,7 @@ def test_a_chosen_child_is_remembered_on_the_device_for_the_next_page_without_ch
 
         for path, name in [("/", "kommende"), ("/past", None), ("/info", None)]:
             html = c.get(path, headers=auth()).text
-            assert '<a class="chip on" href="' in html and 'aria-current="true">Oscar</a>' in html
+            assert re.search(r'<a class="chip on kid-1" href="[^"]*" aria-current="true">Oscar</a>', html)  # Oscar's colour
         assert titles(section(c.get("/", headers=auth()).text, "kommende")) == ["Tur for Oscar"]
         assert '<input type="hidden" name="child" value="2">' in c.get("/", headers=auth()).text  # search keeps it
 
@@ -538,3 +538,76 @@ def test_one_child_has_no_chips_and_the_cookie_is_not_secure_without_https():
         two_children()
         cookie = c.get("/past", params={"child": "1"}, headers=auth()).headers["set-cookie"]
         assert cookie.startswith("child=1;") and "Secure" not in cookie
+
+
+def line_of(html, text):
+    """The line (``<li``) in ``html`` that has ``text``."""
+    return next(li for li in html.split("<li")[1:] if text in li.split("</li>", 1)[0]).split("</li>", 1)[0]
+
+
+def a_week_for_two_children():
+    """One of each kind of line on the front page, for Emma (1), Oscar (2) or both."""
+    with archive.open(at=dt.datetime(2026, 11, 2, 9, tzinfo=dt.UTC)) as a:
+        a.save_post(post(1, "Klippedag", publish="2026-11-02T08:00:00"), child_ids=[1])
+        a.save_post(post(2, "Bagedag", publish="2026-11-02T08:00:00"), child_ids=[2])
+        a.save_post(post(3, "Emneuge", publish="2026-11-02T08:00:00"), child_ids=[1, 2])
+        a.save_post(post(4, "Seddel om turen", publish="2026-11-02T08:00:00"), child_ids=[2])
+        classify(a, "post:1", "arrangement", start="2026-11-12")
+        classify(a, "post:2", "arrangement", start="2026-11-06")
+        classify(a, "post:3", "periode", start="2026-11-02", end="2026-11-30")
+        a.classify("post:4", archive.Classification(archive.Category.INFO, todo=archive.Todo("Aflever sedlen")))
+    synced("post:9#1", "Fodboldstævne", "2026-11-07", source="post:9", child_ids=(1,))
+    synced("post:9#2", "Teater", "2026-11-20T10:00", source="post:9", child_ids=(1, 2))
+
+
+def test_with_two_children_every_line_says_whose_it_is_and_both_when_it_is_for_both():
+    a_week_for_two_children()
+    two_children()
+
+    html = overview()
+
+    near, now = section(html, "i-dag-og-i-morgen"), section(html, "gaelder-nu")
+    todo, upcoming = section(html, "skal-goeres"), section(html, "kommende")
+    for part, text, whose in ((todo, "Aflever sedlen", "Oscar"), (near, "Bagedag", "Oscar"),
+                              (near, "Fodboldstævne", "Emma"), (now, "Emneuge", "Begge"),
+                              (upcoming, "Klippedag", "Emma"), (upcoming, "Teater", "Begge")):
+        line = line_of(part, text)
+        assert whose in line, (text, whose)
+        assert not [other for other in ("Emma", "Oscar", "Begge") if other != whose and other in line], text
+
+
+def test_with_one_child_no_line_says_whose_it_is():
+    a_week_for_two_children()
+
+    html = overview()
+
+    page = html.split("</form>", 1)[1]
+    assert "Emma" not in page and "Begge" not in page
+    assert "Aflever sedlen" in page and "Klippedag" in page and "Teater" in page
+
+
+def test_a_sensitive_thread_is_only_a_sensitive_thread_in_every_part_of_the_front_page():
+    hidden = {"9": ("Samtale om trivsel", "Snak om trivsel i gruppen", "Ring til pædagogen"),
+              "8": ("Aftale om hentning", "Hentes af en anden fredag", "Skriv hvem der henter"),
+              "7": ("Besøg af sundhedsplejersken", "Besøg torsdag i næste uge", "Udfyld skemaet")}
+    with archive.open(at=dt.datetime(2026, 11, 2, 9, tzinfo=dt.UTC)) as a:
+        for thread, (subject, _, _) in hidden.items():
+            save_message(a, message(thread, "m1", "2026-11-02T08:00:00", subject, sensitive=True))
+        C = archive.Category
+        for thread, category, start, end, due in (("9", C.PERIODE, "2026-11-02", "2026-11-30", None),
+                                                  ("8", C.ARRANGEMENT, "2026-11-06", None, "2026-11-06"),
+                                                  ("7", C.ARRANGEMENT, "2026-11-12", None, "2026-11-12")):
+            _, summary, todo = hidden[thread]
+            a.classify(f"message:{thread}:m1", archive.Classification(
+                category, dt.date.fromisoformat(start), end and dt.date.fromisoformat(end), summary=summary,
+                todo=archive.Todo(todo, due and dt.date.fromisoformat(due))))
+    synced("message:9:m1#1", "Samtale", "2026-11-07T14:00", source="message:9:m1")
+
+    html = overview()
+
+    for part in ("skal-goeres", "gaelder-nu", "i-dag-og-i-morgen", "kommende"):
+        shown = section(html, part)
+        assert "🔒 Følsom tråd" in shown, part
+        for text in (t for texts in hidden.values() for t in texts):
+            assert text not in shown, (part, text)
+        assert "Tekst" not in shown  # the message's own text

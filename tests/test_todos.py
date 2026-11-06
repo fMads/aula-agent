@@ -74,7 +74,8 @@ def test_a_current_todo_is_open_after_apply_and_klaret_and_fortryd_move_it(aula)
 
     html = overview()
     assert to_do(html) == ["Betal 50 kr. til turen"] and done(html) == []
-    assert "Skovtur" in _between(html, "<h2>Skal gøres", "<details") and "20.11.2099" in html
+    part = _between(html, "<h2>Skal gøres", "<details")
+    assert 'href="/item/post:1"' in part and "senest fre 20/11 2099" in part  # the todo links to its item
     assert html.index("<h2>Skal gøres") < html.index("<h2>Gælder nu")
 
     press("check", *version_of(html, "Betal 50 kr. til turen"))
@@ -181,7 +182,7 @@ def test_a_todo_from_a_sensitive_thread_shows_that_it_is_sensitive_its_due_and_t
     classify(trip("message:5:a", {"text": "Ring til skolen om samtalen", "due": "2099-01-10"}, summary=None))
 
     part = _between(overview(), "<h2>Skal gøres", "<details")
-    assert "🔒 Følsom tråd" in part and "senest 10.01.2099" in part and "Klaret" in part
+    assert "🔒 Følsom tråd" in part and "senest lør 10/1 2099" in part and "Klaret" in part
     assert "overskredet" not in part
     assert "Ring til skolen" not in part and "Samtale om skoledagen" not in part
     assert "overskredet" in _between(overview(today=dt.date(2099, 2, 1)), "<h2>Skal gøres", "<details")

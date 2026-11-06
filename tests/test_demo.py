@@ -1,6 +1,7 @@
 """The demo (``python -m aula_agent.demo <dir>``): made-up data for trying the web page, never the real data/."""
 
 import datetime as dt
+import re
 import sys
 
 import pytest
@@ -18,7 +19,7 @@ def test_the_demo_fills_its_directory_with_two_children_todos_and_events_and_let
         assert 'class="row todo-row"' in html and 'class="row event"' in html
         near = html.split('<section id="i-dag-og-i-morgen"', 1)[1].split("</section>", 1)[0]
         on_today, on_tomorrow = near.split(f'data-day="{today + dt.timedelta(days=1)}"')
-        assert '<span class="date time">kl. ' in on_today
+        assert re.search(r'<span class="date time">\d\d:\d\d</span>', on_today)
         assert '<span class="date time">hele dagen' in on_tomorrow
         assert c.get("/aula/login").status_code == 403 and c.get("/google").status_code == 403
         assert "ikke hentet fra Aula" not in html  # the demo has had a good night
