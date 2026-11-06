@@ -214,6 +214,7 @@ Se opsætningen med `uv run aula-agent web-setup`. Hvis du kører `--email` igen
 | `aula-agent fetch` | Henter nye beskeder og opslag med filer til `data/inbox.json`, gemmer alle opslag og læste tråde i arkivet og tager backup |
 | `aula-agent backfill [REDNINGSKOPI]` | Henter alt, hvad Aula stadig har (alle opslag og tråde med filer), til arkivet og tager backup. Med en sti læses en redningskopi i stedet for Aula. Rører ikke indbakken og kan køres igen |
 | `aula-agent backup` | Kopierer arkivet og nye filer til den private Drive-mappe "Aula-arkiv" nu |
+| `aula-agent reclassify` | Sletter alle classifications i arkivet (topics bliver), så agenten klassificerer alle items igen via køen, højst 100 pr. nat. Krydsede todos huskes stadig pr. version |
 | `aula-agent apply FIL [--dry-run]` | Opretter, opdaterer og sletter begivenheder ud fra en events-fil |
 | `aula-agent google-login` | Forbinder Google fra en terminal |
 | `aula-agent web-setup [...]` | Viser eller ændrer web-sidens opsætning |

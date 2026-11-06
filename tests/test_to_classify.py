@@ -136,3 +136,21 @@ def test_a_queued_item_from_a_sensitive_thread_gets_no_summary(aula):
     r = apply({"processed": [], "events": [], "classifications": [info("message:5:a")], "new_topics": TOPIC})
 
     assert r.exit_code == cli.EXIT_BAD_EVENTS and "følsom tråd – intet resumé" in r.output
+
+
+def test_reclassify_puts_every_item_in_to_classify_again_and_keeps_the_topics(aula):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(1, "Skema", 120), post(2, "Skema igen", 100)], [], {})
+    run_fetch()
+    apply({"processed": [], "events": [], "classifications": [info("post:1"), info("post:2")], "new_topics": TOPIC})
+    run_fetch()
+    assert queued() == []
+
+    r = CliRunner().invoke(cli.main, ["reclassify"])
+
+    assert r.exit_code == 0, r.output
+    assert "2" in r.output
+    run_fetch()
+    assert queued() == ["post:1", "post:2"]
+    assert [(t["name"], t["items"]) for t in inbox()["topics"]] == [("skema", 0)]
+    from aula_agent.ledger import Ledger
+    assert Ledger.load().last_run("reclassify")["outcome"] == "ok"

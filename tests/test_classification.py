@@ -73,11 +73,12 @@ def test_a_dry_run_shows_the_classifications_and_saves_nothing(aula):
     aula["client"] = FakeAula([child(1, "Emma")], [post(1, "Svømning", 1)], [], {})
     run_fetch()
 
-    r = apply({"processed": ["post:1"], "events": [], "classifications": [swimming()],
+    r = apply({"processed": ["post:1"], "events": [],
+               "classifications": [swimming(todo={"text": "Køb badehætte", "due": "2099-11-01"})],
                "new_topics": {"svømning": "Svømmeundervisning"}}, "--dry-run")
 
     assert r.exit_code == 0, r.output
-    assert "[prøvekørsel] Classification: post:1 periode 2099-11-02–2099-11-23" in r.output
+    assert "[prøvekørsel] Classification: post:1 periode 2099-11-02–2099-11-23 todo: Køb badehætte (2099-11-01)" in r.output
     assert "[prøvekørsel] Nyt topic: svømning" in r.output
     assert classified("post:1") is None
     with archive.open() as a:
@@ -200,3 +201,55 @@ def test_an_archive_from_before_classifications_gets_them_and_keeps_its_items(da
 
     with archive.open() as a:
         assert [i.key for i in a.unclassified()] == ["post:1"] and a.topics() == []
+
+
+def test_apply_saves_the_todo_with_the_classification(aula):
+    aula["client"] = FakeAula([child(1, "Emma")], [post(1, "Svømning", 1), post(2, "Lus", 1)], [], {})
+    run_fetch()
+
+    r = apply({"processed": ["post:1", "post:2"], "events": [],
+               "classifications": [swimming(todo={"text": "Betal 50 kr. for svømning", "due": "2099-11-01"}),
+                                   swimming("post:2")],
+               "new_topics": {"svømning": "Svømmeundervisning"}})
+
+    assert r.exit_code == 0, r.output
+    assert classified("post:1").todo == archive.Todo("Betal 50 kr. for svømning", dt.date(2099, 11, 1))
+    assert classified("post:2").todo is None
+    with archive.open() as a:
+        [t] = a.todos()
+        item = a.item("post:1")
+    assert (t.item.key, t.version.id, t.text, t.due) == ("post:1", item.latest.id, "Betal 50 kr. for svømning",
+                                                          dt.date(2099, 11, 1))
+    assert t.classified_at == item.latest.classification.saved_at
+
+
+def test_the_todos_are_the_newest_classifications():
+    archive_posts((1, 3), (2, 3))
+    with archive.open() as a:
+        a.create_topic("tur", "Ture ud af huset")
+        a.classify("post:1", archive.Classification(archive.Category.FRIST, topics=("tur",), summary="Tur",
+                                                    todo=archive.Todo("Tilmeld")))
+        a.classify("post:2", archive.Classification(archive.Category.FRIST, topics=("tur",), summary="Tur",
+                                                    todo=archive.Todo("Betal")))
+        a.classify("post:2", archive.Classification(archive.Category.INFO, topics=("tur",), summary="Tur aflyst"))
+
+        assert [(t.item.key, t.text) for t in a.todos()] == [("post:1", "Tilmeld")]
+
+
+def test_an_archive_from_before_todos_keeps_its_classifications(data_dir):
+    import sqlite3
+
+    archive_posts((1, 3))
+    with archive.open() as a:
+        a.create_topic("lus", "Lus i klassen")
+        a.classify("post:1", archive.Classification(archive.Category.ORIENTERING, topics=("lus",), summary="Lus"))
+    db = sqlite3.connect(store.path("ARCHIVE_FILE"))
+    with db:  # as schema 4 had it
+        db.execute("ALTER TABLE classifications DROP COLUMN todo_text")
+        db.execute("ALTER TABLE classifications DROP COLUMN todo_due")
+        db.execute("PRAGMA user_version = 4")
+    db.close()
+
+    with archive.open() as a:
+        c = a.item("post:1").classification
+        assert (c.summary, c.todo) == ("Lus", None) and a.todos() == []

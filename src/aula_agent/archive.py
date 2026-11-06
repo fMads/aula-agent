@@ -9,7 +9,7 @@ The archive fills up independently of intake and cutoff, and never forgets:
 nothing is cleaned up or marked as gone from Aula.
 
 Besides what came from Aula, it keeps the agent's classification of each item
-version and the topics they use (ADR 0003). An item version keeps its
+version (with its todo, if any) and the topics they use (ADR 0003). An item version keeps its
 classification; a new version has none until the agent gives it one.
 
 Version rule: an item gets a new item version only when its title, its text or
@@ -44,9 +44,10 @@ from aula.models.post import Post
 
 from . import store
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 _BACKUPS_SINCE = 3  # the schema version that added the backup tables
 _CLASSIFICATIONS_SINCE = 4  # the schema version that added classifications and topics
+_TODOS_SINCE = 5  # the schema version that added a todo to classifications
 
 # Message types that are items; the rest (RecipientsAdded, SystemReply, AutoReply,
 # MessageDeleted, ...) are system messages and are only kept in the raw thread.
@@ -129,6 +130,11 @@ CREATE TABLE classification_topics (
 );
 """
 
+_SCHEMA_5 = """
+ALTER TABLE classifications ADD COLUMN todo_text TEXT;  -- empty when there is nothing to do
+ALTER TABLE classifications ADD COLUMN todo_due TEXT;   -- YYYY-MM-DD, empty without a due date
+"""
+
 
 def _stamp(at: dt.datetime) -> str:
     return at.astimezone().isoformat(timespec="seconds") if at.tzinfo is None else at.isoformat(timespec="seconds")
@@ -206,6 +212,14 @@ class Category(StrEnum):
 
 
 @dataclass(frozen=True)
+class Todo:
+    """Something the parent has to do (pay, sign up, hand in, bring), until they tick it off."""
+
+    text: str  # short, in the imperative
+    due: dt.date | None = None
+
+
+@dataclass(frozen=True)
 class Classification:
     """The agent's reading of one item version (the facts - sender, date, Aula's children - are the item's)."""
 
@@ -216,6 +230,7 @@ class Classification:
     summary: str | None = None  # one line; none for replies and sensitive threads
     child_ids: tuple[int, ...] = ()  # the agent's, for when Aula set none
     saved_at: str | None = None  # when the archive saved it
+    todo: Todo | None = None
 
     def span_text(self, date_format: str = "%Y-%m-%d") -> str:
         """The span as ``start`` or ``start–end`` ("" without one)."""
@@ -252,15 +267,54 @@ class Item:
         return self.versions[-1]
 
     @property
+    def classified(self) -> Version | None:
+        """The newest version that has a classification (the newest version may not have one yet)."""
+        return next((v for v in reversed(self.versions) if v.classification), None)
+
+    @property
     def classification(self) -> Classification | None:
-        """The newest classification there is (the newest version may not have one yet)."""
-        return next((v.classification for v in reversed(self.versions) if v.classification), None)
+        """The newest classification there is."""
+        return self.classified.classification if self.classified else None
 
     @property
     def child_ids(self) -> list[int]:
         """The children the item is for: Aula's when it set them, else the agent's, else none (= every child)."""
         aula = self.latest.child_ids if self.versions else []
         return list(aula or (self.classification.child_ids if self.classification else ()))
+
+
+TODO_FRESH_FOR = dt.timedelta(days=14)  # a todo without due counts on an item at most this old
+
+
+@dataclass(frozen=True)
+class ItemTodo:
+    """A todo as the archive has it: the one in an item's newest classification, with that item version."""
+
+    item: Item
+    version: Version  # the classified version the todo belongs to
+
+    @property
+    def text(self) -> str:
+        return self.version.classification.todo.text
+
+    @property
+    def due(self) -> dt.date | None:
+        return self.version.classification.todo.due
+
+    @property
+    def classified_at(self) -> str:
+        return self.version.classification.saved_at
+
+    @property
+    def was_current(self) -> bool:
+        """Whether it mattered when it was classified: due that day or later, or no due on an item
+        at most :data:`TODO_FRESH_FOR` old. One that did not (an old item from the queue or a
+        backfill) starts as ticked off, so they do not fill the list."""
+        on = dt.date.fromisoformat(self.classified_at[:10])
+        if self.due is not None:
+            return self.due >= on
+        sent = self.version.date
+        return bool(sent) and on - dt.date.fromisoformat(sent[:10]) <= TODO_FRESH_FOR
 
 
 @dataclass
@@ -448,10 +502,11 @@ class Archive:
             raise ValueError(f"ukendte topics: {', '.join(unknown)}")
         c = classification
         self._db.execute(
-            "INSERT OR REPLACE INTO classifications"
-            " (version_id, category, span_start, span_end, summary, child_ids, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO classifications (version_id, category, span_start, span_end, summary, child_ids,"
+            " saved_at, todo_text, todo_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (version, str(c.category), c.span_start and c.span_start.isoformat(), c.span_end and c.span_end.isoformat(),
-             c.summary, json.dumps(list(c.child_ids)), self._saved_at()),
+             c.summary, json.dumps(list(c.child_ids)), self._saved_at(),
+             c.todo and c.todo.text, c.todo and c.todo.due and c.todo.due.isoformat()),
         )
         self._db.execute("DELETE FROM classification_topics WHERE version_id = ?", (version,))
         self._db.executemany(
@@ -459,6 +514,14 @@ class Archive:
             [(version, topic, i) for i, topic in enumerate(c.topics)],
         )
         return True
+
+    def forget_classifications(self) -> int:
+        """Delete every classification (``reclassify``), so every item is unclassified again; the topics stay.
+
+        Returns how many there were.
+        """
+        self._db.execute("DELETE FROM classification_topics")
+        return self._db.execute("DELETE FROM classifications").rowcount
 
     # -- backup (from :mod:`aula_agent.backup`); each change is committed at once,
     # so a backup that fails half-way does not upload the same file again
@@ -535,7 +598,8 @@ class Archive:
 
     def _classification(self, version_id: int) -> Classification | None:
         row = self._db.execute(
-            "SELECT category, span_start, span_end, summary, child_ids, saved_at FROM classifications WHERE version_id = ?",
+            "SELECT category, span_start, span_end, summary, child_ids, saved_at, todo_text, todo_due"
+            " FROM classifications WHERE version_id = ?",
             (version_id,),
         ).fetchone()
         if row is None:
@@ -547,7 +611,8 @@ class Archive:
         )
         day = lambda text: dt.date.fromisoformat(text) if text else None  # noqa: E731
         return Classification(
-            Category(row[0]), day(row[1]), day(row[2]), topics, row[3], tuple(json.loads(row[4])), row[5]
+            Category(row[0]), day(row[1]), day(row[2]), topics, row[3], tuple(json.loads(row[4])), row[5],
+            Todo(row[6], day(row[7])) if row[6] else None,
         )
 
     def topics(self) -> list[Topic]:
@@ -562,6 +627,10 @@ class Archive:
                 "SELECT name, description, created_at FROM topics ORDER BY name"
             )
         ]
+
+    def todos(self) -> list[ItemTodo]:
+        """The todos in the items' newest classifications, by item key (a new version's replaces the old one's)."""
+        return [ItemTodo(item, item.classified) for item in self.items() if item.classification and item.classification.todo]
 
     def unclassified(self, *, exclude: Iterable[str] = (), limit: int | None = None) -> list[Item]:
         """Items whose newest version has no classification, oldest first (by the newest version's date).
@@ -661,6 +730,8 @@ def _migrate(db: sqlite3.Connection) -> None:
         db.executescript(_SCHEMA_3)
     if current < _CLASSIFICATIONS_SINCE:
         db.executescript(_SCHEMA_4)
+    if current < _TODOS_SINCE:
+        db.executescript(_SCHEMA_5)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
