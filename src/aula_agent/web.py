@@ -1548,12 +1548,11 @@ async def item_file(request: Request) -> Response:
     )
 
 
-def remove_fields(fields) -> tuple[str, int | None, str | None]:
+def remove_fields(fields) -> tuple[str, int | None, str]:
     """What a "Fjern" button sends: the event's key, the child (None: from a page before removal was per child:
-    every child) and the page to return to (None: the settings)."""
+    every child) and the page to return to (:func:`safe_back`: else the front page)."""
     raw_child = str(fields.get("child_id") or "")
-    back = str(fields.get("back") or "")
-    return str(fields.get("key") or ""), int(raw_child) if raw_child.isdigit() else None, safe_back(back) if back else None
+    return str(fields.get("key") or ""), int(raw_child) if raw_child.isdigit() else None, safe_back(str(fields.get("back") or ""))
 
 
 async def remove_confirm_page(request: Request) -> Response:
@@ -1561,9 +1560,8 @@ async def remove_confirm_page(request: Request) -> Response:
     key, child_id, back = remove_fields(request.query_params)
     cfg, ledger = store.load_config(), Ledger.load()
     entries = [x for x in ledger.entries(key) if child_id is None or child_id in x.child_ids]
-    back_url = back or "/settings"
     if not entries:
-        body = f'<p>Begivenheden findes ikke længere.</p><p><a href="{e(back_url)}" class="btn">Tilbage</a></p>'
+        body = f'<p>Begivenheden findes ikke længere.</p><p><a href="{e(back)}" class="btn">Tilbage</a></p>'
         return page("Fjern fra kalenderen", overview_main(body), enhanced=True, nav=tabs(None))
     first = entries[0]
     children = [child_id] if child_id is not None else sorted({c for x in entries for c in x.child_ids})
@@ -1571,19 +1569,18 @@ async def remove_confirm_page(request: Request) -> Response:
     fields = f'<input type="hidden" name="key" value="{e(key)}">'
     if child_id is not None:
         fields += f'<input type="hidden" name="child_id" value="{child_id}">'
-    if back:
-        fields += f'<input type="hidden" name="back" value="{e(back)}">'
+    fields += f'<input type="hidden" name="back" value="{e(back)}">'
     body = (
         f'<h2 class="title">Fjern fra kalenderen</h2>' f"<p>Fjern »{e(first.title)}« ({e(when)}) fra kalenderen for "
         f"{e(child_names(children, cfg))}? Den bliver ikke oprettet igen.</p>"
         f'<form method="post" action="/events/remove">{fields}<button class="primary">Fjern</button> '
-        f'<a href="{e(back_url)}" class="btn">Fortryd</a></form>'
+        f'<a href="{e(back)}" class="btn">Fortryd</a></form>'
     )
     return page("Fjern fra kalenderen", overview_main(body), enhanced=True, nav=tabs(None))
 
 
 async def remove_event(request: Request) -> Response:
-    """Remove an event for a child; back to the page the button was on (``back``), else the settings."""
+    """Remove an event for a child; back to the page the button was on (``back``), else the front page."""
     from .credentials import GoogleLoginRequired
     from .gcal import remove_event as do_remove
 
@@ -1602,8 +1599,6 @@ async def remove_event(request: Request) -> Response:
         msg = "Begivenheden findes ikke længere."
     except GoogleLoginRequired:
         msg = "Google er ikke forbundet."
-    if back is None:
-        return go_settings(msg)
     return RedirectResponse(f"{back}{'&' if '?' in back else '?'}msg={quote(msg)}", status_code=303)
 
 

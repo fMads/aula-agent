@@ -152,7 +152,7 @@ def test_remove_event_for_one_child_is_remembered(google):
     synced_on_two_calendars(google)
     with make_client(google=lambda: google) as c:
         r = c.post("/events/remove", data={"key": "k1", "child_id": "2"}, headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"].startswith("/settings?msg=")  # where the button was
+    assert r.status_code == 303 and r.headers["location"].startswith("/?msg=")  # no back: the front page
     assert "fjernet" in r.headers["location"].replace("%20", " ")
     assert list(google.events) == [("c1", "e-c1")]
     ledger = Ledger.load()

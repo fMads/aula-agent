@@ -395,16 +395,18 @@ def test_with_one_child_the_button_just_says_fjern(aula):
     assert "fjernet af dig for Emma" in calendar(get("/item/post:1").text)
 
 
-def test_fjern_only_leads_back_to_a_page_on_the_site_and_without_back_to_the_settings(aula):
+def test_fjern_only_leads_back_to_a_page_on_the_site_and_without_back_to_the_front_page(aula):
     two_children_on_a_trip(aula)
     configure()
     origin = {**auth(), "Origin": "https://aula.example.dk"}
     with make_client(today=lambda: TODAY) as c:
+        asked = c.get("/events/remove", params={"key": "post:1#1", "child_id": "2"}, headers=auth())
         evil = c.post("/events/remove", data={"key": "post:1#1", "child_id": "1", "back": "https://evil.example/"},
                       headers=origin, follow_redirects=False)
         none = c.post("/events/remove", data={"key": "post:1#1", "child_id": "2"}, headers=origin, follow_redirects=False)
         page = c.get("/events/remove", params={"key": "post:1#1", "child_id": "1", "back": "https://evil.example/"},
                      headers=auth())
     assert evil.headers["location"].startswith("/?msg=")
-    assert none.headers["location"].startswith("/settings?msg=")
+    assert none.headers["location"].startswith("/?msg=")
     assert "Begivenheden findes ikke længere." in page.text and "evil.example" not in page.text
+    assert "Skovtur" in asked.text and '<a href="/" class="btn">Fortryd</a>' in asked.text
