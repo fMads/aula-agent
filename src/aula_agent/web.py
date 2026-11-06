@@ -565,7 +565,8 @@ def removed_html(ledger: Ledger, cfg: dict[str, Any], today: dt.date) -> str:
 # ----------------------------------------------------------------------------- routes
 
 
-async def home(request: Request) -> Response:
+async def settings(request: Request) -> Response:
+    """Indstillinger: the logins, the runs, the archive, the children and their calendars, what the user removed."""
     cfg, ledger = store.load_config(), Ledger.load()
     aula, google = credentials.aula_status(ledger), credentials.google_status()
     last_runs = ledger.runs(8)
@@ -1603,7 +1604,7 @@ async def remove_event(request: Request) -> Response:
     except GoogleLoginRequired:
         msg = "Google er ikke forbundet."
     if back is None:
-        return go_home(msg)
+        return go_settings(msg)
     return RedirectResponse(f"{back}{'&' if '?' in back else '?'}msg={quote(msg)}", status_code=303)
 
 
@@ -1662,7 +1663,7 @@ async def aula_login_state(request: Request) -> Response:
     return JSONResponse(request.app.state.mitid.snapshot(), headers={"Cache-Control": "no-store"})
 
 
-def go_home(msg: str) -> RedirectResponse:
+def go_settings(msg: str) -> RedirectResponse:
     """Back to the settings (the logins) with ``msg``."""
     return RedirectResponse(f"/settings?msg={quote(msg)}", status_code=303)
 
@@ -1735,14 +1736,14 @@ async def google_callback(request: Request) -> Response:
     code = request.query_params.get("code")
     pending = request.app.state.oauth_pending.pop(state, None)
     if request.query_params.get("error"):
-        return go_home(f"Google-adgang blev ikke givet ({request.query_params['error']}).")
+        return go_settings(f"Google-adgang blev ikke givet ({request.query_params['error']}).")
     if not code or not pending or time.monotonic() - pending[1] > 600:
-        return go_home("Google-login udløb. Prøv igen.")
+        return go_settings("Google-login udløb. Prøv igen.")
     try:
         await asyncio.to_thread(web_flow_finish, redirect_uri(), state, pending[0], code)
     except Exception as exc:
-        return go_home(f"Google-login fejlede: {exc}")
-    response = go_home("Google er forbundet.")
+        return go_settings(f"Google-login fejlede: {exc}")
+    response = go_settings("Google er forbundet.")
     # Logged after the response is sent: a running sync may hold the lock for a while.
     response.background = BackgroundTask(runs.record, "google-login", Outcome.OK, "Google forbundet")
     return response
@@ -1764,7 +1765,7 @@ def create_app(
             Route("/search", overview),
             Route("/info", overview),
             Route("/past", overview),
-            Route("/settings", home),
+            Route("/settings", settings),
             Route("/item/{key}", item_detail),
             Route("/item/{key}/file/{attachment:path}", item_file),
             # Calendar events from before #50 link to /overblik/item/…, and their descriptions stay: keep these.
