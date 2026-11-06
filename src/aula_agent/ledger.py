@@ -333,28 +333,28 @@ class Ledger:
     # ------------------------------------------------------------------ todos ticked off
 
     @staticmethod
-    def _todo(item_key: str, version: int) -> str:
+    def _todo_key(item_key: str, version: int) -> str:
         return f"{item_key}|{version}"
 
     def check_todo(self, item_key: str, version: int) -> None:
         """The user ticked off the todo of this item version (for the whole item, not per child)."""
-        self._st["todos"][self._todo(item_key, version)] = {"checked": True, "at": _now()}
+        self._st["todos"][self._todo_key(item_key, version)] = {"checked": True, "at": _now()}
 
     def uncheck_todo(self, item_key: str, version: int) -> None:
         """The user undid ticking it off: open, also when it started as done."""
-        self._st["todos"][self._todo(item_key, version)] = {"checked": False, "at": _now()}
+        self._st["todos"][self._todo_key(item_key, version)] = {"checked": False, "at": _now()}
 
     def todo_checked(self, item_key: str, version: int, *, by_default: bool = False) -> bool:
         """Whether the todo of this item version is ticked off; ``by_default`` when the user never touched it.
 
         A new item version has a todo of its own, open until it is ticked off.
         """
-        mark = self._st["todos"].get(self._todo(item_key, version))
+        mark = self._st["todos"].get(self._todo_key(item_key, version))
         return by_default if mark is None else mark["checked"]
 
     def todo_checked_at(self, item_key: str, version: int) -> str | None:
         """When the user ticked it off (None when they did not, or undid it)."""
-        mark = self._st["todos"].get(self._todo(item_key, version))
+        mark = self._st["todos"].get(self._todo_key(item_key, version))
         return mark["at"] if mark and mark["checked"] else None
 
     # ------------------------------------------------------------------ Drive uploads

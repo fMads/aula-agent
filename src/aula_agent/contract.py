@@ -276,7 +276,8 @@ def _classification(
     if len(problems) > before:
         return None
     return Classification(
-        Category(category), span_start, span_end, item_topics, summary, tuple(dict.fromkeys(child_ids)), todo=todo
+        category=Category(category), span_start=span_start, span_end=span_end, topics=item_topics, summary=summary,
+        child_ids=tuple(dict.fromkeys(child_ids)), todo=todo,
     )
 
 

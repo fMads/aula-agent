@@ -277,14 +277,14 @@ class Item:
         return self.versions[-1]
 
     @property
-    def classified(self) -> Version | None:
+    def classified_version(self) -> Version | None:
         """The newest version that has a classification (the newest version may not have one yet)."""
         return next((v for v in reversed(self.versions) if v.classification), None)
 
     @property
     def classification(self) -> Classification | None:
         """The newest classification there is."""
-        return self.classified.classification if self.classified else None
+        return self.classified_version.classification if self.classified_version else None
 
     @property
     def child_ids(self) -> list[int]:
@@ -634,8 +634,8 @@ class Archive:
         )
         day = lambda text: dt.date.fromisoformat(text) if text else None  # noqa: E731
         return Classification(
-            Category(row[0]), day(row[1]), day(row[2]), topics, row[3], tuple(json.loads(row[4])), row[5],
-            Todo(row[6], day(row[7])) if row[6] else None,
+            category=Category(row[0]), span_start=day(row[1]), span_end=day(row[2]), topics=topics, summary=row[3],
+            child_ids=tuple(json.loads(row[4])), saved_at=row[5], todo=Todo(row[6], day(row[7])) if row[6] else None,
         )
 
     def topics(self) -> list[Topic]:
@@ -653,7 +653,7 @@ class Archive:
 
     def todos(self) -> list[ItemTodo]:
         """The todos in the items' newest classifications, by item key (a new version's replaces the old one's)."""
-        return [ItemTodo(item, item.classified) for item in self.items() if item.classification and item.classification.todo]
+        return [ItemTodo(item, item.classified_version) for item in self.items() if item.classification and item.classification.todo]
 
     def unclassified(self, *, exclude: Iterable[str] = (), limit: int | None = None) -> list[Item]:
         """Items whose newest version has no classification, oldest first (by the newest version's date).

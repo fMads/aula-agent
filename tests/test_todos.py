@@ -197,6 +197,8 @@ def test_klaret_needs_same_origin_and_an_existing_todo(aula):
         for headers in ({**auth(), "Origin": "https://evil.example"}, auth()):
             r = c.post("/todos/check", data={"item": item, "version": str(version)}, headers=headers)
             assert r.status_code == 403
+        r = c.post("/todos/delete", data={"item": item, "version": str(version)}, headers={**auth(), "Origin": ORIGIN})
+        assert r.status_code == 404
         r = c.post("/todos/check", data={"item": item, "version": str(version + 1)},
                    headers={**auth(), "Origin": ORIGIN}, follow_redirects=False)
         assert "findes ikke" in r.headers["location"].replace("%20", " ")
