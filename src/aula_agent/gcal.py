@@ -116,8 +116,8 @@ def _source_footer(item: dict[str, Any] | None) -> str:
     if item.get("type") == "post":
         what = f"opslag »{item.get('title') or ''}«"
         who, when = item.get("author"), item.get("published")
-    else:
-        what = f"besked »{item.get('subject') or ''}«"
+    else:  # the calendar may be shared and is on phones: never a sensitive thread's subject
+        what = "besked (følsom tråd)" if item.get("sensitive") else f"besked »{item.get('subject') or ''}«"
         who, when = item.get("sender"), item.get("sent")
     parts = [f"Fra Aula: {what}"]
     if who:

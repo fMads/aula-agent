@@ -91,6 +91,35 @@ def test_description_links_to_the_items_detail_page_when_the_web_page_has_an_add
     assert body["description"].startswith("Madpakke\n\nFra Aula: besked »Skovtur«")
 
 
+def test_description_of_an_event_from_a_sensitive_thread_has_no_subject_but_the_link(google):
+    setup_children((1, "Emma"))
+    set_public_url("https://aula.example.dk")
+    add_pending("message:4:7", type="message", subject="Samtale om skoledagen", sensitive=True)
+    gcal.sync({"processed": ["message:4:7"], "classifications": [{"item": "message:4:7", "category": "svar"}],
+               "events": [ev("message:4:7#1", source="message:4:7", description="Mød op på kontoret")]}, google=google)
+
+    (body,) = google.bodies()
+    assert body["description"].startswith("Mød op på kontoret\n\nFra Aula: besked (følsom tråd)")
+    assert "Samtale om skoledagen" not in body["description"] and "»" not in body["description"]
+    assert "https://aula.example.dk/overblik/item/message:4:7" in body["description"]
+
+
+def test_an_event_from_before_the_link_gets_it_when_it_is_updated(google):
+    setup_children((1, "Emma"))
+    add_pending("post:9", type="post", title="Juleklip")
+    gcal.sync({"processed": ["post:9"], "classifications": [{"item": "post:9", "category": "svar"}],
+               "events": [ev("post:9#1", source="post:9")]}, google=google)
+    assert "/overblik" not in google.bodies()[0]["description"]
+
+    set_public_url("https://aula.example.dk")
+    result = gcal.sync({"events": [ev("post:9#1", source="post:9", start="2099-11-13")]}, google=google)
+
+    assert len(result["updated"]) == 1
+    (body,) = google.bodies()
+    assert "Hele teksten: https://aula.example.dk/overblik/item/post:9" in body["description"]
+    assert "Fra Aula: opslag »Juleklip«" in body["description"]
+
+
 def test_description_has_no_link_without_a_web_address(google):
     setup_children((1, "Emma"))
     add_pending("post:9", type="post", title="Juleklip")
