@@ -60,8 +60,8 @@ def fill(today: dt.date, port: int) -> None:
 
     cfg = store.load_config()
     cfg["children"] = {
-        str(EMMA): {"name": "Emma Demo", "institution": "Demo Skole", "calendar_name": "Skole – Emma"},
-        str(OSCAR): {"name": "Oscar Demo", "institution": "Demo Skole", "calendar_name": "Skole – Oscar"},
+        str(EMMA): {"name": "Emma Demo", "institution": "Demo Skole", "calendar_name": "Aula – Emma"},
+        str(OSCAR): {"name": "Oscar Demo", "institution": "Demo Skole", "calendar_name": "Aula – Oscar"},
     }
     cfg["web"] = {"public_url": f"http://{HOST}:{port}", "allowed_emails": [EMAIL],
                   "access_team_domain": "demo.invalid", "access_aud": "demo"}

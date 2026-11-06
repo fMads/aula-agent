@@ -1,7 +1,7 @@
 # aula-agent
 
 Finder arrangementer i Aula-opslag og -beskeder og lægger dem i Google Calendar.
-Hvert barn hører til én kalender (standard: sin egen, "Skole – <fornavn>"), og flere børn kan dele én (joint calendar, ADR 0002). Python 3.14 via `uv`. Brugervejledning: `README.md`.
+Hvert barn hører til én kalender (standard: sin egen, "Aula – <fornavn>"; ældre installationer har "Skole – <fornavn>" gemt i config og beholder den), og flere børn kan dele én (joint calendar, ADR 0002). Python 3.14 via `uv`. Brugervejledning: `README.md`.
 
 - `src/aula_agent/aula_source.py` – henter fra Aula (bibliotek: `aula` på PyPI) og bestemmer via `Intake`, hvilke items agenten får. `backfill()` læser alt til arkivet uden om intake (kilden er en `BackfillSource`: Aula eller en redningskopi). Starter aldrig MitID-login selv.
 - `src/aula_agent/archive.py` – arkivet (`data/archive.sqlite`, ADR 0001): alt hvad `fetch` og `backfill` har set fra Aula eller en redningskopi (opslag og hele beskedtråde), med alle item versions og filer, uanset cutoff, og agentens classifications (pr. item version, evt. med en todo) og topics, plus et fritekstindeks (FTS5) over det hele og teksten i PDF- og docx-filer (`filetext.py` trækker den ud, én gang pr. fil). Kun dette modul rører arkiv-filen og ejer item-nøglerne; skemaets version styres med `user_version`.
@@ -72,7 +72,7 @@ Når du bliver bedt om at køre den natlige Aula-synkronisering, så gør præci
    - Spring over, hvis arrangementet allerede står i `aula_calendar` (Aulas egen kalender) for samme dag.
    - `removed_by_user`: begivenheder brugeren selv har fjernet på web-siden for børnene i `child_ids`. Læg dem **ikke** i de børns kalendere igen – heller ikke under en ny key. Andre børn kan godt have dem.
    - `child_ids` er **alle** de børn, begivenheden gælder. Ved en rettelse: skriv alle børnene igen; et barn der ikke er med, får begivenheden fjernet fra sin kalender.
-   - `child_ids`: brug item'ets `child_ids` når de er sat. Er listen tom (besked og flere børn), så afgør det ud fra indhold, klasse/gruppe, `child_hints` og institution; hvis det er tvivlsomt, så sæt alle relevante børn.
+   - `child_ids`: brug item'ets `child_ids` når de er sat. Er listen tom (besked og flere børn), så afgør det ud fra indhold, klasse/stue/gruppe, `child_hints` og institution; hvis det er tvivlsomt, så sæt alle relevante børn.
    - `attachments`: kun filer der hører til arrangementet (indbydelser, sedler, programmer) – ikke billeder fra en tur der har været.
    - Titel: kort, dansk, uden barnets navn. Beskrivelse: det praktiske (hvad skal medbringes, pris, tid, tilmelding). Skriv **ikke** andre børns eller forældres navne ind i kalenderen.
 
