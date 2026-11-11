@@ -269,10 +269,8 @@ async def _read_posts(client, profile, warnings: list[str]) -> AsyncIterator[Pos
     profile_ids = list(dict.fromkeys([*profile.institution_profile_ids, *(c.id for c in profile.children)]))
     if not profile_ids:
         return
-    for offset in range(0, MAX_POST_PAGES * POSTS_PER_PAGE, POSTS_PER_PAGE):
-        # Aula reads `index` as an element offset, but the library sends `page - 1`.
-        # Remove together with the `aula==1.15.0` pin once the upstream fix (#14) is released.
-        posts = await client.get_posts(profile_ids, page=offset + 1, limit=POSTS_PER_PAGE)
+    for page in range(1, MAX_POST_PAGES + 1):
+        posts = await client.get_posts(profile_ids, page=page, limit=POSTS_PER_PAGE)
         for post in posts:
             yield post
         if len(posts) < POSTS_PER_PAGE:
