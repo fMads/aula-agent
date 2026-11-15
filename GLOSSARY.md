@@ -158,6 +158,10 @@ _Avoid_: Overstået (kun i brugertekst), udløbet (det er Aulas expireAt), arkiv
 Web-siden, hvor arkivets items, events og todos vises efter, hvornår de gælder, med fritekstsøgning og et item ad gangen i fuld længde. Forsiden har Skal gøres (de åbne todos), I dag og i morgen (events, items og todos på de to dage), Gælder nu (perioder og arrangementer over flere dage, der er i gang, orienteringer, der ikke er past, og opslag med Aulas vigtig-markering) og Kommende (dag for dag fra i overmorgen, kun dage med noget på og en ugelinje, når ugen skifter: items, hvis span begynder, events og todos med frist). Stående info (efter topic) og Tidligere (til og med i går, bagud) har hver deres side. Kørsler, logins og kalendere hører ikke til overblikket, men står på Indstillinger; forsiden viser kun en advarselslinje, når noget af det kræver handling.
 _Avoid_: Overblik (kun i brugertekst), dashboard, arkiv-side
 
+**Påmindelse**:
+Morgenmailen med de todos fra Skal gøres, der er nye, har frist i dag eller i morgen eller er overskredet. Den sendes til hver forælder med adgang til web-siden, som ikke har slået den fra. Den er ikke en todo og ikke et event.
+_Avoid_: Reminder (i brugertekst), notifikation, digest
+
 **Aulas vigtig-markering**:
 Et opslag, Aula har markeret som vigtigt fra–til. Det står under Gælder nu i den periode; uden slutdato i 14 dage fra startdatoen, uden startdato fra opslagets dato.
 _Avoid_: Fremhævet, prioriteret
