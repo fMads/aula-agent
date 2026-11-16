@@ -17,7 +17,7 @@ wheels = [
 
 [[package]]
 name = "aula"
-version = "1.15.0"
+version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -28,9 +28,9 @@ dependencies = [
     { name = "qrcode" },
     { name = "tzdata" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cf/cc/edbf97a78d34c73fd94c8a4d4a29ea1276c027e77aeda51b5ee1b4c7bea0/aula-1.15.0.tar.gz", hash = "sha256:233c60e9a91796c27433b02e2da130cc1c32b538657005a798b32833be10d423", size = 268502, upload-time = "2026-11-04T14:27:55.053Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/17/24/8ff903003df126079e6fe21982d03273a53cb6021ed0e37cc1d8ca26d51b/aula-1.17.0.tar.gz", hash = "sha256:c45a0bdafcbba5230c191c454e055d895190feee9e35645c71986e39bb6a5e45", size = 279307, upload-time = "2026-11-11T10:26:13.114Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/90/885ad7155b66d4030bbdce03ec9e866e2dd10c8e610f3f6d878c42a76ef8/aula-1.15.0-py3-none-any.whl", hash = "sha256:873463a0de25c58d631cb4bb51b6aead8bc91029637d7d5450008e6cb75b57c1", size = 164436, upload-time = "2026-11-04T14:27:53.641Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/86/1fc9efd67de76faa7f181add2469e455cd93fc12478e9b3a10e95aa48d52/aula-1.17.0-py3-none-any.whl", hash = "sha256:79e711419c6f209ef551d0faf3c013a43374ab2b1d47ed09f0776db0c7f63f9f", size = 169029, upload-time = "2026-11-11T10:26:11.423Z" },
 ]
 
 [[package]]
@@ -57,7 +57,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aula", specifier = "==1.15.0" },
+    { name = "aula", specifier = "==1.17.0" },
     { name = "click", specifier = ">=8.0" },
     { name = "google-api-python-client", specifier = ">=2.150" },
     { name = "google-auth-oauthlib", specifier = ">=1.2" },

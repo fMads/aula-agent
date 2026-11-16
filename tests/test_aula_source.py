@@ -70,7 +70,7 @@ class FakeAula:
         self.post_requests.append(list(ids))
         if GUARDIAN_PROFILE not in ids:
             return []
-        offset = page - 1  # the library sends page-1 as index, which Aula reads as an element offset
+        offset = (page - 1) * limit
         return self.posts[offset : offset + limit]
 
     async def get_all_message_threads_result(self, cutoff):
